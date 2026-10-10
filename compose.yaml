@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: snowfall-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: snowfall
+      POSTGRES_USER: snowfall
+      POSTGRES_PASSWORD: ${SNOWFALL_DB_PASSWORD:?Define SNOWFALL_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - snowfall_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snowfall -d snowfall"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  snowfall_postgres_data:

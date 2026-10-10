@@ -1,42 +1,69 @@
-﻿
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { pathToFileURL } from "node:url";
+import Fastify from "fastify";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import dotenv from "dotenv";
+import { chatRequestSchema } from "./schemas/chat.js";
+import { runChatGraph } from "./graph/chat-graph.js";
+import databasePlugin from "./plugins/database.js";
 
-function handleRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-): void {
-  if (request.method === "GET" && request.url === "/health") {
-    response.writeHead(200, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    });
+dotenv.config({
+  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+});
 
-    response.end(JSON.stringify({ status: "ok" }));
-    return;
-  }
-
-  response.writeHead(404, {
-    "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store",
+export function createAppServer(options: { withDatabase? : boolean } = {}) {
+  const app = Fastify({
+    logger: process.env.NODE_ENV !== "test",
+    bodyLimit: 1_048_576,
   });
 
-  response.end(JSON.stringify({ error: "Not found" }));
-}
+  if (options.withDatabase ?? process.env.NODE_ENV !== "test") {
+    app.register(databasePlugin);
+  }
 
-export function createAppServer() {
-  return createServer(handleRequest);
+  app.get("/health", async () => {
+    return { status: "ok" };
+  });
+
+  app.post("/chat", async (request, reply) => {
+    const result = chatRequestSchema.safeParse(request.body);
+
+    if (!result.success) {
+      return reply.code(400).send({
+        error: "Invalid request",
+        details: result.error.issues.map((issue) => ({
+          path: issue.path,
+          message: issue.message,
+        })),
+      });
+    }
+
+    const response = await runChatGraph(result.data.message);
+    return reply.code(200).send({
+      response,
+    });
+  });
+
+  app.setNotFoundHandler(async (_request, reply) => {
+    return reply.code(404).send({ error: "Not found" });
+  });
+
+  return app;
 }
 
 const entryPoint = process.argv[1];
 
-if (entryPoint && import.meta.url === pathToFileURL(resolve(entryPoint)).href) {
-  const host = "127.0.0.1";
+if (
+  entryPoint &&
+  import.meta.url === pathToFileURL(resolve(entryPoint)).href
+) {
+  const host = process.env.HOST ?? "127.0.0.1";
   const port = Number(process.env.PORT ?? 3001);
-  const server = createAppServer();
+  const app = createAppServer();
 
-  server.listen(port, host, () => {
-    console.log(`Snowfall API listening on http://${host}:${port}`);
-  });
+  try {
+    await app.listen({ host, port });
+  } catch (error) {
+    app.log.error(error);
+    process.exitCode = 1;
+  }
 }
