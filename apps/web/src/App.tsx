@@ -448,27 +448,12 @@ function App() {
             >
               <Menu size={19} />
             </button>
-            <span className="workspace-label">VOTRE ESPACE</span>
-            <span className="topbar-divider">/</span>
             <span className="topbar-current">
               {activeConversation?.title ?? 'Nouvelle conversation'}
             </span>
           </div>
 
           <div className="topbar-right">
-            <span className="secure-indicator">
-              <span className="secure-dot" />
-              Connecté
-            </span>
-            <button
-              className="icon-button"
-              onClick={() => void newChat()}
-              disabled={creating}
-              aria-label="Nouvelle conversation"
-              title="Nouvelle conversation"
-            >
-              ＋
-            </button>
           </div>
         </header>
 
@@ -580,7 +565,6 @@ function App() {
             <div className="composer-toolbar">
               <div className="composer-hints">
                 <span className="composer-sparkle">✧</span>
-                <span>Un espace pour penser librement</span>
               </div>
               <div className="composer-actions">
                 <span className="keyboard-hint">↵ Envoyer</span>

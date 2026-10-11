@@ -653,11 +653,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 /* Navigation unifiée, inspirée de LibreChat */
 .sidebar {
-  --sidebar-bg: #111111;
-  --sidebar-panel-bg: #171717;
-  --sidebar-hover: #252525;
-  --sidebar-active: #2b2b2b;
-  --sidebar-border: #303030;
+  --sidebar-bg: rgb(0, 0, 0);
+  --sidebar-panel-bg: rgba(0, 0, 20);
+  --sidebar-hover: #63738b50;
+  --sidebar-active: rgba(20, 20, 40, 0.2);
+  --sidebar-border: #63738b50;
   flex-basis: 310px;
   flex-direction: row;
   padding: 0;
@@ -676,7 +676,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   gap: 5px;
   padding: 12px 7px;
   border-right: 1px solid var(--sidebar-border);
-  background: #111111;
+  background: rgb(0, 0, 20);
 }
 
 .rail-brand,
@@ -696,12 +696,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .rail-brand:hover,
 .rail-action:hover {
-  background: #252525;
+  background: var(--sidebar-hover);
   color: #f5f5f5;
 }
 
 .rail-action-active {
-  background: #2b2b2b;
+  background: var(--sidebar-active);
   color: #ffffff;
 }
 
@@ -754,7 +754,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   justify-content: space-between;
   min-height: 36px;
   margin-bottom: 26px;
-  background: linear-gradient(100deg, #7fa9dd 5%, #a7c9f5 20%, #f1f6ff 50%);
+  background: linear-gradient(100deg, #7fa9dd 5%, #a7c9f5 20%, #000000 50%);
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -909,7 +909,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .conversation-delete:hover {
-  background: #3a3a3a;
+  background: var(--sidebar-hover);
   color: #ffffff;
 }
 
@@ -921,7 +921,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .account-row {
   gap: 9px;
   padding: 10px 2px 2px;
-  border-top: 1px solid #303030;
+  border-top: 1px solid var(--sidebar-border);
 }
 
 .user-avatar {
@@ -950,7 +950,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .account-menu:hover {
-  background: #2b2b2b;
+  background: var(--sidebar-hover);
   color: #ffffff;
 }
 
@@ -970,7 +970,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   height: 42px;
   margin-bottom: 12px;
   place-items: center;
-  border: 1px solid #383838;
+  border: 1px solid var(--sidebar-border);
   border-radius: 12px;
   color: #c2c2c2;
 }
@@ -982,7 +982,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .sidebar-placeholder p {
-  color: #999999;
+  color: var(--sidebar-active);
   font-size: 11px;
   line-height: 1.6;
 }
@@ -1036,7 +1036,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
   .sidebar.sidebar-collapsed .sidebar-rail {
     flex-basis: 54px;
-    border-right: 1px solid #303030;
+    border-right: 1px solid var(--sidebar-border);
   }
 
   .rail-tooltip {
@@ -1062,7 +1062,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   align-self: center;
   padding: 30px 26px 38px;
   object-fit: contain;
-  transform: rotate(-20deg);
+  transform: translateY(-30px);
   opacity: 0.12;
   pointer-events: none;
   user-select: none;
