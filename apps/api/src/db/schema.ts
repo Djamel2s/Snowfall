@@ -7,7 +7,9 @@
   index,
   uniqueIndex,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const organizations = pgTable("organizations", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -28,7 +30,6 @@ export const users = pgTable(
   },
   (table) => [
     unique("users_email_unique").on(table.email),
-    index("users_email_idx").on(table.email),
   ],
 );
 
@@ -52,6 +53,10 @@ export const organizationMembers = pgTable(
       table.userId,
     ),
     index("organization_members_user_idx").on(table.userId),
+    check(
+      "organization_members_role_check",
+      sql`${table.role} IN ('owner', 'admin', 'member', 'reader')`,
+    ),
   ],
 );
 
@@ -148,5 +153,6 @@ export const messages = pgTable(
         conversations.userId,
       ],
     }).onDelete("cascade"),
+    check("messages_role_check", sql`${table.role} IN ('user', 'assistant')`),
   ],
 );

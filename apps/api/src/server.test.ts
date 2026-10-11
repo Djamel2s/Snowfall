@@ -92,6 +92,25 @@ function createFakeStore(): ConversationStore {
       }
       return message;
     },
+
+    appendExchange: async (owner, id, userContent, assistantContent) => {
+      if (!owns(owner, id)) return null;
+      const make = (role: "user" | "assistant", content: string) => ({
+        id: crypto.randomUUID(),
+        role,
+        content,
+        createdAt: new Date().toISOString(),
+      });
+      const userMessage = make("user", userContent);
+      const assistantMessage = make("assistant", assistantContent);
+      messages.get(id)!.push(userMessage, assistantMessage);
+      const conversation = conversations.get(id)!;
+      conversation.updatedAt = assistantMessage.createdAt;
+      if (conversation.title === "Nouvelle conversation") {
+        conversation.title = userContent.slice(0, 80);
+      }
+      return { userMessage, assistantMessage };
+    },
   };
 }
 
@@ -143,19 +162,6 @@ describe("API HTTP", () => {
     assert.equal(response.statusCode, 404);
   });
 
-  it("refuse /chat sans authentification", async (t) => {
-    const app = createAppServer({ withDatabase: false });
-    t.after(() => app.close());
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/chat",
-      payload: { message: "Bonjour" },
-    });
-
-    assert.equal(response.statusCode, 401);
-    assert.deepEqual(response.json(), { error: "Unauthorized" });
-  });
 
   it("refuse /auth/me sans authentification", async (t) => {
     const app = createAppServer({ withDatabase: false });
@@ -181,53 +187,6 @@ describe("API HTTP", () => {
 
     assert.equal(response.statusCode, 200);
     assert.deepEqual(response.json(), { user: testUser });
-  });
-
-  it("rejette un message vide sur POST /chat", async (t) => {
-    const app = createAppServer(authenticatedOptions);
-    t.after(() => app.close());
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/chat",
-      payload: { message: "   " },
-    });
-
-    assert.equal(response.statusCode, 400);
-    assert.deepEqual(response.json().error, "Invalid request");
-  });
-
-  it("renvoie une réponse du graphe sur POST /chat", async (t) => {
-    const app = createAppServer(authenticatedOptions);
-    t.after(() => app.close());
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/chat",
-      payload: { message: "Bonjour" },
-    });
-
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), {
-      response: "Snowfall a reçu ton message : Bonjour",
-    });
-  });
-
-  it("rejette les champs inconnus sur POST /chat", async (t) => {
-    const app = createAppServer(authenticatedOptions);
-    t.after(() => app.close());
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/chat",
-      payload: {
-        message: "Bonjour",
-        admin: true,
-      },
-    });
-
-    assert.equal(response.statusCode, 400);
-    assert.deepEqual(response.json().error, "Invalid request");
   });
 
   it("crée une conversation et la retourne", async (t) => {
@@ -315,5 +274,25 @@ describe("API HTTP", () => {
     });
 
     assert.equal(response.statusCode, 400);
+  });
+
+  it("renvoie 502 et n'enregistre rien si le graphe échoue", async (t) => {
+    const store = createFakeStore();
+    const conversation = await store.create(testUser);
+    const app = createAppServer({
+      ...authenticatedOptions,
+      conversationStore: store,
+      runChat: async () => { throw new Error("boom"); },
+    });
+    t.after(() => app.close());
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/conversations/${conversation.id}/messages`,
+      payload: { content: "Bonjour" },
+    });
+
+    assert.equal(response.statusCode, 502);
+    assert.deepEqual(await store.getMessages(testUser, conversation.id), []);
   });
 });

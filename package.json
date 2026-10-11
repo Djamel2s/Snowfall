@@ -14,6 +14,9 @@
     "dev:web": "npm run dev -w @snowfall/web",
     "build:web": "npm run build -w @snowfall/web",
     "lint:web": "npm run lint -w @snowfall/web",
+    "dev:api": "npm run dev -w @snowfall/api",
+    "check:api": "npm run check -w @snowfall/api",
+    "check": "npm run check:api && npm run lint:web && npm run build:web",
     "db:generate": "drizzle-kit generate --config apps/api/drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config apps/api/drizzle.config.ts",
     "db:check": "drizzle-kit check --config apps/api/drizzle.config.ts"

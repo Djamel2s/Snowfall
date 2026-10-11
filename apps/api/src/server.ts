@@ -16,6 +16,8 @@ import {
   PostgresConversationStore,
   type ConversationStore,
 } from "./conversations/store.js";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -26,13 +28,17 @@ export function createAppServer(
     withDatabase?: boolean;
     authenticate?: Authenticator;
     conversationStore?: ConversationStore;
+    runChat?: typeof runChatGraph;
   } = {},
 ) {
   const app = Fastify({
     logger: process.env.NODE_ENV !== "test",
     bodyLimit: 1_048_576,
   });
-
+  
+  app.register(helmet);
+  app.register(rateLimit, { global: true, max: 120, timeWindow: "1 minute" });
+  
   const authenticate: Authenticator =
     options.authenticate ?? authenticateWithKeycloak;
 
@@ -52,6 +58,8 @@ export function createAppServer(
   const messageSchema = z.object({
     content: z.string().trim().min(1).max(4000),
   }).strict();
+
+  const runChat = options.runChat ?? runChatGraph;
 
   function privateResponse(reply: import("fastify").FastifyReply) {
     reply.header("Cache-Control", "no-store");
@@ -74,29 +82,6 @@ export function createAppServer(
     }
 
     return { user };
-  });
-
-  app.post("/chat", async (request, reply) => {
-    const user: AuthenticatedUser | null = await authenticate(request);
-
-    if (!user) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
-    const result = chatRequestSchema.safeParse(request.body);
-
-    if (!result.success) {
-      return reply.code(400).send({
-        error: "Invalid request",
-        details: result.error.issues.map((issue) => ({
-          path: issue.path,
-          message: issue.message,
-        })),
-      });
-    }
-
-    const response = await runChatGraph(result.data.message);
-    return reply.code(200).send({ response });
   });
 
   app.get("/conversations", async (request, reply) => {
@@ -167,47 +152,61 @@ export function createAppServer(
     return reply.code(204).send();
   });
 
-  app.post("/conversations/:id/messages", async (request, reply) => {
-    const user = await authenticate(request);
-    if (!user) return reply.code(401).send({ error: "Unauthorized" });
-    privateResponse(reply);
+  app.post(
+    "/conversations/:id/messages",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const user = await authenticate(request);
+      if (!user) return reply.code(401).send({ error: "Unauthorized" });
+      privateResponse(reply);
 
-    if (!canWrite(user)) {
-      return reply.code(403).send({ error: "Forbidden" });
-    }
+      if (!canWrite(user)) return reply.code(403).send({ error: "Forbidden" });
 
-    const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
-    const body = messageSchema.safeParse(request.body);
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      const body = messageSchema.safeParse(request.body);
+      if (!params.success || !body.success) {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
 
-    if (!params.success || !body.success) {
-      return reply.code(400).send({ error: "Invalid request" });
-    }
+      const history = await conversationStore.getMessages(user, params.data.id);
+      if (history === null) return reply.code(404).send({ error: "Not found" });
 
-    const userMessage = await conversationStore.addMessage(
-      user,
-      params.data.id,
-      "user",
-      body.data.content,
-    );
+      let response: string;
+      try {
+        response = await runChat({
+          message: body.data.content,
+          history: history.slice(-20),
+        });
+      } catch (error) {
+        request.log.error({ err: error }, "Échec du graphe de chat");
+        return reply.code(502).send({ error: "Assistant unavailable" });
+      }
 
-    if (!userMessage) return reply.code(404).send({ error: "Not found" });
+      const exchange = await conversationStore.appendExchange(
+        user,
+        params.data.id,
+        body.data.content,
+        response,
+      );
+      if (!exchange) return reply.code(404).send({ error: "Not found" });
 
-    const response = await runChatGraph(body.data.content);
+      return reply.code(201).send({
+        response,
+        userMessage: exchange.userMessage,
+        assistantMessage: exchange.assistantMessage,
+      });
+    },
+  );
 
-    const assistantMessage = await conversationStore.addMessage(
-      user,
-      params.data.id,
-      "assistant",
-      response,
-    );
-
-    if (!assistantMessage) return reply.code(404).send({ error: "Not found" });
-
-    return reply.code(201).send({
-      response,
-      userMessage,
-      assistantMessage,
-    });
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error({ err: error }, "Erreur non gérée");
+    const status =
+      error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+        ? error.statusCode
+        : 500;
+    return reply
+      .code(status)
+      .send({ error: status === 500 ? "Internal server error" : error.message });
   });
 
   app.setNotFoundHandler(async (_request, reply) => {

@@ -22,19 +22,25 @@ export type StoredMessage = {
 };
 
 export interface ConversationStore {
-  list(owner: ConversationOwner): Promise<ConversationSummary[]>;
-  create(owner: ConversationOwner, title?: string): Promise<ConversationSummary>;
-  getMessages(
-    owner: ConversationOwner,
-    conversationId: string,
-  ): Promise<StoredMessage[] | null>;
-  delete(owner: ConversationOwner, conversationId: string): Promise<boolean>;
-  addMessage(
-    owner: ConversationOwner,
-    conversationId: string,
-    role: MessageRole,
-    content: string,
-  ): Promise<StoredMessage | null>;
+    list(owner: ConversationOwner): Promise<ConversationSummary[]>;
+    create(owner: ConversationOwner, title?: string): Promise<ConversationSummary>;
+    getMessages(
+        owner: ConversationOwner,
+        conversationId: string,
+    ): Promise<StoredMessage[] | null>;
+    delete(owner: ConversationOwner, conversationId: string): Promise<boolean>;
+    addMessage(
+        owner: ConversationOwner,
+        conversationId: string,
+        role: MessageRole,
+        content: string,
+    ): Promise<StoredMessage | null>;
+    appendExchange(
+        owner: ConversationOwner,
+        conversationId: string,
+        userContent: string,
+        assistantContent: string,
+    ): Promise<{ userMessage: StoredMessage; assistantMessage: StoredMessage } | null>;
 }
 
 export class PostgresConversationStore implements ConversationStore {
@@ -165,4 +171,61 @@ export class PostgresConversationStore implements ConversationStore {
       client.release();
     }
   }
+  // class PostgresConversationStore
+async appendExchange(
+  owner: ConversationOwner,
+  conversationId: string,
+  userContent: string,
+  assistantContent: string,
+    ){
+        const client = await this.pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const conv = await client.query(
+            `SELECT title FROM conversations
+            WHERE id = $1 AND user_id = $2 AND organization_id = $3
+            FOR UPDATE`,
+            [conversationId, owner.userId, owner.organizationId],
+            );
+            if (!conv.rowCount) {
+            await client.query("ROLLBACK");
+            return null;
+            }
+
+            const insert = (role: MessageRole, content: string) =>
+            client.query(
+                `INSERT INTO messages
+                (conversation_id, user_id, organization_id, role, content, created_at)
+                VALUES ($1, $2, $3, $4, $5, clock_timestamp())
+                RETURNING id, role, content, created_at AS "createdAt"`,
+                [conversationId, owner.userId, owner.organizationId, role, content],
+            );
+
+            const userRes = await insert("user", userContent);
+            const assistantRes = await insert("assistant", assistantContent);
+
+            const title =
+            conv.rows[0].title === "Nouvelle conversation"
+                ? userContent.slice(0, 80)
+                : conv.rows[0].title;
+
+            await client.query(
+            `UPDATE conversations SET title = $4, updated_at = now()
+            WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+            [conversationId, owner.userId, owner.organizationId, title],
+            );
+
+            await client.query("COMMIT");
+            return {
+            userMessage: userRes.rows[0] as StoredMessage,
+            assistantMessage: assistantRes.rows[0] as StoredMessage,
+            };
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 }

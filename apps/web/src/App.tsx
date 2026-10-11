@@ -3,12 +3,7 @@ import keycloak from './auth/keycloak'
 import { api, type Message } from './lib/api'
 import './App.css'
 import {
-  Pencil,
-  Code2,
-  Lightbulb,
-  Image,
   ArrowUp,
-  ArrowUpRight,
   Menu,
 } from 'lucide-react'
 import Sidebar, {
@@ -21,29 +16,6 @@ type Conversation = {
   messages: Message[]
   updatedAt: number
 }
-
-const suggestions = [
-  {
-    icon: Lightbulb,
-    title: 'Brainstormer',
-    text: 'Trouver des idées et explorer des possibilités',
-  },
-  {
-    icon: Code2,
-    title: 'Coder',
-    text: 'Écrire, comprendre et déboguer du code',
-  },
-  {
-    icon: Pencil,
-    title: 'Écrire',
-    text: 'Rédiger, reformuler et améliorer un texte',
-  },
-  {
-    icon: Image,
-    title: 'Créer',
-    text: 'Imaginer un concept ou préparer un visuel',
-  },
-]
 
 function Snowfall() {
   return (

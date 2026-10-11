@@ -72,19 +72,20 @@ export const authenticateWithKeycloak: Authenticator = async (request) => {
       role: string;
     }>(
       `SELECT ei.user_id, om.organization_id, om.role
-       FROM external_identities ei
-       JOIN organization_members om ON om.user_id = ei.user_id
-       WHERE ei.issuer = $1 AND ei.subject = $2
-       ORDER BY om.created_at ASC
-       LIMIT 2`,
+      FROM external_identities ei
+      JOIN organization_members om ON om.user_id = ei.user_id
+      WHERE ei.issuer = $1 AND ei.subject = $2
+      ORDER BY om.created_at ASC`,
       [issuer, payload.sub],
     );
 
-    if (result.rows.length !== 1) {
-      return null;
-    }
-
-    const membership = result.rows[0];
+    const requestedOrg = request.headers["x-organization-id"];
+    const membership =
+      typeof requestedOrg === "string" && requestedOrg !== ""
+        ? result.rows.find((row) => row.organization_id === requestedOrg)
+        : result.rows.length === 1
+          ? result.rows[0]
+          : undefined;
 
     if (
       !membership ||

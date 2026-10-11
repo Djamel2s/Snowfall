@@ -4,7 +4,7 @@ import { runChatGraph } from "./chat-graph.js";
 
 describe("Chat graph", () => {
   it("traite un message et renvoie une réponse", async () => {
-    const response = await runChatGraph("Bonjour");
+    const response = await runChatGraph({ message: "Bonjour" });
 
     assert.equal(
       response,
@@ -14,8 +14,7 @@ describe("Chat graph", () => {
 
   it("préserve le contenu du message", async () => {
     const message = "Explique-moi TypeScript.";
-
-    const response = await runChatGraph(message);
+    const response = await runChatGraph({ message });
 
     assert.equal(response, `Snowfall a reçu ton message : ${message}`);
   });
