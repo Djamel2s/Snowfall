@@ -17,6 +17,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    container_name: snowfall-keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./infra/keycloak/themes:/opt/keycloak/themes:ro
 
 volumes:
   snowfall_postgres_data:

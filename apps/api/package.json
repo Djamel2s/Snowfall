@@ -14,7 +14,8 @@
     "check": "npm run typecheck && npm run lint --if-present && npm run test && npm run build",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "db:check": "drizzle-kit check --config drizzle.config.ts"
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:bootstrap-test": "tsx scripts/bootstrap.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -34,6 +35,7 @@
     "drizzle-orm": "^1.0.0-rc.4",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.1",
+    "jose": "^6.2.12",
     "pg": "^8.23.1",
     "zod": "^4.6.5"
   }

@@ -1,0 +1,198 @@
+
+/* Snowfall — minimal, inspired by Apple */
+
+:root {
+  --bg: #0b0d12;
+  --surface: #151922;
+  --border: #303644;
+  --text: #f5f7fa;
+  --muted: #a1a8b5;
+  --blue: #0a84ff;
+  --blue-hover: #2994ff;
+}
+
+html,
+body,
+.login-pf,
+.login-pf body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--bg) !important;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.login-pf-page {
+  padding: 8vh 16px 40px;
+}
+
+#kc-header {
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+#kc-header-wrapper {
+  padding: 0;
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -1.1px;
+  text-transform: none;
+}
+
+#kc-header-wrapper::before {
+  content: none !important;
+}
+
+.card-pf {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 390px;
+  margin: 0 auto;
+  padding: 32px;
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 16px;
+  box-shadow: none !important;
+}
+
+#kc-page-title,
+.login-pf-header h1 {
+  margin: 0 0 26px;
+  color: var(--text) !important;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  text-align: center;
+}
+
+.login-pf-page label,
+.login-pf-page .pf-c-form__label-text {
+  margin-bottom: 8px;
+  color: #dce1e9 !important;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.login-pf-page .form-group {
+  margin-bottom: 20px;
+  background: transparent !important;
+}
+
+.login-pf-page .form-control,
+.login-pf-page input[type="text"],
+.login-pf-page input[type="email"],
+.login-pf-page input[type="password"],
+.login-pf-page input[type="tel"],
+.login-pf-page .pf-c-form-control,
+.login-pf-page .pf-v5-c-form-control {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  color: var(--text) !important;
+  background: #0e121a !important;
+  background-image: none !important;
+  border: 1px solid #343b49 !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+  font-size: 14px;
+  -webkit-text-fill-color: var(--text);
+}
+
+.login-pf-page input::placeholder {
+  color: #7f8795 !important;
+  -webkit-text-fill-color: #7f8795;
+}
+
+.login-pf-page .form-control:focus,
+.login-pf-page input:focus {
+  border-color: var(--blue) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.16) !important;
+}
+
+.login-pf-page input:-webkit-autofill,
+.login-pf-page input:-webkit-autofill:hover,
+.login-pf-page input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text) !important;
+  -webkit-box-shadow: 0 0 0 1000px #0e121a inset !important;
+}
+
+.login-pf-page #kc-login,
+.login-pf-page input[type="submit"],
+.login-pf-page button[type="submit"],
+.login-pf-page .btn-primary {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 8px;
+  color: #fff !important;
+  background: var(--blue) !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 150ms ease;
+}
+
+.login-pf-page #kc-login:hover,
+.login-pf-page .btn-primary:hover {
+  background: var(--blue-hover) !important;
+}
+
+.login-pf-page a {
+  color: #64aaff !important;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.login-pf-page a:hover {
+  text-decoration: underline;
+}
+
+#kc-form-options,
+#kc-form-buttons {
+  margin-top: 18px;
+}
+
+.login-pf-page .checkbox label,
+.login-pf-page .pf-c-check__label {
+  color: var(--muted) !important;
+}
+
+.login-pf-page .alert,
+.login-pf-page .pf-c-alert {
+  color: var(--text) !important;
+  background: #241820 !important;
+  border: 1px solid #57303c !important;
+  border-radius: 9px;
+}
+
+.login-pf-page #kc-info,
+.login-pf-page #kc-registration {
+  color: var(--muted) !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 480px) {
+  .login-pf-page {
+    padding: 48px 16px 24px;
+  }
+
+  .card-pf {
+    padding: 26px 22px;
+    border-radius: 13px;
+  }
+
+  #kc-header-wrapper {
+    font-size: 27px;
+  }
+}
