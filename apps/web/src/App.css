@@ -68,24 +68,9 @@
   text-decoration: none;
 }
 
-.brand-icon {
-  display: grid;
-  width: 35px;
-  height: 35px;
-  place-items: center;
-  border: 1px solid rgba(183, 215, 255, .24);
-  border-radius: 12px;
-  background: linear-gradient(145deg, rgba(166, 207, 255, .16), rgba(67, 105, 154, .06));
-  box-shadow: inset 0 1px rgba(255,255,255,.08), 0 0 22px rgba(112, 167, 229, .08);
-  color: #c9e3ff;
-}
-
-.brand-icon svg { width: 23px; height: 23px; }
-
 .brand-word {
-  font-size: 19px;
-  font-weight: 650;
-  letter-spacing: -.8px;
+  font-size: 28px;
+  font-weight: 700;
 }
 
 .brand-word > span { color: #91c4ff; }
@@ -343,6 +328,8 @@
   align-self: center;
   padding: 30px 26px 38px;
   text-align: center;
+  position: relative;
+  isolation: isolate;
 }
 
 .welcome-orbit {
@@ -718,17 +705,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   color: #ffffff;
 }
 
-.rail-brand .brand-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-}
-
-.rail-brand .brand-icon svg {
-  width: 20px;
-  height: 20px;
-}
-
 .rail-divider {
   width: 27px;
   height: 1px;
@@ -768,7 +744,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  padding: 15px 12px 10px;
+  padding: 10px 12px 10px;
   background: var(--sidebar-panel-bg);
 }
 
@@ -777,7 +753,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   align-items: center;
   justify-content: space-between;
   min-height: 36px;
-  margin-bottom: 16px;
+  margin-bottom: 26px;
+  background: linear-gradient(100deg, #7fa9dd 5%, #a7c9f5 20%, #f1f6ff 50%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .sidebar-panel-header .brand {
@@ -785,7 +764,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .sidebar-panel-header .brand-word {
-  font-size: 18px;
+  font-size: 24px;
   letter-spacing: -.6px;
 }
 
@@ -1063,4 +1042,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .rail-tooltip {
     display: none;
   }
+}
+
+.snowfall-logo {
+  width: 25px;
+  height: 25px;
+  opacity: 0.80;
+  object-fit: contain;
+}
+
+.snowfall-hero {
+  position: absolute;
+  z-index: -1;
+  width: min(720px, 50%);
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  padding: 30px 26px 38px;
+  object-fit: contain;
+  transform: rotate(-20deg);
+  opacity: 0.12;
+  pointer-events: none;
+  user-select: none;
 }

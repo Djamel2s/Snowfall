@@ -486,59 +486,21 @@ function App() {
             </div>
           ) : !activeConversation || activeConversation.messages.length === 0 ? (
             <section className="welcome">
-              <div className="welcome-orbit">
-                <div className="orbit orbit-one" />
-                <div className="orbit orbit-two" />
-                <div className="orbit-core">
-                  <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
-                    <path
-                      d="M24 5v38M7.55 14.5l32.9 19M7.55 33.5l32.9-19M17 9l7 4 7-4M17 39l7-4 7 4M8 24l5-8M40 24l-5-8M8 24l5 8M40 24l-5 8"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                    />
-                    <circle cx="24" cy="24" r="4" fill="currentColor" />
-                  </svg>
-                </div>
-                <span className="orbit-star star-a">✳</span>
-                <span className="orbit-star star-b">✧</span>
-                <span className="orbit-star star-c">·</span>
-              </div>
-
-              <div className="welcome-eyebrow">
-                <span /> UN ESPACE POUR VOS IDÉES
-              </div>
+              <img
+                src="/logo.png"
+                alt="Snowfall"
+                className="snowfall-hero"
+                />
               <h1>
-                Laissez vos idées
+                Snowfall
                 <br />
-                <span>prendre forme.</span>
+                <span>Votre espace de travail.</span>
               </h1>
               <p className="welcome-description">
-                Réfléchissez, explorez, créez. Un espace calme pour aller plus
-                loin, une conversation à la fois.
+                {activeConversation
+                  ? 'Commencez par poser une question ou partager une idée.'
+                  : 'Créez une nouvelle conversation pour commencer.'}
               </p>
-
-              <div className="suggestion-grid">
-                {suggestions.map((suggestion) => (
-                  <button
-                    className="suggestion-card"
-                    key={suggestion.title}
-                    onClick={() => {
-                      setInput(suggestion.text)
-                      inputRef.current?.focus()
-                    }}
-                  >
-                    <span className="suggestion-icon">
-                      <suggestion.icon size={19} strokeWidth={1.7} />
-                    </span>
-                    <span className="suggestion-copy">
-                      <strong>{suggestion.title}</strong>
-                      <span>{suggestion.text}</span>
-                    </span>
-                    <span className="suggestion-arrow"><ArrowUpRight size={15} /></span>
-                  </button>
-                ))}
-              </div>
             </section>
           ) : (
             <section className="messages" aria-live="polite">

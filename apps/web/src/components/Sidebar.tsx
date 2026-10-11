@@ -103,14 +103,11 @@ export default function Sidebar({
             onClick={() => onSidebarCollapsedChange(!sidebarCollapsed)}
           >
             <span className="brand-icon">
-              <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                <path
-                  d="M16 3v26M4.75 9.5l22.5 13M4.75 22.5l22.5-13M11 5.8l5 3 5-3M11 26.2l5-3 5 3"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
+              <img
+                src="/logo.png"
+                alt="Snowfall"
+                className="snowfall-logo"
                 />
-              </svg>
             </span>
           </button>
 
@@ -163,7 +160,7 @@ export default function Sidebar({
               onClick={(event) => event.preventDefault()}
             >
               <span className="brand-word">
-                snowfall<span>.</span>
+                Snowfall
               </span>
             </a>
           </header>
