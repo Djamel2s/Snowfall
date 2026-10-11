@@ -58,6 +58,8 @@ function App() {
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeId,
   )
+  const conversationIsEmpty =
+    !activeConversation || activeConversation.messages.length === 0
 
   const username = String(
     keycloak.tokenParsed?.name ??
@@ -426,91 +428,96 @@ function App() {
           </div>
         </header>
 
-        <div className="chat-scroll-area">
-          {historyLoading || messagesLoading ? (
-            <div className="welcome">
-              <div className="typing-indicator" aria-label="Chargement">
-                <span />
-                <span />
-                <span />
-              </div>
-              <p className="welcome-description">
-                Chargement de votre conversation…
-              </p>
-            </div>
-          ) : !activeConversation || activeConversation.messages.length === 0 ? (
-            <section className="welcome">
-              <img
-                src="/logo.png"
-                alt="Snowfall"
-                className="snowfall-hero"
-                />
-              <h1>
-                Snowfall
-                <br />
-                <span>Votre espace de travail.</span>
-              </h1>
-              <p className="welcome-description">
-                {activeConversation
-                  ? 'Commencez par poser une question ou partager une idée.'
-                  : 'Créez une nouvelle conversation pour commencer.'}
-              </p>
-            </section>
-          ) : (
-            <section className="messages" aria-live="polite">
-              {activeConversation.messages.map((message) => (
-                <article
-                  className={`message message-${message.role}`}
-                  key={message.id}
-                >
-                  <div className="message-avatar">
-                    {message.role === 'user' ? (
-                      username.slice(0, 1).toUpperCase()
-                    ) : (
-                      <span>✳</span>
-                    )}
-                  </div>
-                  <div className="message-body">
-                    <div className="message-author">
-                      {message.role === 'user' ? username : 'Snowfall'}
-                    </div>
-                    <p>{message.content}</p>
-                    {message.role === 'assistant' && (
-                      <button
-                        className="copy-message"
-                        onClick={() =>
-                          void navigator.clipboard?.writeText(message.content)
-                        }
-                      >
-                        ⧉ Copier
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-
-              {sending && (
-                <div className="message message-assistant">
-                  <div className="message-avatar">✳</div>
-                  <div className="message-body">
-                    <div className="message-author">Snowfall</div>
-                    <div
-                      className="typing-indicator"
-                      aria-label="Réponse en cours"
-                    >
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                  </div>
+        <div
+          className={`chat-content ${
+            conversationIsEmpty ? 'chat-content-empty' : ''
+          }`}
+        >
+          <div className="chat-scroll-area">
+            {historyLoading || messagesLoading ? (
+              <div className="welcome">
+                <div className="typing-indicator" aria-label="Chargement">
+                  <span />
+                  <span />
+                  <span />
                 </div>
-              )}
-              <div ref={bottomRef} />
-            </section>
-          )}
-        </div>
+                <p className="welcome-description">
+                  Chargement de votre conversation…
+                </p>
+              </div>
+            ) : conversationIsEmpty ? (
+              <section className="welcome">
+                <img
+                  src="/logo.png"
+                  alt="Snowfall"
+                  className="snowfall-hero"
+                />
+                <h1>
+                  Snowfall
+                  <br />
+                  <span>Votre espace de travail.</span>
+                </h1>
+                <p className="welcome-description">
+                  {activeConversation
+                    ? 'Commencez par poser une question ou partager une idée.'
+                    : 'Créez une nouvelle conversation pour commencer.'}
+                </p>
+              </section>
+            ) : (
+              <section className="messages" aria-live="polite">
+                {activeConversation.messages.map((message) => (
+                  <article
+                    className={`message message-${message.role}`}
+                    key={message.id}
+                  >
+                    <div className="message-avatar">
+                      {message.role === 'user' ? (
+                        username.slice(0, 1).toUpperCase()
+                      ) : (
+                        <span>✳</span>
+                      )}
+                    </div>
+                    <div className="message-body">
+                      <div className="message-author">
+                        {message.role === 'user' ? username : 'Snowfall'}
+                      </div>
+                      <p>{message.content}</p>
+                      {message.role === 'assistant' && (
+                        <button
+                          className="copy-message"
+                          onClick={() =>
+                            void navigator.clipboard?.writeText(message.content)
+                          }
+                        >
+                          ⧉ Copier
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
 
-        <footer className="composer-area">
+                {sending && (
+                  <div className="message message-assistant">
+                    <div className="message-avatar">✳</div>
+                    <div className="message-body">
+                      <div className="message-author">Snowfall</div>
+                      <div
+                        className="typing-indicator"
+                        aria-label="Réponse en cours"
+                      >
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={bottomRef} />
+              </section>
+            )}
+          </div>
+
+          <footer className="composer-area">
           {error && (
             <div className="error-notice" role="alert">
               <span>{error}</span>
@@ -521,22 +528,21 @@ function App() {
           )}
 
           <div className="composer">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              placeholder="Posez votre question, explorez une idée..."
-              rows={1}
-              aria-label="Votre message"
-              disabled={sending || !activeConversation || messagesLoading}
-            />
             <div className="composer-toolbar">
               <div className="composer-hints">
                 <span className="composer-sparkle">✧</span>
               </div>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                placeholder="Posez votre question, explorez une idée..."
+                rows={1}
+                aria-label="Votre message"
+                disabled={sending || !activeConversation || messagesLoading}
+              />
               <div className="composer-actions">
-                <span className="keyboard-hint">↵ Envoyer</span>
                 <button
                   className="send-button"
                   onClick={() => void sendMessage()}
@@ -552,7 +558,8 @@ function App() {
           <p className="composer-disclaimer">
             Snowfall peut se tromper. Vérifiez les informations importantes.
           </p>
-        </footer>
+          </footer>
+        </div>
       </section>
     </main>
   )

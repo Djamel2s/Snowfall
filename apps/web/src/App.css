@@ -285,6 +285,17 @@
   min-width: 0;
 }
 
+.chat-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.chat-content-empty {
+  justify-content: center;
+}
+
 .chat-topbar {
   display: flex;
   flex-shrink: 0;
@@ -318,6 +329,11 @@
   scrollbar-width: thin;
 }
 
+.chat-content-empty .chat-scroll-area {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .welcome {
   display: flex;
   width: min(720px, 100%);
@@ -330,6 +346,10 @@
   text-align: center;
   position: relative;
   isolation: isolate;
+}
+
+.chat-content-empty .welcome {
+  flex: 0 0 auto;
 }
 
 .welcome-orbit {
@@ -499,6 +519,21 @@
   padding: 0 30px 17px;
 }
 
+.chat-content:not(.chat-content-empty) .composer-area {
+  animation: composer-dock .45s ease-out both;
+}
+
+@keyframes composer-dock {
+  from {
+    opacity: .72;
+    transform: translateY(-42px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .composer {
   padding: 14px 14px 10px;
   border: 1px solid rgba(177, 208, 247, .17);
@@ -579,11 +614,6 @@
 .error-notice button { border: 0; background: transparent; color: inherit; font-size: 18px; }
 
 .mobile-scrim { display: none; }
-
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 2px solid #8fc1ff;
-  outline-offset: 3px;
-}
 
 @media (max-width: 800px) {
   .sidebar { flex-basis: 238px; }
@@ -769,17 +799,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .sidebar-panel-header .brand-word > span {
-  color: #a3a3a3;
+  color: #63738b;
 }
 
 .new-chat-button {
   min-height: 40px;
   gap: 10px;
   padding: 0 11px;
-  border: 1px solid #383838;
+  border: 1px solid #63738b50;
   border-radius: 9px;
-  background: #242424;
-  color: #f2f2f2;
+  background: #63738b50;
+  color: #ffffff;
   font-size: 13px;
   font-weight: 500;
   transition: background .15s, border-color .15s;
@@ -787,8 +817,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .new-chat-button:hover:not(:disabled) {
   transform: none;
-  border-color: #505050;
-  background: #303030;
+  border-color: #63738b50;
+  background: #63738b50;
 }
 
 .new-chat-button:disabled {
@@ -802,8 +832,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: 0 10px;
   border-color: transparent;
   border-radius: 8px;
-  background: #222222;
-  color: #a3a3a3;
+  background: #63738b50;
+  color: #63738b;
 }
 
 .search-box input {
@@ -811,14 +841,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 .search-box input::placeholder {
-  color: #929292;
+  color: #63738b;
 }
 
 .search-clear {
   padding: 0 2px;
   border: 0;
   background: transparent;
-  color: #a3a3a3;
+  color: #63738b;
 }
 
 .sidebar-section-label {
@@ -826,7 +856,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   align-items: center;
   min-height: 29px;
   margin: 15px 4px 5px;
-  color: #999999;
+  color: #ffffff;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: .35px;
@@ -844,7 +874,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   margin: 0 -4px;
   padding: 0 4px 12px;
   scrollbar-width: thin;
-  scrollbar-color: #454545 transparent;
+  scrollbar-color: #63738b transparent;
 }
 
 .conversation-item {
@@ -853,13 +883,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   min-height: 36px;
   padding: 2px 4px 2px 7px;
   border-radius: 7px;
-  color: #d4d4d4;
+  color: #ffffff;
 }
 
 .conversation-item:hover,
 .conversation-item.selected {
   border-color: transparent;
-  background: #292929;
+  background: #63738b50;
   color: #ffffff;
 }
 
@@ -879,7 +909,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .conversation-symbol {
   flex-shrink: 0;
-  color: #a3a3a3;
+  color: #63738b;
 }
 
 .conversation-title {
@@ -898,7 +928,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #a3a3a3;
+  color: #63738b;
   opacity: 0;
   transition: opacity .12s, background .12s, color .12s;
 }
@@ -929,18 +959,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   height: 32px;
   border: 0;
   border-radius: 50%;
-  background: #393939;
-  color: #f5f5f5;
+  background: #63738b50;
+  color: #ffffff;
 }
 
 .account-info strong {
-  color: #eeeeee;
+  color: #ffffff;
   font-size: 12px;
   font-weight: 500;
 }
 
 .account-info span {
-  color: #999999;
+  color: #63738b;
   font-size: 10px;
 }
 
@@ -972,11 +1002,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   place-items: center;
   border: 1px solid var(--sidebar-border);
   border-radius: 12px;
-  color: #c2c2c2;
+  color: #63738b;
 }
 
 .sidebar-placeholder strong {
-  color: #eeeeee;
+  color: #ffffff;
   font-size: 13px;
   font-weight: 500;
 }
