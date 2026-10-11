@@ -21,11 +21,15 @@ services:
     image: quay.io/keycloak/keycloak:26.8.0
     container_name: snowfall-keycloak
     restart: unless-stopped
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?Define KEYCLOAK_ADMIN in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Define KEYCLOAK_ADMIN_PASSWORD in .env}
     command: start-dev --import-realm
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./infra/keycloak/themes:/opt/keycloak/themes:ro
+      - ./infra/keycloak/realm:/opt/keycloak/data/import:ro
 
 volumes:
   snowfall_postgres_data:

@@ -42,7 +42,7 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(true)
-  const [messagesLoading, setMessagesLoading] = useState(false)
+  const [loadedId, setLoadedId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -54,6 +54,7 @@ function App() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
+  const messagesLoading = activeId !== null && loadedId !== activeId
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeId,
   )
@@ -143,47 +144,43 @@ function App() {
     }
   }, [])
 
-  // Charge les messages de la conversation sélectionnée.
-  useEffect(() => {
-    if (!activeId) {
-      setMessagesLoading(false)
-      return
-    }
+    useEffect(() => {
+      if (!activeId) return
 
-    let cancelled = false
-    setMessagesLoading(true)
+      const id = activeId
+      let cancelled = false
 
-    async function loadMessages() {
-      try {
-        const messages = await api.getMessages(activeId!)
-        if (cancelled) return
+      async function loadMessages() {
+        try {
+          const messages = await api.getMessages(id)
+          if (cancelled) return
 
-        setConversations((current) =>
-          current.map((conversation) =>
-            conversation.id === activeId
-              ? { ...conversation, messages }
-              : conversation,
-          ),
-        )
-      } catch (cause) {
-        if (!cancelled) {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : 'Impossible de charger les messages.',
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation.id === id
+                ? { ...conversation, messages }
+                : conversation,
+            ),
           )
+        } catch (cause) {
+          if (!cancelled) {
+            setError(
+              cause instanceof Error
+                ? cause.message
+                : 'Impossible de charger les messages.',
+            )
+          }
+        } finally {
+          if (!cancelled) setLoadedId(id)
         }
-      } finally {
-        if (!cancelled) setMessagesLoading(false)
       }
-    }
 
-    void loadMessages()
+      void loadMessages()
 
-    return () => {
-      cancelled = true
-    }
-  }, [activeId])
+      return () => {
+        cancelled = true
+      }
+    }, [activeId])
 
   function updateConversation(
     id: string,

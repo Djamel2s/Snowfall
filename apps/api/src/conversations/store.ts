@@ -171,8 +171,8 @@ export class PostgresConversationStore implements ConversationStore {
       client.release();
     }
   }
-  // class PostgresConversationStore
-async appendExchange(
+
+  async appendExchange(
   owner: ConversationOwner,
   conversationId: string,
   userContent: string,

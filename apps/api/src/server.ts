@@ -2,7 +2,6 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import dotenv from "dotenv";
-import { chatRequestSchema } from "./schemas/chat.js";
 import { runChatGraph } from "./graph/chat-graph.js";
 import databasePlugin from "./plugins/database.js";
 import {
@@ -200,13 +199,22 @@ export function createAppServer(
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error }, "Erreur non gérée");
-    const status =
-      error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+
+    const statusCode =
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      typeof error.statusCode === "number"
         ? error.statusCode
         : 500;
-    return reply
-      .code(status)
-      .send({ error: status === 500 ? "Internal server error" : error.message });
+
+    const status = statusCode >= 400 && statusCode < 500 ? statusCode : 500;
+    const message =
+      status !== 500 && error instanceof Error
+        ? error.message
+        : "Internal server error";
+
+    return reply.code(status).send({ error: message });
   });
 
   app.setNotFoundHandler(async (_request, reply) => {
