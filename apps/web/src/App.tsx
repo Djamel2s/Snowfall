@@ -4,17 +4,26 @@ import { api, type Message } from './lib/api'
 import './App.css'
 import {
   ArrowUp,
+  Folder,
   Menu,
+  Paperclip,
 } from 'lucide-react'
 import Sidebar, {
   type SidebarPanel,
 } from './components/Sidebar'
+import FR from "country-flag-icons/react/3x2/FR";
 
 type Conversation = {
   id: string
   title: string
   messages: Message[]
   updatedAt: number
+}
+
+export type Project = {
+  id: string
+  name: string
+  conversationIds: string[]
 }
 
 function Snowfall() {
@@ -49,6 +58,17 @@ function App() {
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const saved = localStorage.getItem('snowfall:projects')
+      return saved ? JSON.parse(saved) as Project[] : []
+    } catch {
+      return []
+    }
+  })
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [projectDialogOpen, setProjectDialogOpen] = useState(false)
+  const [projectName, setProjectName] = useState('')
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -84,6 +104,10 @@ function App() {
       JSON.stringify(pinnedIds),
     )
   }, [pinnedIds])
+
+  useEffect(() => {
+    localStorage.setItem('snowfall:projects', JSON.stringify(projects))
+  }, [projects])
 
   function togglePinned(id: string) {
     setPinnedIds((current) =>
@@ -218,6 +242,19 @@ function App() {
         conversation,
         ...current.filter((item) => item.id !== conversation.id),
       ])
+      if (activeProjectId) {
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === activeProjectId &&
+            !project.conversationIds.includes(conversation.id)
+              ? {
+                  ...project,
+                  conversationIds: [...project.conversationIds, conversation.id],
+                }
+              : project,
+          ),
+        )
+      }
       setActiveId(conversation.id)
 
       requestAnimationFrame(() => inputRef.current?.focus())
@@ -230,7 +267,33 @@ function App() {
     } finally {
       setCreating(false)
     }
+
   }
+
+  function createProject() {
+    const name = projectName.trim()
+    if (!name) return
+
+    const project: Project = {
+      id: crypto.randomUUID(),
+      name,
+      conversationIds: [],
+    }
+
+    setProjects((current) => [project, ...current])
+    setActiveProjectId(project.id)
+    setProjectName('')
+    setProjectDialogOpen(false)
+    setSidebarOpen(false)
+  }
+
+  const visibleConversations = activeProjectId
+    ? conversations.filter((conversation) =>
+        projects
+          .find((project) => project.id === activeProjectId)
+          ?.conversationIds.includes(conversation.id),
+      )
+    : conversations
 
   async function sendMessage(text = input) {
     const message = text.trim()
@@ -381,7 +444,9 @@ function App() {
       <Snowfall />
 
       <Sidebar
-        conversations={conversations}
+        visibleConversations={visibleConversations}
+        projects={projects}
+        activeProjectId={activeProjectId}
         activeId={activeId}
         username={username}
         historyLoading={historyLoading}
@@ -404,10 +469,71 @@ function App() {
         onSidebarOpenChange={setSidebarOpen}
         onSidebarCollapsedChange={setSidebarCollapsed}
         onSidebarPanelChange={setSidebarPanel}
+        onProjectSelect={(id) => {
+          setActiveProjectId(id)
+          setSidebarPanel('projects')
+          setActiveId(
+            id
+              ? projects
+                  .find((project) => project.id === id)
+                  ?.conversationIds
+                  .map((conversationId) =>
+                    conversations.find((item) => item.id === conversationId),
+                  )
+                  .find(Boolean)?.id ?? null
+              : conversations[0]?.id ?? null,
+          )
+        }}
+        onCreateProject={() => setProjectDialogOpen(true)}
         onSettings={() =>
           setError('Les paramètres dédiés seront ajoutés dans une prochaine étape.')
         }
       />
+
+      {projectDialogOpen && (
+        <div className="dialog-backdrop" role="presentation">
+          <form
+            className="project-dialog"
+            onSubmit={(event) => {
+              event.preventDefault()
+              createProject()
+            }}
+          >
+            <div className="project-dialog-heading">
+              <div className="project-dialog-icon"><Folder size={18} /></div>
+              <div>
+                <h2>Créer un projet</h2>
+                <p>Regroupe tes conversations au même endroit.</p>
+              </div>
+            </div>
+            <label>
+              Nom du projet
+              <input
+                autoFocus
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="Ex. Projet Snowfall"
+                maxLength={80}
+              />
+            </label>
+            <div className="project-dialog-actions">
+              <button
+                type="button"
+                className="dialog-secondary"
+                onClick={() => {
+                  setProjectDialogOpen(false)
+                  setProjectName('')
+                }}
+              >
+                Annuler
+              </button>
+              <button type="submit" className="dialog-primary" disabled={!projectName.trim()}>
+                Créer le projet
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <section className="chat-workspace">
         <header className="chat-topbar">
@@ -425,6 +551,7 @@ function App() {
           </div>
 
           <div className="topbar-right">
+            <FR title="France" className="w-6 h-6 rounded-full ring-1 ring-black/10" />
           </div>
         </header>
 
@@ -530,7 +657,14 @@ function App() {
           <div className="composer">
             <div className="composer-toolbar">
               <div className="composer-hints">
-                <span className="composer-sparkle">✧</span>
+                <button
+                  className="attachment-button"
+                  type="button"
+                  aria-label="Ajouter une pièce jointe"
+                  title="Ajouter une pièce jointe"
+                >
+                  <Paperclip size={16} />
+                </button>
               </div>
               <textarea
                 ref={inputRef}

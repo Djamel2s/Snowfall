@@ -20,5 +20,8 @@
     "db:generate": "drizzle-kit generate --config apps/api/drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config apps/api/drizzle.config.ts",
     "db:check": "drizzle-kit check --config apps/api/drizzle.config.ts"
+  },
+  "dependencies": {
+    "country-flag-icons": "^1.6.20"
   }
 }

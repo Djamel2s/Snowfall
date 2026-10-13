@@ -9,7 +9,12 @@ import {
   Bot,
   Settings,
   Pin,
+  X,
+  ChevronDown,
+  ChevronRight,
+  CornerDownRight,
 } from 'lucide-react'
+import type { Project } from '../App'
 
 export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents'
 
@@ -19,7 +24,9 @@ export type SidebarConversation = {
 }
 
 type SidebarProps = {
-  conversations: SidebarConversation[]
+  visibleConversations: SidebarConversation[]
+  projects: Project[]
+  activeProjectId: string | null
   activeId: string | null
   username: string
   historyLoading: boolean
@@ -38,11 +45,15 @@ type SidebarProps = {
   onSidebarOpenChange: (open: boolean) => void
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onSidebarPanelChange: (panel: SidebarPanel) => void
+  onProjectSelect: (id: string | null) => void
+  onCreateProject: () => void
   onSettings: () => void
 }
 
 export default function Sidebar({
-  conversations,
+  visibleConversations,
+  projects,
+  activeProjectId,
   activeId,
   username,
   historyLoading,
@@ -61,9 +72,11 @@ export default function Sidebar({
   onSidebarOpenChange,
   onSidebarCollapsedChange,
   onSidebarPanelChange,
+  onProjectSelect,
+  onCreateProject,
   onSettings,
 }: SidebarProps) {
-  const filteredConversations = conversations.filter((conversation) =>
+  const filteredConversations = visibleConversations.filter((conversation) =>
     conversation.title.toLowerCase().includes(search.toLowerCase()),
   )
 
@@ -196,7 +209,93 @@ export default function Sidebar({
             )}
           </label>
 
-          {sidebarPanel === 'chats' || sidebarPanel === 'pinned' ? (
+          {sidebarPanel === 'projects' ? (
+            <div className="projects-panel">
+                <div className="sidebar-section-label projects-heading">
+                <span>PROJETS</span>
+                <button
+                    className="projects-add-button"
+                    type="button"
+                    onClick={onCreateProject}
+                    aria-label="Créer un projet"
+                    title="Créer un projet"
+                >
+                    <Plus size={15} />
+                </button>
+                </div>
+
+                <div className="project-tree">
+                {projects.map((project) => {
+                    const isActive = activeProjectId === project.id
+
+                    return (
+                    <div className={`project-node ${isActive ? 'expanded' : ''}`} key={project.id}>
+                        <button
+                        className={`project-item ${isActive ? 'selected' : ''}`}
+                        type="button"
+                        aria-expanded={isActive}
+                        onClick={() => onProjectSelect(project.id)}
+                        >
+                        {isActive ? (
+                            <ChevronDown size={14} className="project-chevron" />
+                        ) : (
+                            <ChevronRight size={14} className="project-chevron" />
+                        )}
+                        <Folder size={15} />
+                        <span className="project-name">{project.name}</span>
+                        <small>{project.conversationIds.length}</small>
+                        </button>
+
+                        {isActive && (
+                        <div className="project-children">
+                            {filteredConversations.map((conversation) => (
+                            <div
+                                className={`conversation-project-item child ${conversation.id === activeId ? 'selected' : ''}`}
+                                key={conversation.id}
+                            >
+                                <button
+                                className="conversation-select"
+                                title={conversation.title}
+                                type="button"
+                                onClick={() => onSelectConversation(conversation.id)}
+                                >
+                                <CornerDownRight size={14} className="conversation-symbol" />
+                                {/* <MessageSquare size={14} className="conversation-symbol" /> */}
+                                <span className="conversation-title">{conversation.title}</span>
+                                </button>
+                                <button
+                                className="conversation-delete"
+                                type="button"
+                                aria-label={`Supprimer ${conversation.title}`}
+                                onClick={() => onDeleteConversation(conversation.id)}
+                                >
+                                <X size={14} />
+                                </button>
+                            </div>
+                            ))}
+
+                            {!historyLoading && filteredConversations.length === 0 && (
+                            <p className="empty-search child">Aucune conversation dans ce projet.</p>
+                            )}
+                        </div>
+                        )}
+                    </div>
+                    )
+                })}
+                </div>
+
+                {projects.length === 0 && (
+                <div className="projects-empty">
+                    <Folder size={22} />
+                    <strong>Crée ton premier projet</strong>
+                    <p>Organise tes conversations par thème.</p>
+                    <button type="button" onClick={onCreateProject}>
+                    <Plus size={14} /> Nouveau projet
+                    </button>
+                </div>
+                )}
+            </div>
+          ) : sidebarPanel === 'chats' || sidebarPanel === 'pinned' ? (
             <>
               {sidebarPanel === 'chats' && (
                 <section className="sidebar-group">
