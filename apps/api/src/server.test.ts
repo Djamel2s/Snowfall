@@ -21,7 +21,14 @@ const testUser = {
 function createFakeStore(): ConversationStore {
   const conversations = new Map<
     string,
-    { id: string; owner: ConversationOwner; title: string; createdAt: string; updatedAt: string }
+    {
+      id: string;
+      owner: ConversationOwner;
+      title: string;
+      agentId: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }
   >();
   const messages = new Map<
     string,
@@ -42,22 +49,29 @@ function createFakeStore(): ConversationStore {
           item.owner.organizationId === owner.organizationId
         )
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .map(({ id, title, createdAt, updatedAt }) => ({
-          id, title, createdAt, updatedAt,
+        .map(({ id, title, agentId, createdAt, updatedAt }) => ({
+          id, title, agentId, createdAt, updatedAt,
         })),
 
-    create: async (owner, title = "Nouvelle conversation") => {
+    create: async (owner, title = "Nouvelle conversation", agentId) => {
       const now = new Date().toISOString();
       const conversation = {
         id: crypto.randomUUID(),
         owner: { userId: owner.userId, organizationId: owner.organizationId },
         title,
+        agentId: agentId ?? null,
         createdAt: now,
         updatedAt: now,
       };
       conversations.set(conversation.id, conversation);
       messages.set(conversation.id, []);
-      return { id: conversation.id, title, createdAt: now, updatedAt: now };
+      return { id: conversation.id, title, agentId: conversation.agentId, createdAt: now, updatedAt: now };
+    },
+
+    get: async (owner, id) => {
+      if (!owns(owner, id)) return null;
+      const { owner: _owner, ...summary } = conversations.get(id)!;
+      return summary;
     },
 
     getMessages: async (owner, id) => {
@@ -86,6 +100,17 @@ function createFakeStore(): ConversationStore {
       return { userMessage, assistantMessage };
     },
   };
+}
+
+function parseSse(body: string) {
+  return body
+    .split("\n\n")
+    .filter((block) => block.trim() !== "")
+    .map((block) => {
+      const event = /^event: (.+)$/m.exec(block)?.[1];
+      const data = /^data: (.+)$/m.exec(block)?.[1];
+      return { event, data: data ? (JSON.parse(data) as any) : undefined };
+    });
 }
 
 function createAuditRecorder() {
@@ -279,13 +304,59 @@ describe("API HTTP : conversations", () => {
     assert.equal(response.statusCode, 400);
   });
 
-  it("renvoie 502 et n'enregistre rien si le graphe échoue", async (t) => {
+  it("diffuse la réponse en SSE puis enregistre l'échange", async (t) => {
+    const store = createFakeStore();
+    const conversation = await store.create(testUser);
+    const { events: audit, audit: auditLog } = createAuditRecorder();
+    const app = server({
+      ...signedIn,
+      conversationStore: store,
+      audit: auditLog,
+      runChat: async (_input, options) => {
+        options?.onToken?.("Bon");
+        options?.onToken?.("jour");
+        return { content: "Bonjour", model: "fake", usage: { inputTokens: 5, outputTokens: 2 } };
+      },
+    });
+    t.after(() => app.close());
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/conversations/${conversation.id}/messages`,
+      headers: { origin: ORIGIN },
+      payload: { content: "Salut" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.match(String(response.headers["content-type"]), /^text\/event-stream/);
+    assert.equal(response.headers["cache-control"], "no-store");
+
+    const events = parseSse(response.body);
+    assert.deepEqual(
+      events.filter((event) => event.event === "token").map((event) => event.data.text),
+      ["Bon", "jour"],
+    );
+    const done = events.at(-1);
+    assert.equal(done?.event, "done");
+    assert.equal(done?.data.assistantMessage.content, "Bonjour");
+
+    const saved = await store.getMessages(testUser, conversation.id);
+    assert.deepEqual(saved?.map((message) => message.content), ["Salut", "Bonjour"]);
+
+    const created = audit.find((event) => event.eventType === "message.create");
+    assert.deepEqual(created?.details, { agentId: "", model: "fake", inputTokens: 5, outputTokens: 2 });
+  });
+
+  it("signale l'échec du modèle et n'enregistre rien", async (t) => {
     const store = createFakeStore();
     const conversation = await store.create(testUser);
     const app = server({
       ...signedIn,
       conversationStore: store,
-      runChat: async () => { throw new Error("boom"); },
+      runChat: async (_input, options) => {
+        options?.onToken?.("début");
+        throw new Error("boom");
+      },
     });
     t.after(() => app.close());
 
@@ -296,14 +367,17 @@ describe("API HTTP : conversations", () => {
       payload: { content: "Bonjour" },
     });
 
-    assert.equal(response.statusCode, 502);
+    const last = parseSse(response.body).at(-1);
+    assert.equal(last?.event, "error");
+    assert.deepEqual(last?.data, { error: "Assistant unavailable" });
+    assert.ok(!response.body.includes("boom"), "le détail de l'erreur ne fuit pas");
     assert.deepEqual(await store.getMessages(testUser, conversation.id), []);
   });
 
   it("limite les messages par utilisateur, quelle que soit l'IP", async (t) => {
     const store = createFakeStore();
     const conversation = await store.create(testUser);
-    const app = server({ ...signedIn, conversationStore: store, runChat: async () => "ok" });
+    const app = server({ ...signedIn, conversationStore: store, runChat: async () => ({ content: "ok", model: "fake" }) });
     t.after(() => app.close());
 
     const statuses: number[] = [];
@@ -318,7 +392,7 @@ describe("API HTTP : conversations", () => {
       statuses.push(response.statusCode);
     }
 
-    assert.equal(statuses.filter((status) => status === 201).length, 20);
+    assert.equal(statuses.filter((status) => status === 200).length, 20);
     assert.equal(statuses.at(-1), 429);
   });
 });

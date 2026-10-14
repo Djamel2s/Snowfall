@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Plus,
   Search,
@@ -13,7 +14,12 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  Pencil,
+  Check,
 } from 'lucide-react'
+import type { Agent } from '../lib/api'
+import { AgentAvatar, ProviderLogo } from './AgentAvatar'
+import AgentStudio from './AgentStudio'
 import type { Project } from '../App'
 
 export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents'
@@ -46,8 +52,17 @@ type SidebarProps = {
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onSidebarPanelChange: (panel: SidebarPanel) => void
   onProjectSelect: (id: string | null) => void
-  onCreateProject: () => void
+  onCreateProject: (name: string) => void
+  agents: Agent[]
+  activeAgentId: string | null
+  /** undefined : éditeur fermé ; null : création ; Agent : modification. */
+  agentEditor: Agent | null | undefined
+  onAgentEditorClose: () => void
+  onAgentSaved: (agent: Agent) => void
+  onAgentDeleted: (id: string) => void
   onCreateAgent?: () => void
+  onStartAgent: (agent: Agent) => void
+  onEditAgent: (agent: Agent) => void
   onSettings: () => void
 }
 
@@ -75,9 +90,24 @@ export default function Sidebar({
   onSidebarPanelChange,
   onProjectSelect,
   onCreateProject,
+  agents,
+  activeAgentId,
+  agentEditor,
+  onAgentEditorClose,
+  onAgentSaved,
+  onAgentDeleted,
   onCreateAgent,
+  onStartAgent,
+  onEditAgent,
   onSettings,
 }: SidebarProps) {
+  const [projectDraft, setProjectDraft] = useState<string | null>(null)
+
+  function submitProject() {
+    const name = projectDraft?.trim()
+    if (name) onCreateProject(name)
+    setProjectDraft(null)
+  }
   const filteredConversations = visibleConversations.filter((conversation) =>
     conversation.title.toLowerCase().includes(search.toLowerCase()),
   )
@@ -144,6 +174,8 @@ export default function Sidebar({
               aria-label={label}
               aria-current={sidebarPanel === id ? 'page' : undefined}
               onClick={() => {
+                // Changer de section ferme le créateur d'agent resté ouvert.
+                if (agentEditor !== undefined && id !== sidebarPanel) onAgentEditorClose()
                 onSidebarPanelChange(id)
                 onSidebarOpenChange(false)
               }}
@@ -179,6 +211,16 @@ export default function Sidebar({
             </a>
           </header>
 
+          {agentEditor !== undefined ? (
+            <AgentStudio
+              key={agentEditor?.id ?? 'new'}
+              agent={agentEditor}
+              onClose={onAgentEditorClose}
+              onSaved={onAgentSaved}
+              onDeleted={onAgentDeleted}
+            />
+          ) : (
+          <>
           <button
             className="new-chat-button"
             onClick={onNewChat}
@@ -217,13 +259,38 @@ export default function Sidebar({
                 <button
                     className="projects-add-button"
                     type="button"
-                    onClick={onCreateProject}
+                    onClick={() => setProjectDraft('')}
                     aria-label="Créer un projet"
                     title="Créer un projet"
                 >
                     <Plus size={15} />
                 </button>
                 </div>
+
+                {projectDraft !== null && (
+                  <form
+                    className="project-draft"
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      submitProject()
+                    }}
+                  >
+                    <Folder size={14} />
+                    <input
+                      autoFocus
+                      aria-label="Nom du projet"
+                      placeholder="Nom du projet"
+                      maxLength={80}
+                      value={projectDraft}
+                      onChange={(event) => setProjectDraft(event.target.value)}
+                      onKeyDown={(event) => event.key === 'Escape' && setProjectDraft(null)}
+                      onBlur={() => !projectDraft.trim() && setProjectDraft(null)}
+                    />
+                    <button type="submit" aria-label="Créer" disabled={!projectDraft.trim()}>
+                      <Check size={14} />
+                    </button>
+                  </form>
+                )}
 
                 <div className="project-tree">
                 {projects.map((project) => {
@@ -285,7 +352,7 @@ export default function Sidebar({
                 })}
                 </div>
 
-                {projects.length === 0 && (
+                {projects.length === 0 && projectDraft === null && (
                 <div className="projects-empty">
                     <Folder size={22} />
                     <strong>Crée ton premier projet</strong>
@@ -438,11 +505,45 @@ export default function Sidebar({
                 </button>
               </div>
 
-              <div className="projects-empty">
-                <Bot size={22} />
-                <strong>Crée ton premier agent</strong>
-              </div>
+              {agents.length === 0 ? (
+                <div className="projects-empty">
+                  <Bot size={22} />
+                  <strong>Crée ton premier agent</strong>
+                </div>
+              ) : (
+                <div className="agent-list">
+                  {agents.map((agent) => (
+                    <div
+                      key={agent.id}
+                      className={`agent-item ${agent.id === activeAgentId ? 'active' : ''}`}
+                    >
+                      <button
+                        type="button"
+                        className="agent-item-main"
+                        title={agent.name}
+                        onClick={() => onStartAgent(agent)}
+                      >
+                        <AgentAvatar avatar={agent.avatar} size={30} />
+                        <span className="agent-item-name">{agent.name}</span>
+                        <ProviderLogo provider={agent.provider} size={12} />
+                      </button>
+                      {agent.canEdit && (
+                        <button
+                          type="button"
+                          className="agent-item-edit"
+                          aria-label={`Modifier ${agent.name}`}
+                          onClick={() => onEditAgent(agent)}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+          )}
+          </>
           )}
 
           <footer className="sidebar-bottom">

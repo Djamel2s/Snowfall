@@ -6,8 +6,17 @@ import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { Redis } from "ioredis";
+import { PassThrough } from "node:stream";
 import { z } from "zod";
-import { runChatGraph } from "./graph/chat-graph.js";
+import { echoModel, ModelRefusalError, type ChatRunner } from "./graph/chat-graph.js";
+import {
+  ProviderRegistry,
+  ProviderUnavailableError,
+  type ModelRegistry,
+} from "./llm/registry.js";
+import { providerIds, type ModelSelection, type ProviderId, type ProviderSettings } from "./llm/types.js";
+import { agentProfileSchema } from "./agents/profile.js";
+import { PostgresAgentStore, type Agent, type AgentStore } from "./agents/store.js";
 import databasePlugin from "./plugins/database.js";
 import {
   createSessionAuthenticator,
@@ -69,7 +78,11 @@ export type AppDependencies = {
   conversationStore: ConversationStore;
   audit?: AuditLog;
   login?: LoginFlow;
-  runChat?: typeof runChatGraph;
+  /** Fournisseurs LLM configurés et catalogue de modèles. */
+  models?: ModelRegistry;
+  agents?: AgentStore;
+  /** Remplace le routage par modèle (tests). */
+  runChat?: ChatRunner;
 };
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -90,7 +103,11 @@ export function createAppServer(deps: AppDependencies) {
   const audit = deps.audit ?? noopAuditLog;
   const authenticate: Authenticator = deps.authenticate ?? (async () => null);
   const conversationStore = deps.conversationStore;
-  const runChat = deps.runChat ?? runChatGraph;
+  const models = deps.models ?? new ProviderRegistry({}, { fallback: echoModel });
+  const agents = deps.agents;
+  const runnerFor = (selection?: ModelSelection) =>
+    deps.runChat ?? models.runner(selection);
+
 
   const app = Fastify({
     logger: (deps.logger ?? process.env.NODE_ENV !== "test")
@@ -136,7 +153,13 @@ export function createAppServer(deps: AppDependencies) {
   const conversationIdSchema = z.uuid();
   const createConversationSchema = z.object({
     title: z.string().trim().min(1).max(120).optional(),
+    agentId: z.uuid().optional(),
   }).strict();
+
+  const agentInputSchema = agentProfileSchema.extend({
+    provider: z.enum(providerIds),
+    model: z.string().min(1).max(120),
+  });
 
   const messageSchema = z.object({
     content: z.string().trim().min(1).max(4000),
@@ -150,6 +173,11 @@ export function createAppServer(deps: AppDependencies) {
   function principal(request: FastifyRequest): AuthenticatedUser {
     if (!request.principal) throw new Error("PRINCIPAL_MISSING");
     return request.principal;
+  }
+
+  // Agent partagé dans l'organisation : modifiable par son auteur ou un admin.
+  function canManageAgent(user: AuthenticatedUser, agent: Agent) {
+    return agent.createdBy === user.userId || user.role === "owner" || user.role === "admin";
   }
 
   function canWrite(user: AuthenticatedUser) {
@@ -243,7 +271,11 @@ export function createAppServer(deps: AppDependencies) {
       }
 
       try {
-        const conversation = await conversationStore.create(user, parsed.data.title);
+        const conversation = await conversationStore.create(
+          user,
+          parsed.data.title,
+          parsed.data.agentId,
+        );
         await audit.record(request, {
           eventType: "conversation.create",
           outcome: "success",
@@ -257,9 +289,19 @@ export function createAppServer(deps: AppDependencies) {
         if (error instanceof Error && error.message === "MEMBERSHIP_REQUIRED") {
           return reply.code(403).send({ error: "Forbidden" });
         }
+        if (error instanceof Error && error.message === "AGENT_NOT_FOUND") {
+          return reply.code(400).send({ error: "Invalid request" });
+        }
         throw error;
       }
     });
+
+    api.get("/models", async (_request, reply) => {
+      privateResponse(reply);
+      return { providers: await models.catalog() };
+    });
+
+    if (agents) registerAgentRoutes(api, agents);
 
     api.get("/conversations/:id/messages", async (request, reply) => {
       const user = principal(request);
@@ -327,47 +369,200 @@ export function createAppServer(deps: AppDependencies) {
           return reply.code(400).send({ error: "Invalid request" });
         }
 
-        const history = await conversationStore.getMessages(user, params.data.id);
-        if (history === null) {
+        const conversation = await conversationStore.get(user, params.data.id);
+        const history = conversation
+          ? await conversationStore.getMessages(user, params.data.id)
+          : null;
+        if (!conversation || history === null) {
           return conversationNotFound(request, reply, user, params.data.id);
         }
 
-        let response: string;
-        try {
-          response = await runChat({
-            message: body.data.content,
-            history: history.slice(-20),
-          });
-        } catch (error) {
-          request.log.error({ err: error }, "Échec du graphe de chat");
-          return reply.code(502).send({ error: "Assistant unavailable" });
-        }
-
-        const exchange = await conversationStore.appendExchange(
-          user,
-          params.data.id,
-          body.data.content,
-          response,
+        // Agent supprimé entre-temps : repli sur le modèle par défaut.
+        const agent = conversation.agentId && agents
+          ? await agents.get(user, conversation.agentId)
+          : null;
+        const runChat = runnerFor(
+          agent ? { provider: agent.provider, model: agent.model } : undefined,
         );
-        if (!exchange) return conversationNotFound(request, reply, user, params.data.id);
 
-        await audit.record(request, {
-          eventType: "message.create",
-          outcome: "success",
-          actorUserId: user.userId,
-          organizationId: user.organizationId,
-          targetType: "conversation",
-          targetId: params.data.id,
+        // Réponse diffusée en Server-Sent Events : "token" à chaque fragment,
+        // puis "done" (messages enregistrés) ou "error". Rien n'est enregistré
+        // si la génération échoue ou si le client se déconnecte.
+        const stream = new PassThrough();
+        const send = (event: "token" | "done" | "error", data: unknown) => {
+          stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        const generation = new AbortController();
+        reply.raw.on("close", () => {
+          if (!reply.raw.writableFinished) generation.abort();
         });
 
-        return reply.code(201).send({
-          response,
-          userMessage: exchange.userMessage,
-          assistantMessage: exchange.assistantMessage,
-        });
+        void (async () => {
+          try {
+            const result = await runChat(
+              {
+                message: body.data.content,
+                history: history.slice(-20),
+                instructions: agent?.instructions,
+              },
+              { signal: generation.signal, onToken: (text) => send("token", { text }) },
+            );
+
+            const exchange = await conversationStore.appendExchange(
+              user,
+              params.data.id,
+              body.data.content,
+              result.content,
+            );
+            if (!exchange) {
+              send("error", { error: "Not found" });
+              return;
+            }
+
+            await audit.record(request, {
+              eventType: "message.create",
+              outcome: "success",
+              actorUserId: user.userId,
+              organizationId: user.organizationId,
+              targetType: "conversation",
+              targetId: params.data.id,
+              details: {
+                agentId: agent?.id ?? "",
+                model: result.model,
+                inputTokens: result.usage?.inputTokens ?? 0,
+                outputTokens: result.usage?.outputTokens ?? 0,
+              },
+            });
+
+            send("done", {
+              userMessage: exchange.userMessage,
+              assistantMessage: exchange.assistantMessage,
+            });
+          } catch (error) {
+            if (generation.signal.aborted) {
+              request.log.info("Génération interrompue par le client");
+            } else {
+              request.log.error({ err: error }, "Échec du graphe de chat");
+              send("error", {
+                error: error instanceof ModelRefusalError
+                  ? "Refused"
+                  : error instanceof ProviderUnavailableError
+                    ? "Provider unavailable"
+                    : "Assistant unavailable",
+              });
+            }
+          } finally {
+            stream.end();
+          }
+        })();
+
+        reply.header("Content-Type", "text/event-stream; charset=utf-8");
+        reply.header("X-Accel-Buffering", "no");
+        return reply.send(stream);
       },
     );
   });
+
+  function registerAgentRoutes(api: import("fastify").FastifyInstance, store: AgentStore) {
+    const idParams = z.object({ id: z.uuid() });
+
+    async function parseAgentInput(request: FastifyRequest) {
+      const parsed = agentInputSchema.safeParse(request.body);
+      if (!parsed.success) return null;
+      // Liste blanche : fournisseur configuré ET modèle publié par lui.
+      const allowed = await models.isAllowed({
+        provider: parsed.data.provider,
+        model: parsed.data.model,
+      });
+      return allowed ? parsed.data : null;
+    }
+
+    async function auditAgent(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      eventType: string,
+      agentId: string,
+      details?: Record<string, string>,
+    ) {
+      await audit.record(request, {
+        eventType,
+        outcome: "success",
+        actorUserId: user.userId,
+        organizationId: user.organizationId,
+        targetType: "agent",
+        targetId: agentId,
+        details,
+      });
+    }
+
+    const view = (user: AuthenticatedUser, agent: Agent) => ({
+      ...agent,
+      canEdit: canManageAgent(user, agent),
+    });
+
+    api.get("/agents", async (request, reply) => {
+      const user = principal(request);
+      privateResponse(reply);
+      return { agents: (await store.list(user)).map((agent) => view(user, agent)) };
+    });
+
+    api.post("/agents", async (request, reply) => {
+      const user = principal(request);
+      privateResponse(reply);
+      if (!canWrite(user)) return denyWrite(request, reply, user);
+
+      const input = await parseAgentInput(request);
+      if (!input) return reply.code(400).send({ error: "Invalid request" });
+
+      const agent = await store.create(user, input);
+      await auditAgent(request, user, "agent.create", agent.id, {
+        provider: agent.provider,
+        model: agent.model,
+      });
+      return reply.code(201).send({ agent: view(user, agent) });
+    });
+
+    api.put("/agents/:id", async (request, reply) => {
+      const user = principal(request);
+      privateResponse(reply);
+
+      const params = idParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const existing = await store.get(user, params.data.id);
+      if (!existing) return reply.code(404).send({ error: "Not found" });
+      if (!canManageAgent(user, existing)) return denyWrite(request, reply, user);
+
+      const input = await parseAgentInput(request);
+      if (!input) return reply.code(400).send({ error: "Invalid request" });
+
+      const agent = await store.update(user, params.data.id, input);
+      if (!agent) return reply.code(404).send({ error: "Not found" });
+
+      await auditAgent(request, user, "agent.update", agent.id, {
+        provider: agent.provider,
+        model: agent.model,
+      });
+      return { agent: view(user, agent) };
+    });
+
+    api.delete("/agents/:id", async (request, reply) => {
+      const user = principal(request);
+      privateResponse(reply);
+
+      const params = idParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const existing = await store.get(user, params.data.id);
+      if (!existing) return reply.code(404).send({ error: "Not found" });
+      if (!canManageAgent(user, existing)) return denyWrite(request, reply, user);
+
+      await store.delete(user, params.data.id);
+      await auditAgent(request, user, "agent.delete", params.data.id);
+      return reply.code(204).send();
+    });
+  }
 
   function registerLoginRoutes(
     api: import("fastify").FastifyInstance,
@@ -540,7 +735,32 @@ export function createProductionServer() {
   const auditRef: { current: AuditLog } = { current: noopAuditLog };
   const audit: AuditLog = { record: (request, event) => auditRef.current.record(request, event) };
 
+  const llmLimits = {
+    maxOutputTokens: config.llm.maxOutputTokens,
+    timeoutMs: config.llm.timeoutMs,
+  };
+  const providers: Partial<Record<ProviderId, ProviderSettings>> = {};
+  if (config.llm.mistralApiKey) providers.mistral = { apiKey: config.llm.mistralApiKey, ...llmLimits };
+  if (config.llm.openaiApiKey) providers.openai = { apiKey: config.llm.openaiApiKey, ...llmLimits };
+  if (config.llm.anthropicApiKey) providers.anthropic = { apiKey: config.llm.anthropicApiKey, ...llmLimits };
+  if (config.llm.localBaseUrl) {
+    providers.local = {
+      apiKey: config.llm.localApiKey ?? "local",
+      baseUrl: config.llm.localBaseUrl,
+      ...llmLimits,
+    };
+  }
+
+  const models = new ProviderRegistry(providers, {
+    defaultSelection: config.llm.defaultSelection,
+    // Modèle echo local, uniquement hors production (refusé par loadConfig).
+    fallback: config.nodeEnv === "production" ? undefined : echoModel,
+  });
+  const keyring = new OrganizationKeyring(new LocalKeyEncryptionProvider(masterKey));
+
   const app = createAppServer({
+    models,
+    agents: new PostgresAgentStore(pool, keyring),
     appOrigin: config.appOrigin,
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,
@@ -553,10 +773,7 @@ export function createProductionServer() {
       directory,
       audit,
     }),
-    conversationStore: new PostgresConversationStore(
-      pool,
-      new OrganizationKeyring(new LocalKeyEncryptionProvider(masterKey)),
-    ),
+    conversationStore: new PostgresConversationStore(pool, keyring),
     login: {
       issuer: config.oidc.issuer,
       oidc,
@@ -567,6 +784,16 @@ export function createProductionServer() {
   });
 
   auditRef.current = new PostgresAuditLog(pool, app.log);
+
+  app.log.info(
+    {
+      providers: Object.keys(providers),
+      defaultModel: config.llm.defaultSelection
+        ? `${config.llm.defaultSelection.provider}:${config.llm.defaultSelection.model}`
+        : "echo",
+    },
+    "Fournisseurs LLM configurés",
+  );
 
   const purge = setInterval(() => {
     sessions.purgeExpired().catch((error: unknown) => {

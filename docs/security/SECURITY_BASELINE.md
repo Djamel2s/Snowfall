@@ -117,6 +117,8 @@ IdP-side revocation, logout).
 | Audit | Keycloak user and admin events (180 days). Application `audit_events` table: logins, logouts, session revocations, denied writes, cross-tenant access attempts, CSRF rejections, conversation lifecycle. Append-only (INSERT-only grant + trigger). No message content, tokens or secrets. |
 | Logging | Authorization/cookie headers redacted, query strings never logged. |
 | Rate limiting | 300 req/min per IP, 20 login attempts/min per IP, 20 messages/min per user; Redis store for multi-instance; explicit `TRUST_PROXY`. |
+| Agents | Org-shared agents (provider + model + instructions + avatar). Name, avatar and instructions encrypted per organization; RLS on `agents`; composite FK forbids linking a conversation to another organization's agent. Only the author or an owner/admin can edit or delete. Model allow-list: a provider must be configured server-side and the model must appear in its live catalog. Avatar images: PNG/JPEG/WebP only, verified by magic bytes, ≤150 KB, re-encoded client-side (strips EXIF/GPS); SVG refused. Agent instructions are wrapped after the platform rules, which they cannot replace. |
+| AI provider | Mistral, OpenAI, Anthropic (official SDK, server-side refusal fallback) and OpenAI-compatible local servers (base URL from config only, never from users). Only the current message and the last 20 turns of the same conversation are sent, with a fixed system prompt. Output capped (`LLM_MAX_OUTPUT_TOKENS`), hard timeout (`LLM_TIMEOUT_MS`), generation aborted when the client disconnects, nothing persisted on failure. Model id and token counts audited, never content. The local `echo` model is refused in production. |
 | Backups | `pg_dump` piped to `age` (never plaintext on disk), checksum, restore script. |
 
 ## 12. Known gaps
@@ -129,7 +131,10 @@ IdP-side revocation, logout).
 - Audit log retention/purge procedure and log shipping to a SIEM are not defined.
 - No Content-Security-Policy is defined for the production web server yet.
 - CI: actions not pinned by SHA, no SAST, no SBOM, no container image scanning.
-- AI provider data handling and contractual controls require formal review.
+- AI providers: sign each provider's DPA (Mistral, OpenAI, Anthropic), confirm data
+  location and retention (request zero data retention where eligible), list them as
+  subprocessors, and let each organization restrict which providers it allows.
+  No per-organization model allow-list or token quota yet.
 - Monitoring, alerting, incident response and periodic restore tests require
   owners and evidence.
 

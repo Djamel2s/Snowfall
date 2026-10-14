@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { getSession, logout as endSession } from './auth/session'
-import { api, type Message } from './lib/api'
+import { api, type Agent, type Message } from './lib/api'
 import './App.css'
+import './agents.css'
 import {
   ArrowUp,
-  Folder,
   Menu,
   Paperclip,
 } from 'lucide-react'
@@ -12,10 +12,12 @@ import Sidebar, {
   type SidebarPanel,
 } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
+import { AgentAvatar, ProviderLogo } from './components/AgentAvatar'
 
 type Conversation = {
   id: string
   title: string
+  agentId: string | null
   messages: Message[]
   updatedAt: number
 }
@@ -55,6 +57,7 @@ function App() {
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -67,8 +70,9 @@ function App() {
     }
   })
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
-  const [projectDialogOpen, setProjectDialogOpen] = useState(false)
-  const [projectName, setProjectName] = useState('')
+  const [agents, setAgents] = useState<Agent[]>([])
+  // undefined = studio fermé, null = création, Agent = édition.
+  const [studioAgent, setStudioAgent] = useState<Agent | null | undefined>(undefined)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -78,6 +82,9 @@ function App() {
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeId,
   )
+  const activeAgent =
+    agents.find((agent) => agent.id === activeConversation?.agentId) ?? null
+
   const conversationIsEmpty =
     !activeConversation || activeConversation.messages.length === 0
 
@@ -115,8 +122,13 @@ function App() {
   }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [activeConversation?.messages, sending])
+    // Pendant le streaming, défilement instantané : un défilement animé à
+    // chaque fragment saccaderait.
+    bottomRef.current?.scrollIntoView({
+      behavior: streamingText ? 'auto' : 'smooth',
+      block: 'end',
+    })
+  }, [activeConversation?.messages, sending, streamingText])
 
   useEffect(() => {
     return () => abortRef.current?.abort()
@@ -137,6 +149,7 @@ function App() {
         const items: Conversation[] = history.map((item) => ({
           id: item.id,
           title: item.title,
+          agentId: item.agentId,
           messages: [],
           updatedAt: new Date(item.updatedAt).getTime(),
         }))
@@ -161,6 +174,10 @@ function App() {
     }
 
     void loadHistory()
+    api
+      .listAgents()
+      .then((items) => !cancelled && setAgents(items))
+      .catch(() => undefined)
 
     return () => {
       cancelled = true
@@ -216,7 +233,7 @@ function App() {
     )
   }
 
-  async function newChat() {
+  async function newChat(agent?: Agent) {
     if (creating) return
 
     abortRef.current?.abort()
@@ -226,11 +243,12 @@ function App() {
     setCreating(true)
 
     try {
-      const created = await api.createConversation()
+      const created = await api.createConversation(agent ? { agentId: agent.id } : {})
 
       const conversation: Conversation = {
         id: created.id,
         title: created.title,
+        agentId: created.agentId,
         messages: [],
         updatedAt: new Date(created.updatedAt).getTime(),
       }
@@ -267,10 +285,7 @@ function App() {
 
   }
 
-  function createProject() {
-    const name = projectName.trim()
-    if (!name) return
-
+  function createProject(name: string) {
     const project: Project = {
       id: crypto.randomUUID(),
       name,
@@ -279,9 +294,13 @@ function App() {
 
     setProjects((current) => [project, ...current])
     setActiveProjectId(project.id)
-    setProjectName('')
-    setProjectDialogOpen(false)
-    setSidebarOpen(false)
+  }
+
+  function openAgentEditor(agent: Agent | null) {
+    setSidebarPanel('agents')
+    setSidebarCollapsed(false)
+    setSidebarOpen(true)
+    setStudioAgent(agent)
   }
 
   const visibleConversations = activeProjectId
@@ -327,8 +346,14 @@ function App() {
     }))
 
     try {
-      // Cette route enregistre le message utilisateur et la réponse.
-      const result = await api.sendMessage(conversationId, message)
+      // La réponse arrive par fragments ; la route enregistre ensuite le
+      // message utilisateur et la réponse complète.
+      const result = await api.sendMessage(conversationId, message, {
+        signal: controller.signal,
+        onToken: (text) => {
+          if (!controller.signal.aborted) setStreamingText((current) => current + text)
+        },
+      })
 
       if (controller.signal.aborted) return
 
@@ -386,6 +411,7 @@ function App() {
       if (abortRef.current === controller) {
         abortRef.current = null
         setSending(false)
+        setStreamingText('')
       }
     }
   }
@@ -476,56 +502,36 @@ function App() {
               : conversations[0]?.id ?? null,
           )
         }}
-        onCreateProject={() => setProjectDialogOpen(true)}
+        onCreateProject={createProject}
+        agents={agents}
+        activeAgentId={activeAgent?.id ?? null}
+        onCreateAgent={() => openAgentEditor(null)}
+        onStartAgent={(agent) => void newChat(agent)}
+        onEditAgent={openAgentEditor}
+        agentEditor={studioAgent}
+        onAgentEditorClose={() => setStudioAgent(undefined)}
+        onAgentSaved={(saved) => {
+          const isNew = !agents.some((agent) => agent.id === saved.id)
+          setAgents((current) =>
+            isNew
+              ? [...current, saved]
+              : current.map((agent) => (agent.id === saved.id ? saved : agent)),
+          )
+          setStudioAgent(undefined)
+          if (isNew) void newChat(saved)
+        }}
+        onAgentDeleted={(id) => {
+          setAgents((current) => current.filter((agent) => agent.id !== id))
+          // Les conversations restent, rattachées au modèle par défaut.
+          setConversations((current) =>
+            current.map((item) => (item.agentId === id ? { ...item, agentId: null } : item)),
+          )
+          setStudioAgent(undefined)
+        }}
         onSettings={() =>
           setError('Les paramètres dédiés seront ajoutés dans une prochaine étape.')
         }
       />
-
-      {projectDialogOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <form
-            className="project-dialog"
-            onSubmit={(event) => {
-              event.preventDefault()
-              createProject()
-            }}
-          >
-            <div className="project-dialog-heading">
-              <div className="project-dialog-icon"><Folder size={18} /></div>
-              <div>
-                <h2>Créer un projet</h2>
-                <p>Regroupe tes conversations au même endroit.</p>
-              </div>
-            </div>
-            <label>
-              Nom du projet
-              <input
-                autoFocus
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-                placeholder="Ex. Projet Snowfall"
-                maxLength={80}
-              />
-            </label>
-            <div className="project-dialog-actions">
-              <button
-                type="button"
-                className="dialog-secondary"
-                onClick={() => {
-                  setProjectDialogOpen(false)
-                  setProjectName('')
-                }}
-              >
-                Annuler
-              </button>
-              <button type="submit" className="dialog-primary" disabled={!projectName.trim()}>
-                Créer le projet
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       <section className="chat-workspace">
         <header className="chat-topbar">
@@ -537,6 +543,13 @@ function App() {
             >
               <Menu size={19} />
             </button>
+            {activeAgent && (
+              <span className="topbar-agent">
+                <AgentAvatar avatar={activeAgent.avatar} size={24} />
+                {activeAgent.name}
+                <ProviderLogo provider={activeAgent.provider} size={12} />
+              </span>
+            )}
             <span className="topbar-current">
               {activeConversation?.title ?? 'Nouvelle conversation'}
             </span>
@@ -564,6 +577,15 @@ function App() {
                   Chargement de votre conversation…
                 </p>
               </div>
+            ) : conversationIsEmpty && activeAgent ? (
+              <section className="welcome welcome-agent">
+                <AgentAvatar avatar={activeAgent.avatar} size={104} />
+                <h1>{activeAgent.name}</h1>
+                <span className="welcome-agent-model">
+                  <ProviderLogo provider={activeAgent.provider} size={13} />
+                  {activeAgent.model}
+                </span>
+              </section>
             ) : conversationIsEmpty ? (
               <section className="welcome">
                 <img
@@ -589,16 +611,22 @@ function App() {
                     className={`message message-${message.role}`}
                     key={message.id}
                   >
-                    <div className="message-avatar">
+                    <div
+                      className={`message-avatar ${
+                        message.role === 'assistant' && activeAgent ? 'message-avatar-agent' : ''
+                      }`}
+                    >
                       {message.role === 'user' ? (
                         username.slice(0, 1).toUpperCase()
+                      ) : activeAgent ? (
+                        <AgentAvatar avatar={activeAgent.avatar} size={30} />
                       ) : (
                         <span>✳</span>
                       )}
                     </div>
                     <div className="message-body">
                       <div className="message-author">
-                        {message.role === 'user' ? username : 'Snowfall'}
+                        {message.role === 'user' ? username : activeAgent?.name ?? 'Snowfall'}
                       </div>
                       <p>{message.content}</p>
                       {message.role === 'assistant' && (
@@ -617,17 +645,23 @@ function App() {
 
                 {sending && (
                   <div className="message message-assistant">
-                    <div className="message-avatar">✳</div>
+                    <div className={`message-avatar ${activeAgent ? 'message-avatar-agent' : ''}`}>
+                      {activeAgent ? <AgentAvatar avatar={activeAgent.avatar} size={30} /> : '✳'}
+                    </div>
                     <div className="message-body">
-                      <div className="message-author">Snowfall</div>
-                      <div
-                        className="typing-indicator"
-                        aria-label="Réponse en cours"
-                      >
-                        <span />
-                        <span />
-                        <span />
-                      </div>
+                      <div className="message-author">{activeAgent?.name ?? 'Snowfall'}</div>
+                      {streamingText ? (
+                        <p>{streamingText}</p>
+                      ) : (
+                        <div
+                          className="typing-indicator"
+                          aria-label="Réponse en cours"
+                        >
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

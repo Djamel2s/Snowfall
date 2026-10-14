@@ -25,6 +25,7 @@ const privileges: Record<string, string[]> = {
   organization_members: ["SELECT"],
   external_identities: ["SELECT"],
   organization_keys: ["SELECT", "INSERT"],
+  agents: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   conversations: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   messages: ["SELECT", "INSERT", "DELETE"],
   sessions: ["SELECT", "INSERT", "UPDATE", "DELETE"],

@@ -188,6 +188,41 @@ export const auditEvents = pgTable(
   ],
 );
 
+export const agentProviders = ["mistral", "openai", "anthropic", "local"] as const;
+
+// Agents partagés au sein d'une organisation. Nom, avatar et instructions
+// sont chiffrés ensemble (profile_enc) ; seuls fournisseur et modèle restent
+// en clair pour le routage.
+export const agents = pgTable.withRLS(
+  "agents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    profileEnc: text("profile_enc").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("agents_org_idx").on(table.organizationId, table.updatedAt),
+    unique("agents_id_org_unique").on(table.id, table.organizationId),
+    check(
+      "agents_provider_check",
+      sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'local')`,
+    ),
+    check("agents_model_check", sql`length(${table.model}) BETWEEN 1 AND 120`),
+    tenantPolicy("agents_tenant", table.organizationId),
+  ],
+);
+
 export const conversations = pgTable.withRLS(
   "conversations",
   {
@@ -198,6 +233,9 @@ export const conversations = pgTable.withRLS(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    // Clé étrangère composite (agent_id, organization_id) posée en SQL :
+    // ON DELETE SET NULL (agent_id) n'est pas exprimable avec Drizzle.
+    agentId: uuid("agent_id"),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })

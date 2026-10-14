@@ -15,6 +15,7 @@ export type ConversationOwner = {
 export type ConversationSummary = {
   id: string;
   title: string;
+  agentId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -28,7 +29,12 @@ export type StoredMessage = {
 
 export interface ConversationStore {
   list(owner: ConversationOwner): Promise<ConversationSummary[]>;
-  create(owner: ConversationOwner, title?: string): Promise<ConversationSummary>;
+  create(
+    owner: ConversationOwner,
+    title?: string,
+    agentId?: string,
+  ): Promise<ConversationSummary>;
+  get(owner: ConversationOwner, conversationId: string): Promise<ConversationSummary | null>;
   getMessages(
     owner: ConversationOwner,
     conversationId: string,
@@ -59,9 +65,13 @@ function messageAad(
 type ConversationRow = {
   id: string;
   title: string | null;
+  agentId: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId",
+  created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 type MessageRow = {
   id: string;
@@ -87,6 +97,7 @@ export class PostgresConversationStore implements ConversationStore {
   ): Promise<ConversationSummary> {
     return {
       id: row.id,
+      agentId: row.agentId,
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
         : await this.keyring.decrypt(
@@ -103,7 +114,7 @@ export class PostgresConversationStore implements ConversationStore {
   async list(owner: ConversationOwner): Promise<ConversationSummary[]> {
     return withTenant(this.pool, owner, async (client) => {
       const result = await client.query<ConversationRow>(
-        `SELECT id, title, created_at AS "createdAt", updated_at AS "updatedAt"
+        `SELECT ${SUMMARY_COLUMNS}
          FROM conversations
          WHERE user_id = $1 AND organization_id = $2
          ORDER BY updated_at DESC
@@ -119,25 +130,44 @@ export class PostgresConversationStore implements ConversationStore {
     });
   }
 
+  async get(owner: ConversationOwner, conversationId: string) {
+    return withTenant(this.pool, owner, async (client) => {
+      const result = await client.query<ConversationRow>(
+        `SELECT ${SUMMARY_COLUMNS} FROM conversations
+         WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+        [conversationId, owner.userId, owner.organizationId],
+      );
+      const row = result.rows[0];
+      return row ? this.decryptTitle(client, owner, row) : null;
+    });
+  }
+
   async create(
     owner: ConversationOwner,
     title?: string,
+    agentId?: string,
   ): Promise<ConversationSummary> {
     return withTenant(this.pool, owner, async (client) => {
+      if (agentId) {
+        // RLS : seul un agent de l'organisation courante est visible.
+        const agent = await client.query("SELECT 1 FROM agents WHERE id = $1", [agentId]);
+        if (!agent.rowCount) throw new Error("AGENT_NOT_FOUND");
+      }
+
       const id = randomUUID();
       const encryptedTitle = title
         ? await this.keyring.encrypt(client, owner.organizationId, title, titleAad(owner, id))
         : null;
 
       const result = await client.query<ConversationRow>(
-        `INSERT INTO conversations (id, user_id, organization_id, title)
-         SELECT $1, $2, $3, $4
+        `INSERT INTO conversations (id, user_id, organization_id, title, agent_id)
+         SELECT $1, $2, $3, $4, $5
          WHERE EXISTS (
            SELECT 1 FROM organization_members
            WHERE user_id = $2 AND organization_id = $3
          )
-         RETURNING id, title, created_at AS "createdAt", updated_at AS "updatedAt"`,
-        [id, owner.userId, owner.organizationId, encryptedTitle],
+         RETURNING ${SUMMARY_COLUMNS}`,
+        [id, owner.userId, owner.organizationId, encryptedTitle, agentId ?? null],
       );
 
       const row = result.rows[0];
@@ -145,6 +175,7 @@ export class PostgresConversationStore implements ConversationStore {
 
       return {
         id: row.id,
+        agentId: row.agentId,
         title: title ?? DEFAULT_CONVERSATION_TITLE,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
