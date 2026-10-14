@@ -5,6 +5,8 @@ import './App.css'
 import './agents.css'
 import {
   ArrowUp,
+  Check,
+  Copy,
   Menu,
   Paperclip,
 } from 'lucide-react'
@@ -61,6 +63,17 @@ function App() {
   const [streamingText, setStreamingText] = useState('')
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
   const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  async function copyMessage(message: Message) {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopiedId(message.id)
+      setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1500)
+    } catch {
+      setError('Copie impossible : le navigateur a refusé l’accès au presse-papiers.')
+    }
+  }
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -568,6 +581,14 @@ function App() {
             conversationIsEmpty ? 'chat-content-empty' : ''
           }`}
         >
+          {/* Logo en fond : centré à l'accueil, il « se couche » derrière le
+              composer dès que la conversation commence. */}
+          <img
+            src="/logo.png"
+            alt=""
+            aria-hidden="true"
+            className={`snowfall-sun ${conversationIsEmpty ? '' : 'snowfall-sun-set'}`}
+          />
           <div className="chat-scroll-area">
             {historyLoading || messagesLoading ? (
               <div className="welcome">
@@ -582,8 +603,10 @@ function App() {
               </div>
             ) : conversationIsEmpty && activeAgent ? (
               <section className="welcome welcome-agent">
-                <AgentAvatar avatar={activeAgent.avatar} size={104} mood="hello" />
-                <h1>{activeAgent.name}</h1>
+                <AgentAvatar avatar={activeAgent.avatar} size={88} mood="hello" />
+                <h1>
+                  <span>{activeAgent.name}</span>
+                </h1>
                 <span className="welcome-agent-model">
                   <ProviderLogo provider={activeAgent.provider} size={13} />
                   {activeAgent.model}
@@ -591,11 +614,6 @@ function App() {
               </section>
             ) : conversationIsEmpty ? (
               <section className="welcome">
-                <img
-                  src="/logo.png"
-                  alt="Snowfall"
-                  className="snowfall-hero"
-                />
                 <h1>
                   Snowfall
                   <br />
@@ -639,11 +657,11 @@ function App() {
                       {message.role === 'assistant' && (
                         <button
                           className="copy-message"
-                          onClick={() =>
-                            void navigator.clipboard?.writeText(message.content)
-                          }
+                          aria-label={copiedId === message.id ? 'Copié' : 'Copier la réponse'}
+                          title={copiedId === message.id ? 'Copié' : 'Copier'}
+                          onClick={() => void copyMessage(message)}
                         >
-                          ⧉ Copier
+                          {copiedId === message.id ? <Check size={14} /> : <Copy size={14} />}
                         </button>
                       )}
                     </div>
