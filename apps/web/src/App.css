@@ -418,6 +418,9 @@
   font-weight: 500;
   letter-spacing: -2.4px;
   line-height: 1.17;
+  background: linear-gradient(100deg, #7fa9dd 30%, #a7c9f5 50%, #00021a 80%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .welcome h1 > span {
