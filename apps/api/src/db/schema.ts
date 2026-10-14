@@ -188,7 +188,7 @@ export const auditEvents = pgTable(
   ],
 );
 
-export const agentProviders = ["mistral", "openai", "anthropic", "local"] as const;
+export const agentProviders = ["mistral", "openai", "anthropic", "google", "local"] as const;
 
 // Agents partagés au sein d'une organisation. Nom, avatar et instructions
 // sont chiffrés ensemble (profile_enc) ; seuls fournisseur et modèle restent
@@ -216,7 +216,7 @@ export const agents = pgTable.withRLS(
     unique("agents_id_org_unique").on(table.id, table.organizationId),
     check(
       "agents_provider_check",
-      sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'local')`,
+      sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google', 'local')`,
     ),
     check("agents_model_check", sql`length(${table.model}) BETWEEN 1 AND 120`),
     tenantPolicy("agents_tenant", table.organizationId),

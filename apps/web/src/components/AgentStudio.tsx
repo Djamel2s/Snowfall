@@ -13,6 +13,7 @@ import { toAvatarDataUrl } from '../lib/image'
 import { providerMeta } from '../lib/providers'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
+import ModelSelect from './ModelSelect'
 
 type Props = {
   agent: Agent | null
@@ -118,7 +119,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
   const isAlien = avatar.kind === 'alien'
   const providers =
     catalog ??
-    (['mistral', 'openai', 'anthropic', 'local'] as const).map((id) => ({
+    (['mistral', 'openai', 'anthropic', 'google', 'local'] as const).map((id) => ({
       id,
       available: false,
       models: [],
@@ -214,22 +215,8 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
         ))}
       </div>
 
-      {providerModels.length > 0 && (
-        <div className="model-chips" role="radiogroup" aria-label="Modèle">
-          {providerModels.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="radio"
-              aria-checked={model === item.id}
-              className="model-chip"
-              title={item.id}
-              onClick={() => setModel(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+      {provider && providerModels.length > 0 && (
+        <ModelSelect provider={provider} models={providerModels} value={model} onChange={setModel} />
       )}
 
       <textarea

@@ -208,8 +208,8 @@
 
 .provider-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .provider-tile {
@@ -233,33 +233,127 @@
 
 .provider-tile:disabled { cursor: not-allowed; filter: grayscale(1); opacity: .28; }
 
-.model-chips {
+/* ---- Sélecteur de modèle ---------------------------------------------- */
+
+.model-select { position: relative; }
+
+.model-select-trigger {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  max-height: 64px;
-  overflow: auto;
-}
-
-.model-chip {
-  padding: 5px 10px;
+  width: 100%;
+  height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 10px 0 11px;
   border: 1px solid rgba(183, 210, 244, .12);
-  border-radius: 999px;
-  background: transparent;
-  color: #9fb0c8;
-  font-size: 10.5px;
-  white-space: nowrap;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
-  transition: background .15s, color .15s, border-color .15s;
+  transition: border-color .15s, background .15s;
 }
 
-.model-chip:hover { border-color: rgba(185, 217, 255, .35); color: #dbe6f5; }
+.model-select-trigger:hover { border-color: rgba(185, 217, 255, .3); }
 
-.model-chip[aria-checked="true"] {
-  border-color: #dcecff;
-  background: #dcecff;
-  color: #0c1b2e;
-  font-weight: 600;
+.model-select-trigger:focus-visible,
+.model-select-trigger[aria-expanded="true"] {
+  border-color: rgba(185, 217, 255, .5);
+  outline: none;
+  background: rgba(185, 217, 255, .06);
+}
+
+.model-select-value {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-select-chevron {
+  flex-shrink: 0;
+  color: #7f93b0;
+  transition: transform .18s ease;
+}
+
+.model-select-trigger[aria-expanded="true"] .model-select-chevron { transform: rotate(180deg); }
+
+.model-select-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  overflow: hidden;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 12px;
+  background: #0e1626;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .5), 0 0 0 1px rgba(0, 0, 0, .2);
+  animation: model-select-in .14s cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes model-select-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+.model-select-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-bottom: 1px solid rgba(183, 210, 244, .08);
+  color: #7f93b0;
+}
+
+.model-select-search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 12px;
+}
+
+.model-select-search input::placeholder { color: #4a5a73; }
+
+.model-select-popover ul {
+  max-height: 220px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  outline: none;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.model-select-popover li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: #b3c2d6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-select-popover li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-select-popover li.active { background: rgba(185, 217, 255, .09); color: #eef5ff; }
+.model-select-popover li[aria-selected="true"] { color: #eef5ff; font-weight: 600; }
+.model-select-popover li svg { flex-shrink: 0; color: #9cc4ff; }
+
+.model-select-popover .model-select-empty {
+  justify-content: center;
+  color: #5d6e87;
+  cursor: default;
 }
 
 .studio-instructions {
@@ -482,6 +576,83 @@
 @keyframes alien-blink {
   0%, 92%, 100% { transform: scaleY(1); }
   95% { transform: scaleY(.08); }
+}
+
+/* ---- Humeurs de l'alien pendant la conversation ----------------------- */
+
+.alien-mouth {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity .2s;
+}
+
+/* Réfléchit : regarde autour de lui en penchant la tête. */
+.alien-thinking .alien-eyes { animation: alien-look 2.4s ease-in-out infinite; }
+.alien-thinking .alien-head { animation: alien-ponder 2.4s ease-in-out infinite; }
+
+/* Parle : bouche, hochements de tête et gestes des bras. */
+.alien-talking .alien-mouth { opacity: 1; animation: alien-talk .3s ease-in-out infinite alternate; }
+.alien-talking .alien-head { animation: alien-nod .6s ease-in-out infinite; }
+.alien-talking .alien-arm-left { animation: alien-gesture-left 1.2s ease-in-out infinite; }
+.alien-talking .alien-arm-right { animation: alien-gesture-right 1.2s ease-in-out .6s infinite; }
+
+/* Accueil : petit coucou de la main droite. */
+.alien-hello .alien-arm-right { animation: alien-wave 1s ease-in-out .4s 3 both; }
+
+@keyframes alien-look {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-2.4px, -1.2px); }
+  60% { transform: translate(2.4px, -1.6px); }
+}
+
+@keyframes alien-ponder {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(-2deg) translateY(-.5px); }
+}
+
+@keyframes alien-talk {
+  from { transform: scale(.75, .3); }
+  to { transform: scale(1, 1.1); }
+}
+
+@keyframes alien-nod {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg) translateY(.6px); }
+}
+
+@keyframes alien-gesture-left {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(28deg); }
+}
+
+@keyframes alien-gesture-right {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-28deg); }
+}
+
+@keyframes alien-wave {
+  0%, 100% { transform: rotate(0deg); }
+  25%, 75% { transform: rotate(-105deg); }
+  50% { transform: rotate(-78deg); }
+}
+
+/* Avatar photo : halo qui pulse pendant la réponse. */
+.agent-avatar-thinking img,
+.agent-avatar-talking img { animation: avatar-pulse 1.2s ease-in-out infinite; }
+
+@keyframes avatar-pulse {
+  50% { box-shadow: 0 0 0 3px rgba(143, 179, 255, .35), 0 0 14px rgba(143, 179, 255, .35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alien-thinking .alien-eyes,
+  .alien-thinking .alien-head,
+  .alien-talking .alien-mouth,
+  .alien-talking .alien-head,
+  .alien-talking [class^="alien-arm"],
+  .alien-hello .alien-arm-right,
+  .agent-avatar img { animation: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

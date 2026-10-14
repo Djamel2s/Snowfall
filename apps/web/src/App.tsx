@@ -13,6 +13,7 @@ import Sidebar, {
 } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, ProviderLogo } from './components/AgentAvatar'
+import Markdown from './components/Markdown'
 
 type Conversation = {
   id: string
@@ -58,6 +59,8 @@ function App() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [streamingText, setStreamingText] = useState('')
+  // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
+  const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -545,7 +548,7 @@ function App() {
             </button>
             {activeAgent && (
               <span className="topbar-agent">
-                <AgentAvatar avatar={activeAgent.avatar} size={24} />
+                <AgentAvatar avatar={activeAgent.avatar} size={24} mood={agentMood} />
                 {activeAgent.name}
                 <ProviderLogo provider={activeAgent.provider} size={12} />
               </span>
@@ -579,7 +582,7 @@ function App() {
               </div>
             ) : conversationIsEmpty && activeAgent ? (
               <section className="welcome welcome-agent">
-                <AgentAvatar avatar={activeAgent.avatar} size={104} />
+                <AgentAvatar avatar={activeAgent.avatar} size={104} mood="hello" />
                 <h1>{activeAgent.name}</h1>
                 <span className="welcome-agent-model">
                   <ProviderLogo provider={activeAgent.provider} size={13} />
@@ -628,7 +631,11 @@ function App() {
                       <div className="message-author">
                         {message.role === 'user' ? username : activeAgent?.name ?? 'Snowfall'}
                       </div>
-                      <p>{message.content}</p>
+                      {message.role === 'assistant' ? (
+                        <Markdown source={message.content} />
+                      ) : (
+                        <p>{message.content}</p>
+                      )}
                       {message.role === 'assistant' && (
                         <button
                           className="copy-message"
@@ -646,12 +653,16 @@ function App() {
                 {sending && (
                   <div className="message message-assistant">
                     <div className={`message-avatar ${activeAgent ? 'message-avatar-agent' : ''}`}>
-                      {activeAgent ? <AgentAvatar avatar={activeAgent.avatar} size={30} /> : '✳'}
+                      {activeAgent ? (
+                        <AgentAvatar avatar={activeAgent.avatar} size={30} mood={agentMood} />
+                      ) : (
+                        '✳'
+                      )}
                     </div>
                     <div className="message-body">
                       <div className="message-author">{activeAgent?.name ?? 'Snowfall'}</div>
                       {streamingText ? (
-                        <p>{streamingText}</p>
+                        <Markdown source={streamingText} />
                       ) : (
                         <div
                           className="typing-indicator"

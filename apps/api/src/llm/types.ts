@@ -1,4 +1,4 @@
-export const providerIds = ["mistral", "openai", "anthropic", "local"] as const;
+export const providerIds = ["mistral", "openai", "anthropic", "google", "local"] as const;
 
 export type ProviderId = (typeof providerIds)[number];
 

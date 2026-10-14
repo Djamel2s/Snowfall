@@ -118,7 +118,8 @@ IdP-side revocation, logout).
 | Logging | Authorization/cookie headers redacted, query strings never logged. |
 | Rate limiting | 300 req/min per IP, 20 login attempts/min per IP, 20 messages/min per user; Redis store for multi-instance; explicit `TRUST_PROXY`. |
 | Agents | Org-shared agents (provider + model + instructions + avatar). Name, avatar and instructions encrypted per organization; RLS on `agents`; composite FK forbids linking a conversation to another organization's agent. Only the author or an owner/admin can edit or delete. Model allow-list: a provider must be configured server-side and the model must appear in its live catalog. Avatar images: PNG/JPEG/WebP only, verified by magic bytes, ≤150 KB, re-encoded client-side (strips EXIF/GPS); SVG refused. Agent instructions are wrapped after the platform rules, which they cannot replace. |
-| AI provider | Mistral, OpenAI, Anthropic (official SDK, server-side refusal fallback) and OpenAI-compatible local servers (base URL from config only, never from users). Only the current message and the last 20 turns of the same conversation are sent, with a fixed system prompt. Output capped (`LLM_MAX_OUTPUT_TOKENS`), hard timeout (`LLM_TIMEOUT_MS`), generation aborted when the client disconnects, nothing persisted on failure. Model id and token counts audited, never content. The local `echo` model is refused in production. |
+| AI provider | Mistral, OpenAI, Anthropic (official SDK, server-side refusal fallback), Google Gemini (REST API without SDK to limit dependencies; key sent in the `x-goog-api-key` header, never in the URL; provider error bodies discarded; safety blocks mapped to a refusal) and OpenAI-compatible local servers (base URL from config only, never from users). Only the current message and the last 20 turns of the same conversation are sent, with a fixed system prompt. Output capped (`LLM_MAX_OUTPUT_TOKENS`), hard timeout (`LLM_TIMEOUT_MS`), generation aborted when the client disconnects, nothing persisted on failure. Model id and token counts audited, never content. The local `echo` model is refused in production. |
+| Output rendering | Assistant answers rendered as Markdown by an in-house parser (no third-party dependency) producing React elements only: no `dangerouslySetInnerHTML`, raw HTML shown as text. Links limited to `https`/`http`/`mailto`, opened with `noopener noreferrer`. Images are never loaded (blocks prompt-injection exfiltration through image URLs). Parser regexes reviewed for catastrophic backtracking; tests in `apps/web/tests`. |
 | Backups | `pg_dump` piped to `age` (never plaintext on disk), checksum, restore script. |
 
 ## 12. Known gaps
@@ -131,7 +132,7 @@ IdP-side revocation, logout).
 - Audit log retention/purge procedure and log shipping to a SIEM are not defined.
 - No Content-Security-Policy is defined for the production web server yet.
 - CI: actions not pinned by SHA, no SAST, no SBOM, no container image scanning.
-- AI providers: sign each provider's DPA (Mistral, OpenAI, Anthropic), confirm data
+- AI providers: sign each provider's DPA (Mistral, OpenAI, Anthropic, Google), confirm data
   location and retention (request zero data retention where eligible), list them as
   subprocessors, and let each organization restrict which providers it allows.
   No per-organization model allow-list or token quota yet.

@@ -143,7 +143,18 @@ function Ufo() {
   )
 }
 
-export default function Alien({ avatar, size = 40 }: { avatar: AlienAvatar; size?: number }) {
+/** idle : repos ; thinking : attend le premier mot ; talking : répond ; hello : coucou d'accueil. */
+export type AlienMood = 'idle' | 'thinking' | 'talking' | 'hello'
+
+export default function Alien({
+  avatar,
+  size = 40,
+  mood = 'idle',
+}: {
+  avatar: AlienAvatar
+  size?: number
+  mood?: AlienMood
+}) {
   const id = useId().replace(/:/g, '')
   const tone = alienPalette[avatar.color]
   // Petites tailles (listes, messages) : cadrage sur la tête pour garder les yeux lisibles.
@@ -151,7 +162,7 @@ export default function Alien({ avatar, size = 40 }: { avatar: AlienAvatar; size
   const limb = { fill: 'none', strokeLinecap: 'round' as const }
 
   return (
-    <svg width={size} height={size} viewBox={viewBox} aria-hidden="true" className="alien" style={{ color: tone.base }}>
+    <svg width={size} height={size} viewBox={viewBox} aria-hidden="true" className={`alien alien-${mood}`} style={{ color: tone.base }}>
       <defs>
         <radialGradient id={`skin-${id}`} cx=".36" cy=".28" r=".8">
           <stop offset="0" stopColor={tone.light} />
@@ -218,6 +229,8 @@ export default function Alien({ avatar, size = 40 }: { avatar: AlienAvatar; size
           <Eye eyes={avatar.eyes} side="left" id={id} glow={tone.base} />
           <Eye eyes={avatar.eyes} side="right" id={id} glow={tone.base} />
         </g>
+        {/* Bouche cachée au repos, visible seulement quand l'alien « parle ». */}
+        <ellipse className="alien-mouth" cx="50" cy="53.5" rx="2.6" ry="1.9" fill="#1a1220" />
         <FrontAccessory accessory={avatar.accessory} />
       </g>
       {avatar.accessory === 'ufo' && <Ufo />}

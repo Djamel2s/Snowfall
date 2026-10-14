@@ -1,0 +1,1 @@
+ALTER TABLE "agents" DROP CONSTRAINT "agents_provider_check", ADD CONSTRAINT "agents_provider_check" CHECK ("provider" IN ('mistral', 'openai', 'anthropic', 'google', 'local'));

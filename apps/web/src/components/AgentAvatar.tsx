@@ -1,14 +1,22 @@
 import type { AgentAvatarData, ProviderId } from '../lib/api'
-import Alien from './Alien'
+import Alien, { type AlienMood } from './Alien'
 import { providerMeta } from '../lib/providers'
 
-export function AgentAvatar({ avatar, size = 32 }: { avatar: AgentAvatarData; size?: number }) {
+export function AgentAvatar({
+  avatar,
+  size = 32,
+  mood = 'idle',
+}: {
+  avatar: AgentAvatarData
+  size?: number
+  mood?: AlienMood
+}) {
   return (
-    <span className="agent-avatar" style={{ width: size, height: size }}>
+    <span className={`agent-avatar agent-avatar-${mood}`} style={{ width: size, height: size }}>
       {avatar.kind === 'image' ? (
         <img src={avatar.data} alt="" width={size} height={size} />
       ) : (
-        <Alien avatar={avatar} size={size} />
+        <Alien avatar={avatar} size={size} mood={mood} />
       )}
     </span>
   )

@@ -1,5 +1,6 @@
 import { createChatRunner, type ChatModel, type ChatRunner } from "../graph/chat-graph.js";
 import { createAnthropicModel, listAnthropicModels } from "./anthropic.js";
+import { createGoogleModel, listGoogleModels } from "./google.js";
 import { createMistralModel, listMistralModels } from "./mistral.js";
 import { createOpenAiCompatibleModel, listOpenAiCompatibleModels } from "./openai.js";
 import {
@@ -126,6 +127,11 @@ function adapterFor(id: ProviderId, settings: ProviderSettings): ProviderAdapter
       return {
         create: (model) => createAnthropicModel(model, settings),
         list: () => listAnthropicModels(settings),
+      };
+    case "google":
+      return {
+        create: (model) => createGoogleModel(model, settings),
+        list: () => listGoogleModels(settings),
       };
     case "openai":
     case "local":

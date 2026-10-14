@@ -40,6 +40,7 @@ import { loadConfig } from "./config.js";
 import { LocalKeyEncryptionProvider, parseMasterKey } from "./crypto/envelope.js";
 import { OrganizationKeyring } from "./crypto/keyring.js";
 import { getPool } from "./db/pool.js";
+import { findSchemaDrift } from "./db/schema-check.js";
 import {
   PostgresConversationStore,
   type ConversationStore,
@@ -743,6 +744,7 @@ export function createProductionServer() {
   if (config.llm.mistralApiKey) providers.mistral = { apiKey: config.llm.mistralApiKey, ...llmLimits };
   if (config.llm.openaiApiKey) providers.openai = { apiKey: config.llm.openaiApiKey, ...llmLimits };
   if (config.llm.anthropicApiKey) providers.anthropic = { apiKey: config.llm.anthropicApiKey, ...llmLimits };
+  if (config.llm.googleApiKey) providers.google = { apiKey: config.llm.googleApiKey, ...llmLimits };
   if (config.llm.localBaseUrl) {
     providers.local = {
       apiKey: config.llm.localApiKey ?? "local",
@@ -784,6 +786,16 @@ export function createProductionServer() {
   });
 
   auditRef.current = new PostgresAuditLog(pool, app.log);
+
+  // Échec franc au démarrage si des migrations manquent, plutôt que des 500 plus tard.
+  app.addHook("onReady", async () => {
+    const drift = await findSchemaDrift(pool);
+    if (drift.length > 0) {
+      throw new Error(
+        `Base de données non migrée (${drift.join(", ")}). Lance "npm run db:migrate" dans apps/api.`,
+      );
+    }
+  });
 
   app.log.info(
     {

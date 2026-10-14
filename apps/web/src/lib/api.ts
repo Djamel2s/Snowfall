@@ -15,7 +15,7 @@ export type ConversationSummary = {
   updatedAt: string
 }
 
-export type ProviderId = 'mistral' | 'openai' | 'anthropic' | 'local'
+export type ProviderId = 'mistral' | 'openai' | 'anthropic' | 'google' | 'local'
 
 export type ProviderCatalog = {
   id: ProviderId

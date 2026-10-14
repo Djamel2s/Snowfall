@@ -16,12 +16,13 @@ const envSchema = z.object({
   MISTRAL_MODEL: z.string().min(1).default("mistral-small-latest"),
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
+  GOOGLE_API_KEY: z.string().optional(),
   LOCAL_LLM_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
   LOCAL_LLM_API_KEY: z.string().optional(),
   // "fournisseur:modèle" des conversations sans agent, ex. "mistral:mistral-small-latest".
   LLM_DEFAULT_MODEL: z
     .string()
-    .regex(/^(mistral|openai|anthropic|local):[\w.:\/-]{1,120}$/)
+    .regex(/^(mistral|openai|anthropic|google|local):[\w.:\/-]{1,120}$/)
     .optional()
     .or(z.literal("")),
   // Inclut le raisonnement des modèles qui « réfléchissent » avant de répondre.
@@ -43,6 +44,7 @@ export type AppConfig = {
     mistralApiKey: string | undefined;
     openaiApiKey: string | undefined;
     anthropicApiKey: string | undefined;
+    googleApiKey: string | undefined;
     localBaseUrl: string | undefined;
     localApiKey: string | undefined;
     defaultSelection: ModelSelection | undefined;
@@ -111,6 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       mistralApiKey: e.MISTRAL_API_KEY || undefined,
       openaiApiKey: e.OPENAI_API_KEY || undefined,
       anthropicApiKey: e.ANTHROPIC_API_KEY || undefined,
+      googleApiKey: e.GOOGLE_API_KEY || undefined,
       localBaseUrl: e.LOCAL_LLM_BASE_URL || undefined,
       localApiKey: e.LOCAL_LLM_API_KEY || undefined,
       defaultSelection,
