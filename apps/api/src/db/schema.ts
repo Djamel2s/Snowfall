@@ -8,8 +8,36 @@
   uniqueIndex,
   foreignKey,
   check,
+  integer,
+  jsonb,
+  primaryKey,
+  pgPolicy,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+// Contexte tenant posé par transaction (set_config(..., true)) côté API.
+// En son absence, les politiques RLS ne laissent rien passer.
+const currentOrganization = sql`nullif(current_setting('app.organization_id', true), '')::uuid`;
+const currentUser = sql`nullif(current_setting('app.user_id', true), '')::uuid`;
+
+function tenantPolicy(
+  name: string,
+  organizationId: AnyPgColumn,
+  userId?: AnyPgColumn,
+) {
+  const condition = userId
+    ? sql`${organizationId} = ${currentOrganization} AND ${userId} = ${currentUser}`
+    : sql`${organizationId} = ${currentOrganization}`;
+
+  return pgPolicy(name, {
+    as: "permissive",
+    for: "all",
+    to: "public",
+    using: condition,
+    withCheck: condition,
+  });
+}
 
 export const organizations = pgTable("organizations", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -82,7 +110,85 @@ export const externalIdentities = pgTable(
 );
 
 
-export const conversations = pgTable(
+export const organizationKeys = pgTable.withRLS(
+  "organization_keys",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    // DEK chiffrée par la KEK (jamais stockée en clair).
+    wrappedKey: text("wrapped_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.version] }),
+    check("organization_keys_version_check", sql`${table.version} > 0`),
+    tenantPolicy("organization_keys_tenant", table.organizationId),
+  ],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    // SHA-256 du jeton de session : le jeton lui-même n'est jamais stocké.
+    idHash: text("id_hash").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    subject: text("subject").notNull(),
+    // Jetons et profil Keycloak chiffrés (AES-256-GCM).
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    idTokenEnc: text("id_token_enc").notNull(),
+    profileEnc: text("profile_enc").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    refreshedAt: timestamp("refreshed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index("sessions_user_idx").on(table.userId),
+    index("sessions_expires_idx").on(table.expiresAt),
+  ],
+);
+
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    eventType: text("event_type").notNull(),
+    outcome: text("outcome").notNull(),
+    // Pas de clé étrangère : la trace doit survivre à la suppression du compte.
+    actorUserId: uuid("actor_user_id"),
+    organizationId: uuid("organization_id"),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    ip: text("ip"),
+    requestId: text("request_id"),
+    details: jsonb("details").notNull().default({}),
+  },
+  (table) => [
+    index("audit_events_occurred_idx").on(table.occurredAt),
+    index("audit_events_org_occurred_idx").on(table.organizationId, table.occurredAt),
+    check(
+      "audit_events_outcome_check",
+      sql`${table.outcome} IN ('success', 'failure', 'denied')`,
+    ),
+  ],
+);
+
+export const conversations = pgTable.withRLS(
   "conversations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -92,7 +198,8 @@ export const conversations = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    title: text("title").notNull().default("Nouvelle conversation"),
+    // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
+    title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -119,10 +226,11 @@ export const conversations = pgTable(
         organizationMembers.userId,
       ],
     }).onDelete("cascade"),
+    tenantPolicy("conversations_owner", table.organizationId, table.userId),
   ],
 );
 
-export const messages = pgTable(
+export const messages = pgTable.withRLS(
   "messages",
   {
     id: uuid("id").defaultRandom().primaryKey(),
@@ -154,5 +262,6 @@ export const messages = pgTable(
       ],
     }).onDelete("cascade"),
     check("messages_role_check", sql`${table.role} IN ('user', 'assistant')`),
+    tenantPolicy("messages_owner", table.organizationId, table.userId),
   ],
 );

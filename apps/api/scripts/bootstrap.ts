@@ -7,7 +7,8 @@ dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
-const databaseUrl = process.env.DATABASE_URL;
+// Écrit des appartenances : réservé au compte de migration, pas au rôle applicatif.
+const databaseUrl = process.env.DATABASE_MIGRATION_URL;
 const issuer = process.env.OIDC_ISSUER?.replace(/\/$/, "");
 const subject = process.env.SNOWFALL_BOOTSTRAP_SUBJECT;
 const email = process.env.SNOWFALL_BOOTSTRAP_EMAIL;
@@ -16,7 +17,7 @@ const organizationName =
 
 if (!databaseUrl || !issuer || !subject || !email) {
   throw new Error(
-    "Configure DATABASE_URL, OIDC_ISSUER, SNOWFALL_BOOTSTRAP_SUBJECT et SNOWFALL_BOOTSTRAP_EMAIL.",
+    "Configure DATABASE_MIGRATION_URL, OIDC_ISSUER, SNOWFALL_BOOTSTRAP_SUBJECT et SNOWFALL_BOOTSTRAP_EMAIL.",
   );
 }
 

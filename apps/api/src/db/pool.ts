@@ -8,6 +8,22 @@ import * as schema from "./schema.js";
 const relations = defineRelations(schema);
 
 let poolInstance: Pool | undefined;
+
+// En production, la connexion PostgreSQL doit être chiffrée ET le certificat
+// serveur vérifié (sinon un intermédiaire réseau peut lire les données).
+export function assertSecureConnection(
+  connectionString: string,
+  nodeEnv = process.env.NODE_ENV,
+) {
+  if (nodeEnv !== "production") return;
+
+  const sslmode = new URL(connectionString).searchParams.get("sslmode");
+  if (sslmode !== "verify-full") {
+    throw new Error(
+      "En production, la connexion PostgreSQL doit utiliser sslmode=verify-full.",
+    );
+  }
+}
 let dbInstance: ReturnType<typeof drizzle<typeof relations>> | undefined;
 
 export function getPool(): Pool {
@@ -20,6 +36,8 @@ export function getPool(): Pool {
   if (!connectionString) {
     throw new Error("La variable DATABASE_URL est obligatoire.");
   }
+
+  assertSecureConnection(connectionString);
 
   poolInstance = new Pool({
     connectionString,

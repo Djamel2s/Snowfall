@@ -17,9 +17,10 @@
     "dev:api": "npm run dev -w @snowfall/api",
     "check:api": "npm run check -w @snowfall/api",
     "check": "npm run check:api && npm run lint:web && npm run build:web",
-    "db:generate": "drizzle-kit generate --config apps/api/drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config apps/api/drizzle.config.ts",
-    "db:check": "drizzle-kit check --config apps/api/drizzle.config.ts"
+    "db:generate": "npm run db:generate -w @snowfall/api",
+    "db:migrate": "npm run db:migrate -w @snowfall/api",
+    "db:check": "npm run db:check -w @snowfall/api",
+    "db:setup": "npm run db:setup -w @snowfall/api"
   },
   "dependencies": {
     "country-flag-icons": "^1.6.20"

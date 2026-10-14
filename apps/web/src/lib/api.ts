@@ -1,4 +1,4 @@
-import keycloak from '../auth/keycloak'
+import { login } from '../auth/session'
 
 export type Message = {
   id: string
@@ -18,24 +18,25 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  if (!keycloak.authenticated) {
-    throw new Error('Session expirée. Reconnectez-vous.')
-  }
-
-  await keycloak.updateToken(30)
-
   const response = await fetch(`/api${path}`, {
     ...init,
+    credentials: 'same-origin',
     headers: {
-      Authorization: `Bearer ${keycloak.token}`,
       'Content-Type': 'application/json',
       ...init.headers,
     },
   })
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Accès refusé ou session expirée.')
+    if (response.status === 401) {
+      login()
+      throw new Error('Session expirée. Redirection vers la connexion…')
+    }
+    if (response.status === 403) {
+      throw new Error('Accès refusé.')
+    }
+    if (response.status === 429) {
+      throw new Error('Trop de requêtes. Réessaie dans un instant.')
     }
     if (response.status === 404) {
       throw new Error('Conversation introuvable.')

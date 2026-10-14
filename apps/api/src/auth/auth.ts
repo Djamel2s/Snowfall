@@ -1,12 +1,8 @@
-﻿import type { FastifyRequest } from "fastify";
-import { createRemoteJWKSet, jwtVerify } from "jose";
-import { getPool } from "../db/pool.js";
-import dotenv from "dotenv";
-import { fileURLToPath } from "node:url";
-
-dotenv.config({
-  path: fileURLToPath(new URL("../../../../.env", import.meta.url)),
-});
+import type { FastifyRequest } from "fastify";
+import type {} from "@fastify/cookie";
+import type { Pool } from "pg";
+import type { AuditLog } from "../audit/audit.js";
+import type { SessionStore, UserProfile } from "./session-store.js";
 
 export const organizationRoles = [
   "owner",
@@ -21,85 +17,120 @@ export type AuthenticatedUser = {
   userId: string;
   organizationId: string;
   role: OrganizationRole;
+  profile?: UserProfile;
 };
 
 export type Authenticator = (
   request: FastifyRequest,
 ) => Promise<AuthenticatedUser | null>;
 
-const issuer = process.env.OIDC_ISSUER;
-const audience = process.env.OIDC_AUDIENCE;
+export type Membership = { organizationId: string; role: string };
 
-const jwks = issuer
-  ? createRemoteJWKSet(
-      new URL(
-        `${issuer.replace(/\/$/, "")}/protocol/openid-connect/certs`,
-      ),
-    )
-  : null;
+export interface IdentityDirectory {
+  findUserId(issuer: string, subject: string): Promise<string | null>;
+  memberships(userId: string): Promise<Membership[]>;
+}
 
-export const authenticateWithKeycloak: Authenticator = async (request) => {
-  if (!issuer || !audience || !jwks) {
+export class PostgresIdentityDirectory implements IdentityDirectory {
+  constructor(private readonly pool: Pool) {}
+
+  async findUserId(issuer: string, subject: string) {
+    const result = await this.pool.query<{ user_id: string }>(
+      "SELECT user_id FROM external_identities WHERE issuer = $1 AND subject = $2",
+      [issuer, subject],
+    );
+    return result.rows[0]?.user_id ?? null;
+  }
+
+  async memberships(userId: string) {
+    const result = await this.pool.query<{ organization_id: string; role: string }>(
+      `SELECT organization_id, role FROM organization_members
+       WHERE user_id = $1
+       ORDER BY created_at ASC`,
+      [userId],
+    );
+    return result.rows.map((row) => ({
+      organizationId: row.organization_id,
+      role: row.role,
+    }));
+  }
+}
+
+/**
+ * L'organisation active vient de l'en-tête x-organization-id mais n'est
+ * acceptée que si l'utilisateur en est membre en base. Sans en-tête, seul un
+ * utilisateur mono-organisation est résolu : jamais de choix implicite.
+ */
+export function selectMembership(
+  memberships: Membership[],
+  requestedOrganization: unknown,
+): { organizationId: string; role: OrganizationRole } | null {
+  const membership =
+    typeof requestedOrganization === "string" && requestedOrganization !== ""
+      ? memberships.find((item) => item.organizationId === requestedOrganization)
+      : memberships.length === 1
+        ? memberships[0]
+        : undefined;
+
+  if (!membership || !organizationRoles.includes(membership.role as OrganizationRole)) {
     return null;
   }
 
-  const authorization = request.headers.authorization;
+  return {
+    organizationId: membership.organizationId,
+    role: membership.role as OrganizationRole,
+  };
+}
 
-  if (!authorization?.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = authorization.slice("Bearer ".length).trim();
-
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const { payload } = await jwtVerify(token, jwks, {
-      issuer,
-      audience,
-      algorithms: ["RS256"],
-    });
-
-    if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+export function createSessionAuthenticator(deps: {
+  cookieName: string;
+  sessions: SessionStore;
+  directory: IdentityDirectory;
+  audit: AuditLog;
+}): Authenticator {
+  return async (request) => {
+    let resolution;
+    try {
+      resolution = await deps.sessions.resolve(request.cookies[deps.cookieName]);
+    } catch (error) {
+      // Panne IdP/DB : on refuse (fail closed) sans détruire la session.
+      request.log.error({ err: error }, "Échec de validation de session");
       return null;
     }
 
-    const result = await getPool().query<{
-      user_id: string;
-      organization_id: string;
-      role: string;
-    }>(
-      `SELECT ei.user_id, om.organization_id, om.role
-      FROM external_identities ei
-      JOIN organization_members om ON om.user_id = ei.user_id
-      WHERE ei.issuer = $1 AND ei.subject = $2
-      ORDER BY om.created_at ASC`,
-      [issuer, payload.sub],
+    if (resolution.status === "missing") return null;
+
+    if (resolution.status === "ended") {
+      await deps.audit.record(request, {
+        eventType: "auth.session_ended",
+        outcome: resolution.reason === "revoked" ? "denied" : "success",
+        actorUserId: resolution.userId,
+        details: { reason: resolution.reason },
+      });
+      return null;
+    }
+
+    const { session } = resolution;
+    const membership = selectMembership(
+      await deps.directory.memberships(session.userId),
+      request.headers["x-organization-id"],
     );
 
-    const requestedOrg = request.headers["x-organization-id"];
-    const membership =
-      typeof requestedOrg === "string" && requestedOrg !== ""
-        ? result.rows.find((row) => row.organization_id === requestedOrg)
-        : result.rows.length === 1
-          ? result.rows[0]
-          : undefined;
-
-    if (
-      !membership ||
-      !organizationRoles.includes(membership.role as OrganizationRole)
-    ) {
+    if (!membership) {
+      await deps.audit.record(request, {
+        eventType: "auth.organization_access",
+        outcome: "denied",
+        actorUserId: session.userId,
+        details: {
+          requestedOrganization:
+            typeof request.headers["x-organization-id"] === "string"
+              ? request.headers["x-organization-id"].slice(0, 64)
+              : "",
+        },
+      });
       return null;
     }
 
-    return {
-      userId: membership.user_id,
-      organizationId: membership.organization_id,
-      role: membership.role as OrganizationRole,
-    };
-  } catch {
-    return null;
-  }
-};
+    return { userId: session.userId, ...membership, profile: session.profile };
+  };
+}

@@ -10,12 +10,14 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/server.test.ts src/graph/chat-graph.test.ts src/conversations/store.integration.test.ts",
+    "test": "tsx --test src/server.test.ts src/auth/auth.test.ts src/crypto/envelope.test.ts src/graph/chat-graph.test.ts src/conversations/store.integration.test.ts src/auth/session-store.integration.test.ts",
     "check": "npm run typecheck && npm run lint --if-present && npm run test && npm run build",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts && tsx scripts/db-grants.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
-    "db:bootstrap-test": "tsx scripts/bootstrap.ts"
+    "db:bootstrap-test": "tsx scripts/bootstrap.ts",
+    "db:setup": "tsx scripts/db-setup.ts",
+    "db:encrypt-existing": "tsx scripts/encrypt-existing.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -25,19 +27,17 @@
     "typescript": "~6.0.3"
   },
   "dependencies": {
+    "@fastify/cookie": "11.1.2",
     "@fastify/helmet": "^13.1.2",
     "@fastify/rate-limit": "^11.2.1",
-    "@langchain/anthropic": "^1.5.12",
     "@langchain/core": "^1.2.17",
-    "@langchain/google-genai": "^2.3.2",
     "@langchain/langgraph": "^1.4.21",
-    "@langchain/mistralai": "^1.2.0",
-    "@langchain/openai": "^1.6.2",
     "dotenv": "^18.0.7",
     "drizzle-orm": "^1.0.0-rc.4",
     "fastify": "^5.12.5",
     "fastify-plugin": "^6.0.1",
-    "jose": "^6.2.12",
+    "ioredis": "6.0.0",
+    "openid-client": "6.8.8",
     "pg": "^8.23.1",
     "zod": "^4.6.5"
   }

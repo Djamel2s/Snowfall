@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import keycloak from './auth/keycloak'
+import { getSession, logout as endSession } from './auth/session'
 import { api, type Message } from './lib/api'
 import './App.css'
 import {
@@ -11,7 +11,7 @@ import {
 import Sidebar, {
   type SidebarPanel,
 } from './components/Sidebar'
-import FR from "country-flag-icons/react/3x2/FR";
+import LanguageSwitcher from './components/LanguageSwitcher'
 
 type Conversation = {
   id: string
@@ -81,11 +81,8 @@ function App() {
   const conversationIsEmpty =
     !activeConversation || activeConversation.messages.length === 0
 
-  const username = String(
-    keycloak.tokenParsed?.name ??
-      keycloak.tokenParsed?.preferred_username ??
-      'Utilisateur',
-  )
+  const { profile } = getSession()
+  const username = profile.name ?? profile.username ?? 'Utilisateur'
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>('chats')
@@ -301,11 +298,6 @@ function App() {
 
     if (!message || sending || !conversation || messagesLoading) return
 
-    if (!keycloak.authenticated || !keycloak.token) {
-      setError('Ta session a expiré. Reconnecte-toi pour continuer.')
-      return
-    }
-
     const conversationId = conversation.id
     const previousMessages = conversation.messages
 
@@ -427,7 +419,7 @@ function App() {
   }
 
   function logout() {
-    void keycloak.logout({ redirectUri: window.location.origin })
+    void endSession()
   }
 
   function handleComposerKeyDown(
@@ -551,7 +543,7 @@ function App() {
           </div>
 
           <div className="topbar-right">
-            <FR title="France" className="w-6 h-6 rounded-full ring-1 ring-black/10" />
+            <LanguageSwitcher />
           </div>
         </header>
 

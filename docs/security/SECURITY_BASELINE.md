@@ -97,17 +97,43 @@ Potential targets to assess against business scope and customer requirements:
 This baseline is not evidence of compliance or certification. Each control must have
 an implementation status, an owner, verification evidence, and a review date.
 
-## 11. Initial known gaps
+## 11. Implemented controls (2026-10-14)
 
-- Real identity provider and verified authentication are not yet integrated.
-- Real session issuance, expiry, cookie security, and revocation are not implemented.
-- Tenant authorization has not yet been enforced against persisted memberships.
-- Security audit logging and retention controls are not yet implemented.
+Evidence: automated tests (`apps/api/src/**/*.test.ts`) and an end-to-end run
+against a real Keycloak (login with TOTP enrolment, encryption at rest, CSRF,
+IdP-side revocation, logout).
+
+| Control | Implementation |
+|---|---|
+| Identity | Keycloak OIDC, confidential client `snowfall-bff`, PKCE S256 + PAR, ID token validated by `openid-client` (signature, iss, aud, exp, nonce, state). |
+| Sessions | BFF pattern: no token in the browser. Opaque session cookie `HttpOnly`, `SameSite=Strict`, `__Host-`/`Secure` over HTTPS. Server-side store (SHA-256 of token), 30 min idle, 10 h absolute, revalidated with Keycloak every 4 min (refresh-token rotation). |
+| Accounts | Password policy (12+ chars, history 5), brute-force lockout after 5 failures, verified e-mail, mandatory TOTP enrolment, no self-registration, no offline tokens. |
+| Authorization | Deny-by-default `onRequest` hook (routes must opt into `public`), role check on writes, tenant resolved from DB memberships only. |
+| CSRF | `Origin` must equal `APP_ORIGIN` on every non-GET request, plus `SameSite=Strict`. |
+| Tenant isolation | Explicit `(organization_id, user_id)` filters + composite FKs + PostgreSQL RLS (`FORCE`) driven by a transaction-scoped tenant context. |
+| Database privileges | Separate roles: superuser (setup only), `snowfall_migrator` (schema owner), `snowfall_app` (minimal per-table grants, `NOBYPASSRLS`, statement timeout). Keycloak in its own database and role. |
+| Encryption at rest | Message contents and titles encrypted with AES-256-GCM using a per-organization key (DEK), wrapped by a KEK derived from `SNOWFALL_MASTER_KEY`. AAD binds every ciphertext to its tenant/row. DB constraints reject plaintext. Session secrets encrypted too. |
+| Transport | `sslmode=verify-full` enforced for PostgreSQL in production; HTTPS required for `APP_ORIGIN`/issuer in production; TLS 1.3 on PostgreSQL in `compose.prod.yaml`. |
+| Audit | Keycloak user and admin events (180 days). Application `audit_events` table: logins, logouts, session revocations, denied writes, cross-tenant access attempts, CSRF rejections, conversation lifecycle. Append-only (INSERT-only grant + trigger). No message content, tokens or secrets. |
+| Logging | Authorization/cookie headers redacted, query strings never logged. |
+| Rate limiting | 300 req/min per IP, 20 login attempts/min per IP, 20 messages/min per user; Redis store for multi-instance; explicit `TRUST_PROXY`. |
+| Backups | `pg_dump` piped to `age` (never plaintext on disk), checksum, restore script. |
+
+## 12. Known gaps
+
+- KEK is derived locally from an environment secret: move it to a KMS/HSM
+  (`KeyEncryptionProvider` interface) before production. Key rotation is supported
+  by the schema (`organization_keys.version`) but no rotation job exists yet.
+- Keycloak back-channel logout is not consumed: IdP-side revocation takes up to 4 min.
+- SMTP is not configured (required for e-mail verification and password reset).
+- Audit log retention/purge procedure and log shipping to a SIEM are not defined.
+- No Content-Security-Policy is defined for the production web server yet.
+- CI: actions not pinned by SHA, no SAST, no SBOM, no container image scanning.
 - AI provider data handling and contractual controls require formal review.
-- Production monitoring, incident response, backup restoration, and CI security gates
-  require implementation and verification.
+- Monitoring, alerting, incident response and periodic restore tests require
+  owners and evidence.
 
-## 12. Change control
+## 13. Change control
 
 Any security-sensitive change must document its purpose, risks, tests, rollback plan,
 and evidence. Database migrations require explicit review and approval.

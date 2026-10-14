@@ -567,3 +567,87 @@ body.login-pf::after {
     transition-duration: .01ms !important;
   }
 }
+
+/* --- Sélecteur de langue : drapeau rond, liste de drapeaux au clic ---------- */
+/* Le texte des boutons reste dans le DOM (lecteurs d'écran), seulement masqué. */
+#kc-locale {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+  margin: 0;
+}
+
+#kc-locale-wrapper,
+#kc-locale-dropdown {
+  position: relative;
+}
+
+#kc-current-locale-link,
+#kc-locale-dropdown .pf-c-dropdown__menu-item {
+  display: block;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--snowfall-line-strong);
+  border-radius: 50%;
+  background: center / cover no-repeat;
+  color: transparent !important;
+  font-size: 0 !important;
+  text-indent: -999px;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(185, 217, 255, .05);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+#kc-current-locale-link:hover,
+#kc-current-locale-link:focus-visible,
+#kc-current-locale-link[aria-expanded="true"],
+#kc-locale-dropdown .pf-c-dropdown__menu-item:hover,
+#kc-locale-dropdown .pf-c-dropdown__menu-item:focus-visible {
+  border-color: var(--snowfall-ice);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(185, 217, 255, .2);
+  transform: scale(1.06);
+}
+
+/* Drapeau de la langue courante (attribut lang posé par Keycloak). */
+#kc-current-locale-link,
+#kc-locale-dropdown a[href*="kc_locale=fr"] {
+  background-image: url("../img/flags/fr.svg");
+}
+
+html[lang="en"] #kc-current-locale-link,
+#kc-locale-dropdown a[href*="kc_locale=en"] {
+  background-image: url("../img/flags/en.svg");
+}
+
+#kc-locale-dropdown .pf-c-dropdown__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -6px;
+  left: auto;
+  display: none;
+  min-width: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: rgba(14, 24, 40, .96) !important;
+  border: 1px solid var(--snowfall-line);
+  border-radius: 999px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .38);
+}
+
+/* Le script Keycloak pose display:block en ligne à l'ouverture. */
+#kc-current-locale-link[aria-expanded="true"] + .pf-c-dropdown__menu {
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#kc-locale-dropdown .pf-c-dropdown__menu li {
+  margin: 0;
+  padding: 0;
+  background: none;
+}

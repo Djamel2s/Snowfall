@@ -47,6 +47,7 @@ type SidebarProps = {
   onSidebarPanelChange: (panel: SidebarPanel) => void
   onProjectSelect: (id: string | null) => void
   onCreateProject: () => void
+  onCreateAgent?: () => void
   onSettings: () => void
 }
 
@@ -74,6 +75,7 @@ export default function Sidebar({
   onSidebarPanelChange,
   onProjectSelect,
   onCreateProject,
+  onCreateAgent,
   onSettings,
 }: SidebarProps) {
   const filteredConversations = visibleConversations.filter((conversation) =>
@@ -129,7 +131,6 @@ export default function Sidebar({
           {(
             [
               { id: 'chats', label: 'Conversations', icon: MessageSquare },
-              { id: 'pinned', label: 'Épinglés', icon: Bookmark },
               { id: 'projects', label: 'Projets', icon: Folder },
               { id: 'agents', label: 'Agents', icon: Bot },
             ] as const
@@ -288,10 +289,6 @@ export default function Sidebar({
                 <div className="projects-empty">
                     <Folder size={22} />
                     <strong>Crée ton premier projet</strong>
-                    <p>Organise tes conversations par thème.</p>
-                    <button type="button" onClick={onCreateProject}>
-                    <Plus size={14} /> Nouveau projet
-                    </button>
                 </div>
                 )}
             </div>
@@ -426,24 +423,25 @@ export default function Sidebar({
               </div>
             </>
           ) : (
-            <div className="sidebar-placeholder">
-              <div className="sidebar-placeholder-icon">
-                {sidebarPanel === 'projects' ? (
-                  <Folder size={22} />
-                ) : (
-                  <Bot size={22} />
-                )}
+            <div className="projects-panel">
+              <div className="sidebar-section-label projects-heading">
+                <span>AGENTS</span>
+                <button
+                  className="projects-add-button"
+                  type="button"
+                  onClick={onCreateAgent}
+                  disabled={!onCreateAgent}
+                  aria-label="Créer un agent"
+                  title={onCreateAgent ? 'Créer un agent' : 'Bientôt disponible'}
+                >
+                  <Plus size={15} />
+                </button>
               </div>
 
-              <strong>
-                {sidebarPanel === 'projects' ? 'Projets' : 'Agents'}
-              </strong>
-
-              <p>
-                {sidebarPanel === 'projects'
-                  ? 'L’organisation des conversations par projet sera ajoutée ici.'
-                  : 'Les agents personnalisés seront ajoutés ici.'}
-              </p>
+              <div className="projects-empty">
+                <Bot size={22} />
+                <strong>Crée ton premier agent</strong>
+              </div>
             </div>
           )}
 

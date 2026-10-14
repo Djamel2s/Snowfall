@@ -1,13 +1,18 @@
-import keycloak from '../auth/keycloak'
+import { getSession } from '../auth/session'
 
 export default function Profile() {
-  const user = keycloak.tokenParsed
+  const { user: account, profile } = getSession()
+  const user = {
+    name: profile.name,
+    preferred_username: profile.username,
+    email: profile.email,
+  }
 
   const fields = [
-    ['Nom complet', user?.name],
-    ['Nom d’utilisateur', user?.preferred_username],
-    ['Adresse e-mail', user?.email],
-    ['Identifiant', user?.sub],
+    ['Nom complet', user.name],
+    ['Nom d’utilisateur', user.preferred_username],
+    ['Adresse e-mail', user.email],
+    ['Identifiant', account.userId],
   ]
 
   return (
@@ -15,7 +20,7 @@ export default function Profile() {
       <div className="page-heading">
         <span className="section-kicker">COMPTE</span>
         <h2>Mon profil</h2>
-        <p>Les informations disponibles dans ta session Keycloak.</p>
+        <p>Les informations transmises par le fournisseur d’identité à la connexion.</p>
       </div>
 
       <section className="content-card profile-card">

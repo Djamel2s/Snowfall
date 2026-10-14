@@ -6,11 +6,12 @@ dotenv.config({
   path: fileURLToPath(new URL("../../.env", import.meta.url)),
 });
 
-const databaseUrl = process.env.DATABASE_URL;
+// Compte propriétaire du schéma, distinct du compte applicatif (DATABASE_URL).
+const databaseUrl = process.env.DATABASE_MIGRATION_URL;
 
 if (!databaseUrl) {
   throw new Error(
-    "La variable DATABASE_URL est obligatoire pour les opérations Drizzle.",
+    "La variable DATABASE_MIGRATION_URL est obligatoire pour les opérations Drizzle.",
   );
 }
 

@@ -2,20 +2,39 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import keycloak from './auth/keycloak'
+import { loadSession, login } from './auth/session'
 
 const root = createRoot(document.getElementById('root')!)
 
-async function start() {
-  try {
-    const authenticated = await keycloak.init({
-      onLoad: 'login-required',
-      pkceMethod: 'S256',
-      checkLoginIframe: false,
-    })
+function messageScreen(text: string, retry = false) {
+  return (
+    <main style={{ padding: '2rem', color: '#e6edf7', fontFamily: 'sans-serif' }}>
+      <p>{text}</p>
+      {retry && (
+        <button type="button" onClick={login}>
+          Se reconnecter
+        </button>
+      )}
+    </main>
+  )
+}
 
-    if (!authenticated) {
-      await keycloak.login()
+async function start() {
+  // Après un refus côté API, on ne relance pas la connexion automatiquement :
+  // la session SSO Keycloak étant encore ouverte, cela bouclerait.
+  if (new URLSearchParams(window.location.search).has('auth_error')) {
+    window.history.replaceState(null, '', '/')
+    root.render(
+      messageScreen("Accès refusé : ce compte n'est pas autorisé sur Snowfall.", true),
+    )
+    return
+  }
+
+  try {
+    const session = await loadSession()
+
+    if (!session) {
+      login()
       return
     }
 
@@ -25,11 +44,7 @@ async function start() {
       </StrictMode>,
     )
   } catch {
-    root.render(
-      <main style={{ padding: '2rem', color: '#e6edf7', fontFamily: 'sans-serif' }}>
-        Impossible de joindre le service d'authentification.
-      </main>,
-    )
+    root.render(messageScreen("Impossible de joindre le service d'authentification."))
   }
 }
 
