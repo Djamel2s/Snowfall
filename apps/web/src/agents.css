@@ -749,3 +749,41 @@
   background: transparent;
   box-shadow: none;
 }
+
+/* Alien en pied à côté de la réponse : du nom jusqu'aux boutons d'action. */
+.message-avatar.message-avatar-alien {
+  display: flex;
+  width: 60px;
+  height: auto;
+  flex: none;
+  justify-content: center;
+  border-radius: 0;
+}
+
+.message-avatar-alien .agent-avatar {
+  margin: -6px -14px 0;
+  animation: message-alien-bob 4.5s ease-in-out infinite;
+}
+
+.message-avatar-alien .alien-idle .alien-head { animation: alien-tilt 6s ease-in-out infinite; }
+.message-avatar-alien .alien-eyes { animation: alien-blink 4.2s infinite; }
+.message-avatar-alien .alien-ufo { animation: alien-ufo 3s ease-in-out infinite; }
+
+/* Décale les alien d'une liste pour qu'ils ne bougent pas tous en même temps. */
+.message:nth-child(2n) .message-avatar-alien .agent-avatar { animation-delay: -1.5s; }
+.message:nth-child(2n) .message-avatar-alien .alien-eyes { animation-delay: -2s; }
+
+@keyframes message-alien-bob {
+  50% { transform: translateY(-3px); }
+}
+
+@media (max-width: 640px) {
+  .message-avatar-alien .agent-avatar { margin-inline: -22px; transform-origin: top center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-avatar-alien .agent-avatar,
+  .message-avatar-alien .alien-head,
+  .message-avatar-alien .alien-eyes,
+  .message-avatar-alien .alien-ufo { animation: none; }
+}

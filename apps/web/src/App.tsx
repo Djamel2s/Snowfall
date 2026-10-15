@@ -17,7 +17,7 @@ import './workspace.css'
 import { ArrowUp, Check, Copy, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
 import Sidebar, { type SidebarPanel } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
-import { AgentAvatar, ProviderLogo } from './components/AgentAvatar'
+import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
 import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
 
@@ -766,12 +766,12 @@ function App() {
                 {shownMessages.map((message) => (
                   <article className={`message message-${message.role}`} key={message.id}>
                     <div
-                      className={`message-avatar ${message.role === 'assistant' && activeAgent ? 'message-avatar-agent' : ''}`}
+                      className={`message-avatar ${message.role === 'assistant' && activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}
                     >
                       {message.role === 'user' ? (
                         username.slice(0, 1).toUpperCase()
                       ) : activeAgent ? (
-                        <AgentAvatar avatar={activeAgent.avatar} size={30} />
+                        <MessageAgentAvatar avatar={activeAgent.avatar} />
                       ) : (
                         <span>✳</span>
                       )}
@@ -871,8 +871,8 @@ function App() {
 
                 {sending && (
                   <div className="message message-assistant">
-                    <div className={`message-avatar ${activeAgent ? 'message-avatar-agent' : ''}`}>
-                      {activeAgent ? <AgentAvatar avatar={activeAgent.avatar} size={30} mood={agentMood} /> : '✳'}
+                    <div className={`message-avatar ${activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}>
+                      {activeAgent ? <MessageAgentAvatar avatar={activeAgent.avatar} mood={agentMood} /> : '✳'}
                     </div>
                     <div className="message-body">
                       <div className="message-author">{activeAgent?.name ?? 'Snowfall'}</div>

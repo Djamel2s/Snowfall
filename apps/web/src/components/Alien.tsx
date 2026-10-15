@@ -150,15 +150,18 @@ export default function Alien({
   avatar,
   size = 40,
   mood = 'idle',
+  full = false,
 }: {
   avatar: AlienAvatar
   size?: number
   mood?: AlienMood
+  /** Force le corps entier, même en petite taille. */
+  full?: boolean
 }) {
   const id = useId().replace(/:/g, '')
   const tone = alienPalette[avatar.color]
-  // Petites tailles (listes, messages) : cadrage sur la tête pour garder les yeux lisibles.
-  const viewBox = size < 56 ? '12 -3 76 76' : '-2 -4 104 104'
+  // Petites tailles (listes) : cadrage sur la tête pour garder les yeux lisibles.
+  const viewBox = size < 56 && !full ? '12 -3 76 76' : '-2 -4 104 104'
   const limb = { fill: 'none', strokeLinecap: 'round' as const }
 
   return (
