@@ -738,14 +738,24 @@ function App() {
               </div>
             ) : conversationIsEmpty && activeAgent ? (
               <section className="welcome welcome-agent">
-                <AgentAvatar avatar={activeAgent.avatar} size={88} mood="hello" />
-                <h1>
-                  <span>{activeAgent.name}</span>
-                </h1>
-                <span className="welcome-agent-model">
-                  <ProviderLogo provider={activeAgent.provider} size={13} />
-                  {activeAgent.model}
-                </span>
+                <div className="welcome-agent-hero">
+                  <div className="welcome-agent-text">
+                    {/* Accroché à gauche du texte : n'entre pas dans le centrage. */}
+                    <div className="welcome-agent-stage">
+                      <span className="welcome-agent-halo" aria-hidden="true" />
+                      <AgentAvatar avatar={activeAgent.avatar} size={132} mood="hello" />
+                    </div>
+                    <h1>
+                      Snowfall
+                      <br />
+                      <span>{activeAgent.name}</span>
+                    </h1>
+                    <span className="welcome-agent-model">
+                      <ProviderLogo provider={activeAgent.provider} size={13} />
+                      {activeAgent.model}
+                    </span>
+                  </div>
+                </div>
               </section>
             ) : conversationIsEmpty ? (
               <section className="welcome">

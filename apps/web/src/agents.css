@@ -523,7 +523,54 @@
 
 .welcome-agent .agent-avatar { animation: studio-float 4.5s ease-in-out infinite; }
 
-.welcome-agent h1 { margin: 6px 0 0; }
+.welcome-agent h1 { margin: 0; text-align: center; }
+
+/* Accueil d'agent : l'alien à gauche, le titre Snowfall + nom à droite. */
+/* Le texte est centré sur l'axe de l'écran ; l'alien est accroché à sa
+   gauche, hors du flux, pour ne pas décaler le centrage. */
+.welcome-agent-hero {
+  display: flex;
+  justify-content: center;
+  animation: welcome-agent-in .6s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.welcome-agent-stage {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 26px);
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+}
+
+/* Halo derrière l'alien, qui respire doucement. */
+.welcome-agent-halo {
+  position: absolute;
+  z-index: -1;
+  width: 150%;
+  height: 150%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(142, 201, 255, .26) 0%, rgba(120, 160, 255, .1) 42%, transparent 70%);
+  filter: blur(6px);
+  animation: studio-halo 5s ease-in-out infinite;
+}
+
+.welcome-agent-text {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+@keyframes welcome-agent-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+@media (max-width: 640px) {
+  /* Écran étroit : l'alien repasse au-dessus du texte. */
+  .welcome-agent-stage { position: static; transform: none; }
+}
 
 .welcome-agent-model {
   display: inline-flex;
@@ -660,6 +707,8 @@
   .studio-halo,
   .studio-stage .agent-avatar,
   .welcome-agent .agent-avatar,
+  .welcome-agent-hero,
+  .welcome-agent-halo,
   .alien-head,
   .alien-eyes,
   .alien-ufo { animation: none; }
