@@ -3,8 +3,12 @@ import type { Pool, PoolClient } from "pg";
 import { decryptMeta, type AttachmentMeta } from "../attachments/store.js";
 import type { OrganizationKeyring } from "../crypto/keyring.js";
 import { withTenant } from "../db/tenant.js";
+import type { ModelSelection } from "../llm/types.js";
 
 export type MessageRole = "user" | "assistant";
+
+/** Qui répond : un agent, un modèle choisi, ou (les deux à null) le modèle par défaut. */
+export type ConversationSelection = { agentId: string | null; model: ModelSelection | null };
 
 export const DEFAULT_CONVERSATION_TITLE = "Nouvelle conversation";
 
@@ -17,6 +21,8 @@ export type ConversationSummary = {
   id: string;
   title: string;
   agentId: string | null;
+  /** Modèle choisi pour une conversation sans agent. */
+  model: ModelSelection | null;
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -51,12 +57,14 @@ export interface ConversationStore {
     title?: string,
     agentId?: string,
     projectId?: string,
+    model?: ModelSelection,
   ): Promise<ConversationSummary>;
   get(owner: ConversationOwner, conversationId: string): Promise<ConversationSummary | null>;
+  /** Changer l'agent ou le modèle n'est possible que tant que la conversation est vide. */
   update(
     owner: ConversationOwner,
     conversationId: string,
-    changes: { title?: string; projectId?: string | null },
+    changes: { title?: string; projectId?: string | null; selection?: ConversationSelection },
   ): Promise<ConversationSummary | null>;
   search(owner: ConversationOwner, query: string): Promise<SearchHit[]>;
   getMessages(
@@ -98,13 +106,19 @@ type ConversationRow = {
   id: string;
   title: string | null;
   agentId: string | null;
+  modelProvider: ModelSelection["provider"] | null;
+  modelId: string | null;
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId", project_id AS "projectId",
+  model_provider AS "modelProvider", model_id AS "modelId",
   created_at AS "createdAt", updated_at AS "updatedAt"`;
+
+const modelOf = (row: ConversationRow): ModelSelection | null =>
+  row.modelProvider && row.modelId ? { provider: row.modelProvider, model: row.modelId } : null;
 
 type MessageRow = {
   id: string;
@@ -144,6 +158,7 @@ export class PostgresConversationStore implements ConversationStore {
     return {
       id: row.id,
       agentId: row.agentId,
+      model: modelOf(row),
       projectId: row.projectId,
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
@@ -213,7 +228,9 @@ export class PostgresConversationStore implements ConversationStore {
     title?: string,
     agentId?: string,
     projectId?: string,
+    model?: ModelSelection,
   ): Promise<ConversationSummary> {
+    if (agentId && model) throw new Error("INVALID_SELECTION");
     return withTenant(this.pool, owner, async (client) => {
       if (agentId) {
         // RLS : seul un agent de l'organisation courante est visible.
@@ -234,14 +251,23 @@ export class PostgresConversationStore implements ConversationStore {
         : null;
 
       const result = await client.query<ConversationRow>(
-        `INSERT INTO conversations (id, user_id, organization_id, title, agent_id, project_id)
-         SELECT $1, $2, $3, $4, $5, $6
+        `INSERT INTO conversations (id, user_id, organization_id, title, agent_id, project_id, model_provider, model_id)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8
          WHERE EXISTS (
            SELECT 1 FROM organization_members
            WHERE user_id = $2 AND organization_id = $3
          )
          RETURNING ${SUMMARY_COLUMNS}`,
-        [id, owner.userId, owner.organizationId, encryptedTitle, agentId ?? null, projectId ?? null],
+        [
+          id,
+          owner.userId,
+          owner.organizationId,
+          encryptedTitle,
+          agentId ?? null,
+          projectId ?? null,
+          model?.provider ?? null,
+          model?.model ?? null,
+        ],
       );
 
       const row = result.rows[0];
@@ -250,6 +276,7 @@ export class PostgresConversationStore implements ConversationStore {
       return {
         id: row.id,
         agentId: row.agentId,
+        model: modelOf(row),
         projectId: row.projectId,
         title: title ?? DEFAULT_CONVERSATION_TITLE,
         createdAt: row.createdAt,
@@ -261,9 +288,31 @@ export class PostgresConversationStore implements ConversationStore {
   async update(
     owner: ConversationOwner,
     conversationId: string,
-    changes: { title?: string; projectId?: string | null },
+    changes: { title?: string; projectId?: string | null; selection?: ConversationSelection },
   ) {
+    const { selection } = changes;
+    if (selection?.agentId && selection.model) throw new Error("INVALID_SELECTION");
+
     return withTenant(this.pool, owner, async (client) => {
+      if (selection) {
+        // Verrou : aucun message ne peut arriver entre le contrôle et la mise à jour.
+        const current = await client.query(
+          `SELECT 1 FROM conversations
+           WHERE id = $1 AND user_id = $2 AND organization_id = $3
+           FOR UPDATE`,
+          [conversationId, owner.userId, owner.organizationId],
+        );
+        if (!current.rowCount) return null;
+        const started = await client.query(
+          "SELECT 1 FROM messages WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3 LIMIT 1",
+          [conversationId, owner.userId, owner.organizationId],
+        );
+        if (started.rowCount) throw new Error("CONVERSATION_STARTED");
+        if (selection.agentId) {
+          const agent = await client.query("SELECT 1 FROM agents WHERE id = $1", [selection.agentId]);
+          if (!agent.rowCount) throw new Error("AGENT_NOT_FOUND");
+        }
+      }
       if (changes.projectId) {
         const project = await client.query(
           "SELECT 1 FROM projects WHERE id = $1 AND user_id = $2 AND organization_id = $3",
@@ -283,6 +332,14 @@ export class PostgresConversationStore implements ConversationStore {
       if (changes.projectId !== undefined) {
         values.push(changes.projectId);
         sets.push(`project_id = $${values.length}`);
+      }
+      if (selection) {
+        values.push(selection.agentId, selection.model?.provider ?? null, selection.model?.model ?? null);
+        sets.push(
+          `agent_id = $${values.length - 2}`,
+          `model_provider = $${values.length - 1}`,
+          `model_id = $${values.length}`,
+        );
       }
       if (sets.length === 0) return null;
 

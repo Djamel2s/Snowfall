@@ -215,6 +215,74 @@ describe("Agents", () => {
     });
   });
 
+  it("une conversation sans agent utilise le modèle choisi", async (t) => {
+    const calls: { selection?: ModelSelection; instructions?: string }[] = [];
+    const { app } = setup({ calls });
+    t.after(() => app.close());
+
+    const model = { provider: "mistral", model: "mistral-small-latest" };
+    const conversation = (await app.inject(post("/conversations", { model }))).json().conversation;
+    assert.deepEqual(conversation.model, model);
+    assert.equal(conversation.agentId, null);
+
+    await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Bonjour" }));
+    assert.deepEqual(calls[0], { selection: model });
+  });
+
+  it("refuse un modèle hors liste blanche ou combiné à un agent", async (t) => {
+    const { app } = setup();
+    t.after(() => app.close());
+    const agent = (await app.inject(post("/agents", validAgent))).json().agent;
+
+    for (const payload of [
+      { model: { provider: "mistral", model: "modele-inconnu" } },
+      { model: { provider: "openai", model: "gpt-x" } },
+      { model: { provider: "mistral", model: "mistral-small-latest", extra: 1 } },
+      { agentId: agent.id, model: { provider: "mistral", model: "mistral-small-latest" } },
+    ]) {
+      const response = await app.inject(post("/conversations", payload));
+      assert.equal(response.statusCode, 400, JSON.stringify(payload));
+    }
+  });
+
+  it("change d'agent ou de modèle tant que la conversation est vide, plus ensuite", async (t) => {
+    const calls: { selection?: ModelSelection; instructions?: string }[] = [];
+    const { app, events } = setup({ calls });
+    t.after(() => app.close());
+    const agent = (await app.inject(post("/agents", validAgent))).json().agent;
+    const conversation = (await app.inject(post("/conversations", {}))).json().conversation;
+    const patch = (payload: unknown) => ({ ...post(`/conversations/${conversation.id}`, payload), method: "PATCH" as const });
+
+    const toAgent = await app.inject(patch({ agentId: agent.id }));
+    assert.equal(toAgent.statusCode, 200);
+    assert.equal(toAgent.json().conversation.agentId, agent.id);
+
+    const model = { provider: "mistral", model: "mistral-small-latest" };
+    const toModel = await app.inject(patch({ model }));
+    assert.equal(toModel.json().conversation.agentId, null);
+    assert.deepEqual(toModel.json().conversation.model, model);
+    assert.equal(events.at(-1)?.details?.model, "mistral:mistral-small-latest");
+
+    assert.equal((await app.inject(patch({ model: { provider: "mistral", model: "inconnu" } }))).statusCode, 400);
+    assert.equal((await app.inject(patch({ agentId: crypto.randomUUID() }))).statusCode, 400);
+
+    await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Bonjour" }));
+    assert.deepEqual(calls[0], { selection: model });
+
+    const locked = await app.inject(patch({ agentId: agent.id }));
+    assert.equal(locked.statusCode, 409);
+    // Renommer reste possible.
+    assert.equal((await app.inject(patch({ title: "Renommée" }))).statusCode, 200);
+  });
+
+  it("le catalogue indique le modèle par défaut", async (t) => {
+    const { app } = setup();
+    t.after(() => app.close());
+
+    const response = await app.inject({ method: "GET", url: "/models" });
+    assert.equal(response.json().defaultModel, null);
+  });
+
   it("refuse une conversation liée à un agent inconnu", async (t) => {
     const conversations = fakeConversations();
     conversations.create = async () => {

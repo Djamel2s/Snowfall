@@ -42,13 +42,15 @@ export function createFakeConversationStore(): ConversationStore & {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map(summary),
 
-    create: async (owner, title = "Nouvelle conversation", agentId, projectId) => {
+    create: async (owner, title = "Nouvelle conversation", agentId, projectId, model) => {
+      if (agentId && model) throw new Error("INVALID_SELECTION");
       const at = now();
       const conversation: FakeConversation = {
         id: crypto.randomUUID(),
         owner: { userId: owner.userId, organizationId: owner.organizationId },
         title,
         agentId: agentId ?? null,
+        model: model ?? null,
         projectId: projectId ?? null,
         createdAt: at,
         updatedAt: at,
@@ -63,6 +65,12 @@ export function createFakeConversationStore(): ConversationStore & {
     update: async (owner, id, changes) => {
       if (!owns(owner, id)) return null;
       const conversation = conversations.get(id)!;
+      if (changes.selection) {
+        if (changes.selection.agentId && changes.selection.model) throw new Error("INVALID_SELECTION");
+        if (messages.get(id)?.length) throw new Error("CONVERSATION_STARTED");
+        conversation.agentId = changes.selection.agentId;
+        conversation.model = changes.selection.model;
+      }
       if (changes.title !== undefined) conversation.title = changes.title;
       if (changes.projectId !== undefined) conversation.projectId = changes.projectId;
       return summary(conversation);

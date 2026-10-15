@@ -23,6 +23,8 @@ export type ConversationSummary = {
   id: string
   title: string
   agentId: string | null
+  /** Modèle choisi pour une conversation sans agent (null : modèle par défaut). */
+  model: ModelSelection | null
   projectId: string | null
   createdAt: string
   updatedAt: string
@@ -40,6 +42,8 @@ export type Project = {
 
 export type ProviderId = 'mistral' | 'openai' | 'anthropic' | 'google' | 'local'
 export const providerIds = ['mistral', 'openai', 'anthropic', 'google', 'local'] as const
+
+export type ModelSelection = { provider: ProviderId; model: string }
 
 export type ProviderCatalog = {
   id: ProviderId
@@ -227,6 +231,11 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
   throw new Error(t('error.interrupted'))
 }
 
+async function modelCatalog() {
+  const data = await request<{ providers: ProviderCatalog[]; defaultModel?: ModelSelection | null }>('/models')
+  return { providers: data.providers, defaultModel: data.defaultModel ?? null }
+}
+
 export const api = {
   listConversations: async () => {
     const data = await request<ConversationSummary[] | { conversations: ConversationSummary[] }>('/conversations')
@@ -241,7 +250,9 @@ export const api = {
       )
     ).results,
 
-  createConversation: async (options: { title?: string; agentId?: string; projectId?: string } = {}) => {
+  createConversation: async (
+    options: { title?: string; agentId?: string; projectId?: string; model?: ModelSelection } = {},
+  ) => {
     const data = await request<ConversationSummary | { conversation: ConversationSummary }>(
       '/conversations',
       json('POST', options),
@@ -249,7 +260,10 @@ export const api = {
     return 'conversation' in data ? data.conversation : data
   },
 
-  updateConversation: async (id: string, changes: { title?: string; projectId?: string | null }) =>
+  updateConversation: async (
+    id: string,
+    changes: { title?: string; projectId?: string | null; agentId?: string | null; model?: ModelSelection | null },
+  ) =>
     (await request<{ conversation: ConversationSummary }>(`/conversations/${id}`, json('PATCH', changes))).conversation,
 
   getMessages: async (id: string) => {
@@ -281,7 +295,9 @@ export const api = {
 
   attachmentBlob: async (id: string) => (await send(`/attachments/${id}/content`)).blob(),
 
-  listModels: async () => (await request<{ providers: ProviderCatalog[] }>('/models')).providers,
+  listModels: async () => (await modelCatalog()).providers,
+
+  modelCatalog,
 
   listAgents: async () => (await request<{ agents: Agent[] }>('/agents')).agents,
 

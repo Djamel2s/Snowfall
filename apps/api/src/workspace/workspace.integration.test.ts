@@ -5,6 +5,8 @@ import { Pool } from "pg";
 import { detectFile } from "../attachments/detect.js";
 import { makePdf } from "../attachments/fixtures.js";
 import { PostgresAttachmentStore } from "../attachments/store.js";
+import { defaultAvatar } from "../agents/profile.js";
+import { PostgresAgentStore } from "../agents/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
@@ -248,6 +250,49 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
       assert.equal(hits[0]?.id, conversation.id);
       assert.match(hits[0]?.snippet ?? "", /reformulée/);
       assert.equal((await conversations.search(tenant(adminA), "reformulée")).length, 0);
+    });
+
+    it("modèle choisi : changeable tant que la conversation est vide, exclusif avec un agent", async () => {
+      const conversations = new PostgresConversationStore(pool, keyring);
+      const agents = new PostgresAgentStore(pool, keyring);
+      const model = { provider: "anthropic", model: "claude-sonnet-5-5" } as const;
+      const agent = await agents.create(tenant(memberA), {
+        name: "Juriste",
+        avatar: defaultAvatar,
+        instructions: "",
+        provider: "mistral",
+        model: "mistral-small-latest",
+      });
+
+      const conversation = await conversations.create(tenant(memberA), undefined, undefined, undefined, model);
+      assert.deepEqual((await conversations.get(tenant(memberA), conversation.id))?.model, model);
+
+      const toAgent = await conversations.update(tenant(memberA), conversation.id, { selection: { agentId: agent.id, model: null } });
+      assert.equal(toAgent?.agentId, agent.id);
+      assert.equal(toAgent?.model, null);
+      assert.equal(await conversations.update(tenant(memberB, orgB), conversation.id, { selection: { agentId: null, model } }), null);
+
+      // La base refuse un agent ET un modèle, ou un fournisseur inconnu.
+      for (const [provider, agentId] of [["anthropic", agent.id], ["pirate", null]] as const) {
+        await assert.rejects(
+          withTenant(pool, tenant(memberA), (client) =>
+            client.query(
+              "UPDATE conversations SET agent_id = $2, model_provider = $3, model_id = 'x' WHERE id = $1",
+              [conversation.id, agentId, provider],
+            ),
+          ),
+          /conversations_model_check/,
+        );
+      }
+
+      await conversations.update(tenant(memberA), conversation.id, { selection: { agentId: null, model } });
+      await conversations.appendExchange(tenant(memberA), conversation.id, "Bonjour", "Salut");
+      await assert.rejects(
+        conversations.update(tenant(memberA), conversation.id, { selection: { agentId: agent.id, model: null } }),
+        /CONVERSATION_STARTED/,
+      );
+      assert.deepEqual((await conversations.list(tenant(memberA))).find((item) => item.id === conversation.id)?.model, model);
+      await agents.delete(tenant(memberA), agent.id);
     });
 
     it("préférences par membre", async () => {

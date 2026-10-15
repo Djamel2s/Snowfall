@@ -5,7 +5,9 @@ import {
   type Agent,
   type AttachmentMeta,
   type Message,
+  type ModelSelection,
   type Preferences,
+  type ProviderCatalog,
   type Project,
   type SearchHit,
 } from './lib/api'
@@ -20,11 +22,21 @@ import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
 import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
+import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
+import {
+  mentionAt,
+  readLastChoice,
+  resolveResponder,
+  saveLastChoice,
+  usableProviders,
+  type ResponderChoice,
+} from './lib/responder'
 
 type Conversation = {
   id: string
   title: string
   agentId: string | null
+  model: ModelSelection | null
   projectId: string | null
   messages: Message[]
   updatedAt: number
@@ -72,12 +84,14 @@ const toConversation = (item: {
   id: string
   title: string
   agentId: string | null
+  model?: ModelSelection | null
   projectId: string | null
   updatedAt: string
 }): Conversation => ({
   id: item.id,
   title: item.title,
   agentId: item.agentId,
+  model: item.model ?? null,
   projectId: item.projectId,
   messages: [],
   updatedAt: new Date(item.updatedAt).getTime(),
@@ -111,6 +125,14 @@ function App() {
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [catalog, setCatalog] = useState<{ providers: ProviderCatalog[]; defaultModel: ModelSelection | null }>({
+    providers: [],
+    defaultModel: null,
+  })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // Mention « @… » en cours dans le message : position du « @ » et texte tapé.
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
+  const pickerRef = useRef<PickerControl>(null)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -120,7 +142,8 @@ function App() {
 
   const messagesLoading = activeId !== null && loadedId !== activeId
   const activeConversation = conversations.find((conversation) => conversation.id === activeId)
-  const activeAgent = agents.find((agent) => agent.id === activeConversation?.agentId) ?? null
+  const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
+  const activeAgent = responder.kind === 'agent' ? responder.agent : null
 
   const conversationIsEmpty = !activeConversation || activeConversation.messages.length === 0
   // Pièces jointes en attente de la conversation affichée uniquement.
@@ -199,6 +222,7 @@ function App() {
 
     void load()
     api.listAgents().then((items) => !cancelled && setAgents(items)).catch(() => undefined)
+    api.modelCatalog().then((items) => !cancelled && setCatalog(items)).catch(() => undefined)
     api
       .getPreferences()
       .then((saved) => {
@@ -276,11 +300,27 @@ function App() {
     setSidebarOpen(false)
     setCreating(true)
 
+    // Sans agent demandé : on reprend le dernier choix (agent ou modèle) s'il est toujours proposé.
+    const last = agent ? null : readLastChoice()
+    const remembered =
+      last?.kind === 'agent' && agents.some((item) => item.id === last.agentId)
+        ? { agentId: last.agentId }
+        : last?.kind === 'model' &&
+            usableProviders(catalog.providers).some(
+              (provider) => provider.id === last.selection.provider && provider.models.some((model) => model.id === last.selection.model),
+            )
+          ? { model: last.selection }
+          : {}
+    const base = activeProjectId ? { projectId: activeProjectId } : {}
+
     try {
-      const created = await api.createConversation({
-        ...(agent ? { agentId: agent.id } : {}),
-        ...(activeProjectId ? { projectId: activeProjectId } : {}),
-      })
+      const created = await api
+        .createConversation({ ...base, ...(agent ? { agentId: agent.id } : remembered) })
+        // Choix mémorisé refusé entre-temps (modèle retiré, fournisseur interdit) : modèle par défaut.
+        .catch((cause: unknown) => {
+          if (agent || Object.keys(remembered).length === 0) throw cause
+          return api.createConversation(base)
+        })
       const conversation = toConversation(created)
       setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)])
       setActiveId(conversation.id)
@@ -289,6 +329,53 @@ function App() {
       fail(cause, 'error.createConversation')
     } finally {
       setCreating(false)
+    }
+  }
+
+  /** Change d'agent ou de modèle tant que la conversation n'a pas commencé. */
+  async function selectResponder(choice: ResponderChoice) {
+    const conversation = activeConversation
+    if (!conversation || conversation.messages.length > 0 || !canWrite) return
+
+    const next =
+      choice.kind === 'agent'
+        ? { agentId: choice.agentId, model: null }
+        : { agentId: null, model: choice.selection }
+    const previous = { agentId: conversation.agentId, model: conversation.model }
+    saveLastChoice(choice)
+    updateConversation(conversation.id, (current) => ({ ...current, ...next }))
+    requestAnimationFrame(() => inputRef.current?.focus())
+
+    try {
+      await api.updateConversation(conversation.id, next)
+    } catch (cause) {
+      updateConversation(conversation.id, (current) => ({ ...current, ...previous }))
+      fail(cause, 'error.send')
+    }
+  }
+
+  function closePicker() {
+    setPickerOpen(false)
+    setMention(null)
+  }
+
+  function pickResponder(choice: ResponderChoice) {
+    // Mention « @… » : le texte tapé pour chercher disparaît du message.
+    if (mention) {
+      setInput((current) => current.slice(0, mention.start) + current.slice(mention.start + 1 + mention.query.length))
+    }
+    closePicker()
+    void selectResponder(choice)
+  }
+
+  function onComposerChange(value: string, caret: number) {
+    setInput(value)
+    const found = conversationIsEmpty && canWrite ? mentionAt(value, caret) : null
+    if (found) {
+      setMention(found)
+      setPickerOpen(true)
+    } else if (mention) {
+      closePicker()
     }
   }
 
@@ -591,6 +678,7 @@ function App() {
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (mention && pickerRef.current?.handleKey(event)) return
     if (event.key !== 'Enter' || event.shiftKey) return
     // Préférence : Entrée envoie, sinon Ctrl/Cmd + Entrée.
     if (preferences.sendOnEnter || event.ctrlKey || event.metaKey) {
@@ -600,6 +688,7 @@ function App() {
   }
 
   const messages = activeConversation?.messages ?? []
+  const assistantName = activeAgent?.name ?? (responder.kind === 'model' ? responder.label : 'Snowfall')
   const lastAssistantId = messages.at(-1)?.role === 'assistant' ? messages.at(-1)?.id : undefined
   const shownMessages = regenerating ? messages.slice(0, -1) : messages
   const uploading = activeFiles.some((file) => file.status === 'uploading')
@@ -696,6 +785,12 @@ function App() {
                 <ProviderLogo provider={activeAgent.provider} size={12} />
               </span>
             )}
+            {responder.kind === 'model' && (
+              <span className="topbar-agent topbar-model">
+                <ProviderLogo provider={responder.provider} size={14} />
+                {responder.label}
+              </span>
+            )}
             <span className="topbar-current">{activeConversation?.title ?? t('chat.newConversation')}</span>
           </div>
 
@@ -736,22 +831,6 @@ function App() {
                 </div>
                 <p className="welcome-description">{t('chat.loading')}</p>
               </div>
-            ) : conversationIsEmpty && activeAgent ? (
-              <section className="welcome welcome-agent">
-                <div className="welcome-agent-hero">
-                  <div className="welcome-agent-text">
-                    <h1>
-                      <span className="welcome-brand">Snowfall</span>
-                      <br />
-                      <span>{activeAgent.name}</span>
-                    </h1>
-                    <span className="welcome-agent-model">
-                      <ProviderLogo provider={activeAgent.provider} size={13} />
-                      {activeAgent.model}
-                    </span>
-                  </div>
-                </div>
-              </section>
             ) : conversationIsEmpty ? (
               <section className="welcome">
                 <h1>
@@ -772,13 +851,15 @@ function App() {
                         username.slice(0, 1).toUpperCase()
                       ) : activeAgent ? (
                         <MessageAgentAvatar avatar={activeAgent.avatar} />
+                      ) : responder.kind === 'model' ? (
+                        <ProviderLogo provider={responder.provider} size={16} />
                       ) : (
                         <span>✳</span>
                       )}
                     </div>
                     <div className="message-body">
                       <div className="message-author">
-                        {message.role === 'user' ? username : activeAgent?.name ?? 'Snowfall'}
+                        {message.role === 'user' ? username : assistantName}
                       </div>
 
                       {message.attachments?.length ? (
@@ -872,10 +953,16 @@ function App() {
                 {sending && (
                   <div className="message message-assistant">
                     <div className={`message-avatar ${activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}>
-                      {activeAgent ? <MessageAgentAvatar avatar={activeAgent.avatar} mood={agentMood} /> : '✳'}
+                      {activeAgent ? (
+                        <MessageAgentAvatar avatar={activeAgent.avatar} mood={agentMood} />
+                      ) : responder.kind === 'model' ? (
+                        <ProviderLogo provider={responder.provider} size={16} />
+                      ) : (
+                        '✳'
+                      )}
                     </div>
                     <div className="message-body">
-                      <div className="message-author">{activeAgent?.name ?? 'Snowfall'}</div>
+                      <div className="message-author">{assistantName}</div>
                       {streamingText ? (
                         <Markdown source={streamingText} />
                       ) : (
@@ -904,13 +991,28 @@ function App() {
             )}
 
             <div className="composer">
-              {conversationIsEmpty && activeAgent && !historyLoading && !messagesLoading && (
-                <div className="composer-peek" aria-hidden="true">
-                  <span className="composer-peek-halo" />
-                  <div className="composer-peek-window">
-                    <AgentAvatar avatar={activeAgent.avatar} size={120} mood="hello" />
-                  </div>
-                </div>
+              {conversationIsEmpty && activeConversation && !historyLoading && !messagesLoading && (
+                canWrite ? (
+                  <ResponderPicker
+                    controlRef={pickerRef}
+                    current={responder}
+                    agents={agents}
+                    providers={catalog.providers}
+                    open={pickerOpen}
+                    mention={mention?.query ?? null}
+                    onOpenChange={(open) => (open ? setPickerOpen(true) : closePicker())}
+                    onPick={pickResponder}
+                  />
+                ) : (
+                  activeAgent && (
+                    <div className="composer-peek" aria-hidden="true">
+                      <span className="composer-peek-halo" />
+                      <div className="composer-peek-window">
+                        <AgentAvatar avatar={activeAgent.avatar} size={120} mood="hello" />
+                      </div>
+                    </div>
+                  )
+                )
               )}
               {activeFiles.length > 0 && (
                 <div className="composer-attachments">
@@ -955,10 +1057,11 @@ function App() {
                 <textarea
                   ref={inputRef}
                   value={input}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) => onComposerChange(event.target.value, event.target.selectionStart)}
                   onKeyDown={handleComposerKeyDown}
                   onPaste={onPaste}
-                  placeholder={t('chat.placeholder')}
+                  placeholder={conversationIsEmpty && canWrite ? t('chat.placeholderPicker') : t('chat.placeholder')}
+                  aria-autocomplete="list"
                   rows={1}
                   aria-label={t('chat.messageLabel')}
                   disabled={!activeConversation || messagesLoading || !canWrite}

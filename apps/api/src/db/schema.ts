@@ -257,6 +257,9 @@ export const conversations = pgTable.withRLS(
     agentId: uuid("agent_id"),
     // Même principe que agent_id : FK composite ON DELETE SET NULL (project_id) en SQL.
     projectId: uuid("project_id"),
+    // Modèle choisi pour une conversation sans agent ; NULL = modèle par défaut.
+    modelProvider: text("model_provider"),
+    modelId: text("model_id"),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -285,6 +288,13 @@ export const conversations = pgTable.withRLS(
         organizationMembers.userId,
       ],
     }).onDelete("cascade"),
+    check(
+      "conversations_model_check",
+      sql`(${table.modelProvider} IS NULL AND ${table.modelId} IS NULL) OR (
+        ${table.modelProvider} IN ('mistral', 'openai', 'anthropic', 'google', 'local')
+        AND length(${table.modelId}) BETWEEN 1 AND 120
+        AND ${table.agentId} IS NULL)`,
+    ),
     tenantPolicy("conversations_owner", table.organizationId, table.userId),
   ],
 );

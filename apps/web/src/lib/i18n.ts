@@ -141,6 +141,14 @@ const fr = {
   'model.list': 'Modèles',
   'model.none': 'Aucun modèle',
 
+  // Choix de l'agent ou du modèle (composer)
+  'picker.change': 'Changer d’agent ou de modèle',
+  'picker.search': 'Rechercher un agent ou un modèle',
+  'picker.agents': 'Agents',
+  'picker.default': 'Modèle par défaut',
+  'picker.none': 'Aucun résultat',
+  'chat.placeholderPicker': 'Posez votre question, ou tapez @ pour choisir un agent…',
+
   // Markdown
   'markdown.copyCode': 'Copier le code',
 
@@ -322,6 +330,13 @@ const en: Record<MessageKey, string> = {
   'model.search': 'Search models',
   'model.list': 'Models',
   'model.none': 'No model',
+
+  'picker.change': 'Switch agent or model',
+  'picker.search': 'Search agents and models',
+  'picker.agents': 'Agents',
+  'picker.default': 'Default model',
+  'picker.none': 'No results',
+  'chat.placeholderPicker': 'Ask a question, or type @ to pick an agent…',
 
   'markdown.copyCode': 'Copy code',
 

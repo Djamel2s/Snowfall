@@ -31,6 +31,8 @@ export interface ModelRegistry {
   runner(selection?: ModelSelection): ChatRunner;
   /** Fournisseur qui servira la sélection ("echo" : modèle local de développement). */
   providerFor(selection?: ModelSelection): ProviderId | "echo";
+  /** Modèle des conversations sans agent ni modèle choisi. */
+  defaultSelection?(): ModelSelection | undefined;
 }
 
 const CATALOG_TTL_MS = 10 * 60 * 1000;
@@ -92,6 +94,10 @@ export class ProviderRegistry implements ModelRegistry {
   async isAllowed({ provider, model }: ModelSelection) {
     const models = await this.models(provider);
     return models?.some((item) => item.id === model) ?? false;
+  }
+
+  defaultSelection() {
+    return this.options.defaultSelection;
   }
 
   providerFor(selection?: ModelSelection): ProviderId | "echo" {

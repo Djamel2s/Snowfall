@@ -584,6 +584,153 @@
   .composer-peek { left: 0px; width: 110px; }
 }
 
+/* ---- Choix de l'agent ou du modèle : on clique sur le « bonhomme » ------ */
+
+.composer-peek-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 18px 18px 0 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.composer-peek-button:focus-visible { outline: 2px solid rgba(158, 202, 255, .55); outline-offset: -2px; }
+
+/* Au survol, il sort un peu plus la tête. */
+.composer-peek-button > * { transition: translate .25s cubic-bezier(.2, .9, .25, 1.3); }
+.composer-peek-button:hover > *,
+.composer-peek-button:focus-visible > *,
+.composer-peek-button[aria-expanded="true"] > * { translate: 0 -7px; }
+
+/* Modèle : juste son logo, petit et discret, posé sur le bord du composer. */
+.composer-peek-model .composer-peek-halo { display: none; }
+
+.composer-peek-model .composer-peek-button {
+  display: flex;
+  width: 44px;
+  height: 110px;
+  margin-left: 14px;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.composer-peek-logo {
+  display: grid;
+  padding: 8px 6px;
+  place-items: center;
+  opacity: .6;
+  transition: opacity .2s, translate .25s cubic-bezier(.2, .9, .25, 1.3);
+}
+
+.composer-peek-model .composer-peek-button:hover .composer-peek-logo,
+.composer-peek-model .composer-peek-button:focus-visible .composer-peek-logo,
+.composer-peek-model .composer-peek-button[aria-expanded="true"] .composer-peek-logo { opacity: 1; translate: 0 -3px; }
+
+.composer-peek-model .responder-popover { left: 64px; }
+
+@media (max-width: 640px) {
+  .composer-peek-model .responder-popover { left: 0; }
+}
+
+.responder-popover {
+  position: absolute;
+  z-index: 30;
+  bottom: 10px;
+  left: calc(100% + 6px);
+  display: flex;
+  width: 290px;
+  max-height: min(380px, 60vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 14px;
+  background: #0e1626;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .2);
+  pointer-events: auto;
+  animation: responder-in .16s cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes responder-in {
+  from { opacity: 0; transform: translate(-6px, 4px) scale(.98); }
+}
+
+.responder-popover ul {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.responder-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 9px 4px;
+  color: #6f819c;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.responder-section .provider-logo { opacity: .7; }
+
+.responder-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  color: #b3c2d6;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.responder-option.active { background: rgba(185, 217, 255, .09); color: #eef5ff; }
+.responder-option[aria-selected="true"] { color: #eef5ff; font-weight: 600; }
+.responder-option > svg { flex-shrink: 0; margin-left: auto; color: #9cc4ff; }
+.responder-option .provider-logo { opacity: .45; }
+.responder-option .agent-avatar { flex-shrink: 0; }
+
+.responder-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.responder-option .responder-option-name + .provider-logo { margin-left: auto; }
+.responder-option .provider-logo + svg { margin-left: 0; }
+
+.responder-popover .model-select-empty {
+  padding: 14px 9px;
+  color: #5d6e87;
+  font-size: 12px;
+  text-align: center;
+}
+
+.topbar-model { font-weight: 550; }
+
+@media (max-width: 640px) {
+  .responder-popover {
+    bottom: 8px;
+    left: 0;
+    width: min(320px, calc(100vw - 40px));
+    max-height: min(340px, 46vh);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .responder-popover { animation: none; }
+  .composer-peek-button > * { transition: none; }
+}
+
 .welcome-agent-text {
   position: relative;
   display: flex;

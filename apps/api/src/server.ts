@@ -59,6 +59,7 @@ import { findSchemaDrift } from "./db/schema-check.js";
 import {
   PostgresConversationStore,
   type ConversationStore,
+  type ConversationSummary,
   type StoredMessage,
 } from "./conversations/store.js";
 import { buildModelInput, estimateTokens } from "./attachments/prompt.js";
@@ -214,16 +215,27 @@ export function createAppServer(deps: AppDependencies) {
   }
 
   const conversationIdSchema = z.uuid();
+  const modelSelectionSchema = z.object({
+    provider: z.enum(providerIds),
+    model: z.string().min(1).max(120),
+  }).strict();
+
   const createConversationSchema = z.object({
     title: z.string().trim().min(1).max(120).optional(),
     agentId: z.uuid().optional(),
     projectId: z.uuid().optional(),
-  }).strict();
+    model: modelSelectionSchema.optional(),
+  }).strict().refine((body) => !(body.agentId && body.model));
 
+  // agentId / model : qui répond. Les deux à null = modèle par défaut.
   const updateConversationSchema = z.object({
     title: z.string().trim().min(1).max(120).optional(),
     projectId: z.uuid().nullable().optional(),
-  }).strict().refine((body) => body.title !== undefined || body.projectId !== undefined);
+    agentId: z.uuid().nullable().optional(),
+    model: modelSelectionSchema.nullable().optional(),
+  }).strict()
+    .refine((body) => Object.values(body).some((value) => value !== undefined))
+    .refine((body) => !(body.agentId && body.model));
 
   const agentInputSchema = agentProfileSchema.extend({
     provider: z.enum(providerIds),
@@ -265,6 +277,18 @@ export function createAppServer(deps: AppDependencies) {
     return deps.settings ? (await deps.settings.get(user)).allowedProviders : [...providerIds];
   }
 
+  /** Liste blanche : modèle publié par un fournisseur configuré et autorisé par l'organisation. */
+  async function isModelPermitted(user: AuthenticatedUser, selection: ModelSelection) {
+    const [published, permitted] = await Promise.all([models.isAllowed(selection), allowedProviders(user)]);
+    return published && permitted.includes(selection.provider);
+  }
+
+  /** Modèle qui répond : celui de l'agent, sinon celui choisi, sinon le défaut. */
+  function selectionFor(conversation: ConversationSummary, agent: Agent | null): ModelSelection | undefined {
+    if (agent) return { provider: agent.provider, model: agent.model };
+    return conversation.model ?? undefined;
+  }
+
   /**
    * Contrôle avant génération : fournisseur autorisé par l'organisation et
    * plafonds de tokens. Répond directement en cas de refus.
@@ -273,9 +297,9 @@ export function createAppServer(deps: AppDependencies) {
     request: FastifyRequest,
     reply: FastifyReply,
     user: AuthenticatedUser,
-    agent: Agent | null,
+    selection: ModelSelection | undefined,
   ): Promise<{ provider: ProviderId | "echo" } | null> {
-    const provider = models.providerFor(agent ? { provider: agent.provider, model: agent.model } : undefined);
+    const provider = models.providerFor(selection);
     if (!deps.settings) return { provider };
 
     const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
@@ -312,6 +336,7 @@ export function createAppServer(deps: AppDependencies) {
     user: AuthenticatedUser;
     conversationId: string;
     agent: Agent | null;
+    selection: ModelSelection | undefined;
     provider: ProviderId | "echo";
     input: { history: ChatTurn[]; message: string; images: ModelImage[] };
     eventType: string;
@@ -319,7 +344,7 @@ export function createAppServer(deps: AppDependencies) {
     persist: (content: string) => Promise<Record<string, unknown> | null>;
   }) {
     const { request, reply, user, agent, input } = options;
-    const runChat = runnerFor(agent ? { provider: agent.provider, model: agent.model } : undefined);
+    const runChat = runnerFor(options.selection);
 
     const stream = new PassThrough();
     const send = (event: "token" | "done" | "error", data: unknown) => {
@@ -527,6 +552,9 @@ export function createAppServer(deps: AppDependencies) {
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid request" });
       }
+      if (parsed.data.model && !(await isModelPermitted(user, parsed.data.model))) {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
 
       try {
         const conversation = await conversationStore.create(
@@ -534,6 +562,7 @@ export function createAppServer(deps: AppDependencies) {
           parsed.data.title,
           parsed.data.agentId,
           parsed.data.projectId,
+          parsed.data.model,
         );
         await kit.record(request, user, {
           eventType: "conversation.create",
@@ -561,10 +590,20 @@ export function createAppServer(deps: AppDependencies) {
       const body = updateConversationSchema.safeParse(request.body);
       if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
 
+      const { title, projectId, agentId, model } = body.data;
+      const reselect = agentId !== undefined || model !== undefined;
+      if (model && !(await isModelPermitted(user, model))) {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
+      if (agentId && (!agents || !(await agents.get(user, agentId)))) {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
+
       try {
         const conversation = await conversationStore.update(user, params.data.id, {
-          ...(body.data.title !== undefined ? { title: body.data.title } : {}),
-          ...(body.data.projectId !== undefined ? { projectId: body.data.projectId } : {}),
+          ...(title !== undefined ? { title } : {}),
+          ...(projectId !== undefined ? { projectId } : {}),
+          ...(reselect ? { selection: { agentId: agentId ?? null, model: model ?? null } } : {}),
         });
         if (!conversation) return conversationNotFound(request, reply, user, params.data.id);
 
@@ -572,12 +611,25 @@ export function createAppServer(deps: AppDependencies) {
           eventType: "conversation.update",
           targetType: "conversation",
           targetId: conversation.id,
-          details: { renamed: body.data.title !== undefined, moved: body.data.projectId !== undefined },
+          details: {
+            renamed: title !== undefined,
+            moved: projectId !== undefined,
+            ...(reselect
+              ? {
+                  agentId: conversation.agentId ?? "",
+                  model: conversation.model ? `${conversation.model.provider}:${conversation.model.model}` : "",
+                }
+              : {}),
+          },
         });
         return { conversation };
       } catch (error) {
-        if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") {
+        if (error instanceof Error && ["PROJECT_NOT_FOUND", "AGENT_NOT_FOUND"].includes(error.message)) {
           return reply.code(400).send({ error: "Invalid request" });
+        }
+        // Une conversation commencée garde son agent ou son modèle.
+        if (error instanceof Error && error.message === "CONVERSATION_STARTED") {
+          return reply.code(409).send({ error: "Conversation already started" });
         }
         throw error;
       }
@@ -588,6 +640,8 @@ export function createAppServer(deps: AppDependencies) {
       const [catalog, allowed] = await Promise.all([models.catalog(), allowedProviders(kit.principal(request))]);
       return {
         providers: catalog.map((provider) => ({ ...provider, allowed: allowed.includes(provider.id) })),
+        // Modèle des conversations sans agent ni modèle choisi (null : modèle local de développement).
+        defaultModel: models.defaultSelection?.() ?? null,
       };
     });
 
@@ -666,7 +720,7 @@ export function createAppServer(deps: AppDependencies) {
       }
       // Agent supprimé entre-temps : repli sur le modèle par défaut.
       const agent = conversation.agentId && agents ? await agents.get(user, conversation.agentId) : null;
-      return { conversation, history, agent };
+      return { conversation, history, agent, selection: selectionFor(conversation, agent) };
     }
 
     api.post("/conversations/:id/messages", async (request, reply) => {
@@ -685,7 +739,7 @@ export function createAppServer(deps: AppDependencies) {
 
       const loaded = await loadConversation(request, reply, user, params.data.id);
       if (!loaded) return reply;
-      const { history, agent } = loaded;
+      const { history, agent, selection } = loaded;
 
       // Modification : le contexte s'arrête juste avant le message édité.
       let prior = history;
@@ -704,7 +758,7 @@ export function createAppServer(deps: AppDependencies) {
         }
       }
 
-      const admitted = await admitGeneration(request, reply, user, agent);
+      const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
       const context = prior.slice(-HISTORY_TURNS);
@@ -716,6 +770,7 @@ export function createAppServer(deps: AppDependencies) {
         user,
         conversationId: params.data.id,
         agent,
+        selection,
         provider: admitted.provider,
         input: buildModelInput(context, { content, attachmentIds }, files),
         eventType: "message.create",
@@ -742,7 +797,7 @@ export function createAppServer(deps: AppDependencies) {
 
       const loaded = await loadConversation(request, reply, user, params.data.id);
       if (!loaded) return reply;
-      const { history, agent } = loaded;
+      const { history, agent, selection } = loaded;
 
       // Seule la dernière réponse se régénère, à partir de la question qui la précède.
       const last = history.at(-1);
@@ -751,7 +806,7 @@ export function createAppServer(deps: AppDependencies) {
         return reply.code(400).send({ error: "Invalid request" });
       }
 
-      const admitted = await admitGeneration(request, reply, user, agent);
+      const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
       const context = history.slice(0, -2).slice(-HISTORY_TURNS);
@@ -764,6 +819,7 @@ export function createAppServer(deps: AppDependencies) {
         user,
         conversationId: params.data.id,
         agent,
+        selection,
         provider: admitted.provider,
         input: buildModelInput(context, { content: question.content, attachmentIds }, files),
         eventType: "message.regenerate",
