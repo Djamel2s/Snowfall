@@ -1,6 +1,7 @@
+# Images figées par digest (reproductible, mises à jour par Dependabot).
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     container_name: snowfall-postgres
     restart: unless-stopped
     environment:
@@ -19,7 +20,7 @@ services:
       retries: 10
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.0
+    image: quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741
     container_name: snowfall-keycloak
     restart: unless-stopped
     depends_on:
@@ -34,15 +35,35 @@ services:
       KC_DB_USERNAME: keycloak
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Define KEYCLOAK_DB_PASSWORD in .env}
       KC_HEALTH_ENABLED: "true"
-      # Substitués dans le realm importé (${...}).
+      # Substitués dans le realm importé (${...}). Un realm déjà importé n'est
+      # pas modifié : appliquer les changements avec npm run keycloak:sync.
       SNOWFALL_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?Define OIDC_CLIENT_SECRET in .env}
       SNOWFALL_APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      SNOWFALL_BACKCHANNEL_LOGOUT_URL: ${SNOWFALL_BACKCHANNEL_LOGOUT_URL:-http://host.docker.internal:3001/auth/backchannel-logout}
+      SNOWFALL_SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SNOWFALL_SMTP_PORT: ${SMTP_PORT:-1025}
+      SNOWFALL_SMTP_FROM: ${SMTP_FROM:-no-reply@snowfall.local}
     command: start-dev --import-realm
     ports:
       - "127.0.0.1:8080:8080"
+    # Keycloak joint l'API (déconnexion back-channel) sur la machine hôte.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./infra/keycloak/themes:/opt/keycloak/themes:ro
       - ./infra/keycloak/realm:/opt/keycloak/data/import:ro
+
+  # Développement uniquement : capture tous les e-mails (vérification,
+  # mot de passe oublié). Interface : http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.31.2@sha256:74d609a42ec279aa63c6b4622a6fa9b5408d1ad5b1d76a1c4be40a265ce0863d
+    container_name: snowfall-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "false"
+      MP_MAX_MESSAGES: "500"
 
 volumes:
   snowfall_postgres_data:

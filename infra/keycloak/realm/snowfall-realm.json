@@ -33,7 +33,7 @@
   "verifyEmail": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": false,
+  "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
   "permanentLockout": false,
@@ -852,7 +852,8 @@
         "oauth2.device.authorization.grant.enabled": "false",
         "oidc.ciba.grant.enabled": "false",
         "standard.token.exchange.enabled": "false",
-        "display.on.consent.screen": "false"
+        "display.on.consent.screen": "false",
+        "backchannel.logout.url": "${SNOWFALL_BACKCHANNEL_LOGOUT_URL:http://host.docker.internal:3001/auth/backchannel-logout}"
       },
       "defaultClientScopes": [
         "basic",
@@ -860,7 +861,9 @@
         "email",
         "acr"
       ],
-      "optionalClientScopes": []
+      "optionalClientScopes": [
+        "organization"
+      ]
     }
   ],
   "clientScopes": [
@@ -1585,7 +1588,17 @@
     "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
     "strictTransportSecurity": "max-age=31536000; includeSubDomains"
   },
-  "smtpServer": {},
+  "smtpServer": {
+    "host": "${SNOWFALL_SMTP_HOST:mailpit}",
+    "port": "${SNOWFALL_SMTP_PORT:1025}",
+    "from": "${SNOWFALL_SMTP_FROM:no-reply@snowfall.local}",
+    "fromDisplayName": "${SNOWFALL_SMTP_FROM_NAME:Snowfall}",
+    "starttls": "${SNOWFALL_SMTP_STARTTLS:false}",
+    "ssl": "${SNOWFALL_SMTP_SSL:false}",
+    "auth": "${SNOWFALL_SMTP_AUTH:false}",
+    "user": "${SNOWFALL_SMTP_USER:}",
+    "password": "${SNOWFALL_SMTP_PASSWORD:}"
+  },
   "loginTheme": "snowfall",
   "accountTheme": "",
   "adminTheme": "",
@@ -2629,7 +2642,7 @@
   },
   "keycloakVersion": "26.8.0",
   "userManagedAccessAllowed": false,
-  "organizationsEnabled": false,
+  "organizationsEnabled": true,
   "verifiableCredentialsEnabled": false,
   "adminPermissionsEnabled": false,
   "scimApiEnabled": false,

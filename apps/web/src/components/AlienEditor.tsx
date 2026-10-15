@@ -1,5 +1,6 @@
 import { alienAccessories, alienColors, alienEyes, type AlienAvatar } from '../lib/api'
 import { alienPalette } from '../lib/alien'
+import { useI18n } from '../lib/i18n'
 import Alien from './Alien'
 
 type Props = {
@@ -8,9 +9,10 @@ type Props = {
 }
 
 export default function AlienEditor({ value, onChange }: Props) {
+  const { t } = useI18n()
   return (
     <div className="studio-options">
-      <div className="studio-row" role="radiogroup" aria-label="Couleur">
+      <div className="studio-row" role="radiogroup" aria-label={t('studio.color')}>
         {alienColors.map((color) => {
           const tone = alienPalette[color]
           return (
@@ -28,7 +30,7 @@ export default function AlienEditor({ value, onChange }: Props) {
         })}
       </div>
 
-      <div className="studio-grid" role="radiogroup" aria-label="Yeux">
+      <div className="studio-grid" role="radiogroup" aria-label={t('studio.eyes')}>
         {alienEyes.map((eyes) => (
           <button
             key={eyes}
@@ -44,7 +46,7 @@ export default function AlienEditor({ value, onChange }: Props) {
         ))}
       </div>
 
-      <div className="studio-grid" role="radiogroup" aria-label="Accessoire">
+      <div className="studio-grid" role="radiogroup" aria-label={t('studio.accessory')}>
         {alienAccessories.map((accessory) => (
           <button
             key={accessory}

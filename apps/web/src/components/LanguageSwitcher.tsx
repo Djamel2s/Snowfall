@@ -1,44 +1,27 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import FR from 'country-flag-icons/react/1x1/FR'
 import GB from 'country-flag-icons/react/1x1/GB'
+import { useI18n, type Locale } from '../lib/i18n'
 
 const languages = [
   { code: 'fr', label: 'Français', Flag: FR },
   { code: 'en', label: 'English', Flag: GB },
 ] as const
 
-export type LanguageCode = (typeof languages)[number]['code']
-
-const STORAGE_KEY = 'snowfall:locale'
-
-function initialLanguage(): LanguageCode {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (languages.some((language) => language.code === saved)) {
-      return saved as LanguageCode
-    }
-  } catch {
-    // Stockage indisponible (navigation privée…) : langue par défaut.
-  }
-  return 'fr'
-}
+export type LanguageCode = Locale
 
 export default function LanguageSwitcher({
   onChange,
 }: {
   onChange?: (code: LanguageCode) => void
 }) {
-  const [current, setCurrent] = useState<LanguageCode>(initialLanguage)
+  const { locale, setLocale, t } = useI18n()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  const active = languages.find((language) => language.code === current) ?? languages[0]
-
-  useEffect(() => {
-    document.documentElement.lang = current
-  }, [current])
+  const active = languages.find((language) => language.code === locale) ?? languages[0]
 
   useEffect(() => {
     if (!open) return
@@ -48,20 +31,15 @@ export default function LanguageSwitcher({
     }
 
     document.addEventListener('pointerdown', onPointerDown)
-    itemRefs.current[languages.findIndex((language) => language.code === current)]?.focus()
+    itemRefs.current[languages.findIndex((language) => language.code === locale)]?.focus()
 
     return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [open, current])
+  }, [open, locale])
 
   function select(code: LanguageCode) {
-    setCurrent(code)
+    setLocale(code)
     setOpen(false)
     buttonRef.current?.focus()
-    try {
-      localStorage.setItem(STORAGE_KEY, code)
-    } catch {
-      // Préférence non conservée : sans gravité.
-    }
     onChange?.(code)
   }
 
@@ -86,7 +64,7 @@ export default function LanguageSwitcher({
         ref={buttonRef}
         type="button"
         className="language-flag"
-        aria-label={`Langue : ${active.label}`}
+        aria-label={t('language.label', { name: active.label })}
         aria-haspopup="menu"
         aria-expanded={open}
         title={active.label}
@@ -96,7 +74,7 @@ export default function LanguageSwitcher({
       </button>
 
       {open && (
-        <div className="language-menu" role="menu" aria-label="Choisir la langue" onKeyDown={onMenuKeyDown}>
+        <div className="language-menu" role="menu" aria-label={t('language.choose')} onKeyDown={onMenuKeyDown}>
           {languages.map(({ code, label, Flag }, index) => (
             <button
               key={code}
@@ -105,7 +83,7 @@ export default function LanguageSwitcher({
               }}
               type="button"
               role="menuitemradio"
-              aria-checked={code === current}
+              aria-checked={code === locale}
               aria-label={label}
               title={label}
               className="language-flag"

@@ -6,6 +6,17 @@ import { open, seal, type KeyEncryptionProvider } from "./envelope.js";
 const FIELD_PATTERN = /^(\d+):(v1\..+)$/;
 const MAX_CACHED_KEYS = 1_000;
 
+/** Contexte (AAD côté KMS) qui lie une DEK enveloppée à son organisation et sa version. */
+export function organizationKeyContext(organizationId: string, version: number) {
+  return `organization-key:${organizationId}:${version}`;
+}
+
+/** Version de clé d'une valeur chiffrée, ou null si la valeur n'est pas chiffrée. */
+export function keyVersionOf(stored: string) {
+  const match = FIELD_PATTERN.exec(stored);
+  return match ? Number(match[1]) : null;
+}
+
 /**
  * Une clé de données (DEK) par organisation, chiffrée par la KEK.
  * Doit être utilisé dans une transaction où le contexte tenant (RLS) est posé.
@@ -31,15 +42,40 @@ export class OrganizationKeyring {
     stored: string,
     aad: string,
   ): Promise<string> {
+    return (await this.decryptBytes(client, organizationId, stored, aad)).toString("utf8");
+  }
+
+  /** Contenu binaire (pièces jointes) : chiffré tel quel, sans passer par du texte. */
+  async encryptBytes(
+    client: PoolClient,
+    organizationId: string,
+    plaintext: Buffer,
+    aad: string,
+  ): Promise<string> {
+    const { version, key } = await this.activeKey(client, organizationId);
+    return `${version}:${seal(key, plaintext, aad)}`;
+  }
+
+  async decryptBytes(
+    client: PoolClient,
+    organizationId: string,
+    stored: string,
+    aad: string,
+  ): Promise<Buffer> {
     const match = FIELD_PATTERN.exec(stored);
     if (!match) throw new Error("UNENCRYPTED_VALUE");
 
     const key = await this.keyVersion(client, organizationId, Number(match[1]));
-    return open(key, match[2]!, aad).toString("utf8");
+    return open(key, match[2]!, aad);
   }
 
   private context(organizationId: string, version: number) {
-    return `organization-key:${organizationId}:${version}`;
+    return organizationKeyContext(organizationId, version);
+  }
+
+  /** Oublie les clés en cache (après une rotation, dans un processus long). */
+  forget() {
+    this.cache.clear();
   }
 
   private remember(cacheKey: string, key: Buffer) {

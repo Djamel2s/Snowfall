@@ -1,5 +1,7 @@
 import OpenAI from "openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ChatModel } from "../graph/chat-graph.js";
+import { conversationTurns, imageDataUrl } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
 
@@ -23,7 +25,24 @@ export function createOpenAiCompatibleModel(
   return {
     id: `${provider}:${model}`,
 
-    async *stream({ history, message, instructions }, signal) {
+    async *stream(request, signal) {
+      const turns: ChatCompletionMessageParam[] = conversationTurns(request).map((turn) =>
+        turn.role === "assistant"
+          ? { role: "assistant", content: turn.content }
+          : {
+              role: "user",
+              content: turn.images?.length
+                ? [
+                    { type: "text", text: turn.content },
+                    ...turn.images.map((image) => ({
+                      type: "image_url" as const,
+                      image_url: { url: imageDataUrl(image) },
+                    })),
+                  ]
+                : turn.content,
+            },
+      );
+
       const stream = await openai.chat.completions.create(
         {
           model,
@@ -34,9 +53,8 @@ export function createOpenAiCompatibleModel(
             ? { max_completion_tokens: settings.maxOutputTokens }
             : { max_tokens: settings.maxOutputTokens }),
           messages: [
-            { role: "system", content: buildSystemPrompt(instructions) },
-            ...history.map((turn) => ({ role: turn.role, content: turn.content })),
-            { role: "user", content: message },
+            { role: "system", content: buildSystemPrompt(request.instructions) },
+            ...turns,
           ],
         },
         signal ? { signal } : {},

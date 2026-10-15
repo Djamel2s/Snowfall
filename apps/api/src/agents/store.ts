@@ -35,7 +35,7 @@ type AgentRow = {
 const COLUMNS = `id, provider, model, profile_enc, created_by,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
 
-function profileAad(organizationId: string, agentId: string) {
+export function profileAad(organizationId: string, agentId: string) {
   return `agent-profile:${organizationId}:${agentId}`;
 }
 

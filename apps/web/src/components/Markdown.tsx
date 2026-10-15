@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
+import { useI18n } from '../lib/i18n'
 import '../markdown.css'
 
 // Rendu exclusivement en éléments React : le texte est toujours échappé,
@@ -32,6 +33,7 @@ function renderInline(nodes: Inline[]): ReactNode[] {
 }
 
 function CodeBlock({ lang, text }: { lang: string; text: string }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const tokens = useMemo(() => tokenizeCode(text, lang), [text, lang])
 
@@ -41,8 +43,8 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
         <span>{lang || 'code'}</span>
         <button
           type="button"
-          aria-label="Copier le code"
-          title="Copier"
+          aria-label={t('markdown.copyCode')}
+          title={t('chat.copy')}
           onClick={() => {
             void navigator.clipboard?.writeText(text).then(() => {
               setCopied(true)

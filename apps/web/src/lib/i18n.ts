@@ -1,0 +1,427 @@
+import { useSyncExternalStore } from 'react'
+
+// Traduction de l'interface, sans dépendance. Le dictionnaire français fait
+// référence : toute clé manquante en anglais est une erreur de compilation.
+
+export const locales = ['fr', 'en'] as const
+export type Locale = (typeof locales)[number]
+
+const fr = {
+  // Général
+  'common.cancel': 'Annuler',
+  'common.close': 'Fermer',
+  'common.save': 'Enregistrer',
+  'common.create': 'Créer',
+  'common.delete': 'Supprimer',
+  'common.confirm': 'Confirmer',
+  'common.back': 'Retour',
+  'common.rename': 'Renommer',
+  'common.loading': 'Chargement…',
+  'common.you': 'vous',
+
+  // Démarrage
+  'boot.accessDenied': "Accès refusé : ce compte n'est pas autorisé sur Snowfall.",
+  'boot.reconnect': 'Se reconnecter',
+  'boot.unreachable': "Impossible de joindre le service d'authentification.",
+
+  // Erreurs d'API
+  'error.sessionExpired': 'Session expirée. Redirection vers la connexion…',
+  'error.forbidden': 'Accès refusé.',
+  'error.tooMany': 'Trop de requêtes. Réessaie dans un instant.',
+  'error.notFound': 'Élément introuvable.',
+  'error.server': 'Erreur serveur ({status}).',
+  'error.quota': 'Le quota de tokens de ton organisation est atteint pour ce mois.',
+  'error.providerQuota': 'Le quota de ce fournisseur est atteint pour ce mois.',
+  'error.providerNotAllowed': 'Ce fournisseur n’est pas autorisé par ton organisation.',
+  'error.refused': 'Le modèle a décliné cette demande.',
+  'error.providerUnavailable': 'Ce fournisseur n’est pas configuré.',
+  'error.assistantUnavailable': 'L’assistant est indisponible. Réessaie dans un instant.',
+  'error.interrupted': 'La réponse a été interrompue.',
+  'error.emptyResponse': 'Réponse vide du serveur.',
+  'error.unsupportedFile': 'Type de fichier non pris en charge (PDF, Word, texte, CSV, JSON, PNG, JPEG, WebP).',
+  'error.unreadableFile': 'Impossible de lire le texte de ce document.',
+  'error.fileTooLarge': 'Fichier trop volumineux (10 Mo maximum, 5 Mo pour une image).',
+  'error.tooManyFiles': 'Trop de pièces jointes en attente pour cette conversation.',
+  'error.conflict': 'Cet élément existe déjà.',
+  'error.copy': 'Copie impossible : le navigateur a refusé l’accès au presse-papiers.',
+  'error.loadConversations': 'Impossible de charger les conversations.',
+  'error.loadMessages': 'Impossible de charger les messages.',
+  'error.createConversation': 'Impossible de créer la conversation.',
+  'error.deleteConversation': 'Impossible de supprimer cette conversation.',
+  'error.send': 'Impossible de contacter Snowfall.',
+
+  // Barre latérale
+  'sidebar.menuOpen': 'Ouvrir le menu',
+  'sidebar.menuClose': 'Fermer le menu',
+  'sidebar.navigation': 'Navigation principale',
+  'sidebar.chats': 'Conversations',
+  'sidebar.projects': 'Projets',
+  'sidebar.agents': 'Agents',
+  'sidebar.settings': 'Paramètres',
+  'sidebar.newChat': 'Nouvelle conversation',
+  'sidebar.creating': 'Création…',
+  'sidebar.search': 'Rechercher',
+  'sidebar.searchLabel': 'Rechercher une conversation',
+  'sidebar.searchClear': 'Effacer la recherche',
+  'sidebar.inMessages': 'DANS LES MESSAGES',
+  'sidebar.pinned': 'ÉPINGLÉS',
+  'sidebar.allPinned': 'TOUTES LES ÉPINGLÉES',
+  'sidebar.history': 'HISTORIQUE',
+  'sidebar.noPinned': 'Aucune conversation épinglée.',
+  'sidebar.noResult': 'Aucune conversation trouvée.',
+  'sidebar.noConversation': 'Aucune conversation pour le moment.',
+  'sidebar.loadingHistory': 'Chargement de l’historique…',
+  'sidebar.pin': 'Épingler',
+  'sidebar.unpin': 'Désépingler',
+  'sidebar.deleteConversation': 'Supprimer la conversation',
+  'sidebar.confirmDelete': 'Supprimer cette conversation et tous ses messages ?',
+  'sidebar.projectsTitle': 'PROJETS',
+  'sidebar.createProject': 'Créer un projet',
+  'sidebar.projectName': 'Nom du projet',
+  'sidebar.firstProject': 'Crée ton premier projet',
+  'sidebar.emptyProject': 'Aucune conversation dans ce projet.',
+  'sidebar.deleteProject': 'Supprimer le projet (les conversations sont conservées)',
+  'sidebar.moveToProject': 'Ranger dans un projet',
+  'sidebar.noProject': 'Aucun projet',
+  'sidebar.agentsTitle': 'AGENTS',
+  'sidebar.createAgent': 'Créer un agent',
+  'sidebar.firstAgent': 'Crée ton premier agent',
+  'sidebar.editAgent': 'Modifier {name}',
+  'sidebar.logout': 'Se déconnecter',
+  'sidebar.session': 'Session authentifiée',
+
+  // Conversation
+  'chat.newConversation': 'Nouvelle conversation',
+  'chat.loading': 'Chargement de votre conversation…',
+  'chat.workspace': 'Votre espace de travail.',
+  'chat.startHint': 'Commencez par poser une question ou partager une idée.',
+  'chat.createHint': 'Créez une nouvelle conversation pour commencer.',
+  'chat.placeholder': 'Posez votre question, explorez une idée...',
+  'chat.messageLabel': 'Votre message',
+  'chat.send': 'Envoyer',
+  'chat.sendLabel': 'Envoyer le message',
+  'chat.stop': 'Arrêter la génération',
+  'chat.attach': 'Ajouter une pièce jointe',
+  'chat.removeAttachment': 'Retirer {name}',
+  'chat.uploading': 'Envoi…',
+  'chat.answering': 'Réponse en cours',
+  'chat.disclaimer': 'Snowfall peut se tromper. Vérifiez les informations importantes.',
+  'chat.copy': 'Copier',
+  'chat.copyAnswer': 'Copier la réponse',
+  'chat.copied': 'Copié',
+  'chat.regenerate': 'Régénérer la réponse',
+  'chat.edit': 'Modifier le message',
+  'chat.editSave': 'Envoyer la modification',
+  'chat.download': 'Télécharger {name}',
+  'chat.partial': 'Réponse interrompue',
+  'chat.defaultTitle': 'Nouvelle conversation',
+  'chat.dropFiles': 'Dépose tes fichiers ici',
+
+  // Studio d'agent
+  'studio.create': 'Créer un agent',
+  'studio.edit': 'Modifier l’agent',
+  'studio.name': 'Nom',
+  'studio.provider': 'Fournisseur',
+  'studio.model': 'Modèle',
+  'studio.instructions': 'Instructions…',
+  'studio.instructionsLabel': 'Instructions',
+  'studio.notConfigured': '{provider} · non configuré',
+  'studio.notAllowed': '{provider} · non autorisé',
+  'studio.confirmDelete': 'Confirmer la suppression',
+  'studio.photo': 'Photo',
+  'studio.modelsUnavailable': 'Modèles indisponibles.',
+  'studio.saveFailed': 'Enregistrement impossible.',
+  'studio.deleteFailed': 'Suppression impossible.',
+  'studio.invalidImage': 'Image invalide.',
+  'studio.color': 'Couleur',
+  'studio.eyes': 'Yeux',
+  'studio.accessory': 'Accessoire',
+  'model.choose': 'Choisir un modèle',
+  'model.search': 'Rechercher un modèle',
+  'model.list': 'Modèles',
+  'model.none': 'Aucun modèle',
+
+  // Markdown
+  'markdown.copyCode': 'Copier le code',
+
+  // Langue
+  'language.label': 'Langue : {name}',
+  'language.choose': 'Choisir la langue',
+
+  // Paramètres
+  'settings.title': 'Paramètres',
+  'settings.profile': 'Profil',
+  'settings.account': 'Gérer mon compte',
+  'settings.organization': 'Organisation',
+  'settings.preferences': 'Préférences',
+  'settings.language': 'Langue',
+  'settings.sendOnEnter': 'Entrée pour envoyer',
+  'settings.sendOnEnterHint': 'Maj + Entrée pour aller à la ligne',
+  'settings.motion': 'Animations',
+  'settings.motion.system': 'Système',
+  'settings.motion.on': 'Réduites',
+  'settings.motion.off': 'Actives',
+  'settings.usage': 'Consommation du mois',
+  'settings.usageMine': 'Toi',
+  'settings.usageOrg': 'Organisation',
+  'settings.unlimited': 'illimité',
+  'settings.tokens': '{count} tokens',
+  'settings.admin': 'Administration',
+  'settings.providers': 'Fournisseurs autorisés',
+  'settings.providerOff': 'non configuré sur la plateforme',
+  'settings.quotas': 'Quotas mensuels',
+  'settings.quotaOrg': 'Organisation (tokens)',
+  'settings.quotaProvider': '{provider} (tokens)',
+  'settings.quotaPlaceholder': 'Illimité',
+  'settings.saved': 'Enregistré',
+  'settings.members': 'Membres',
+  'settings.memberRemove': 'Retirer {email}',
+  'settings.memberRemoveConfirm': 'Retirer ce membre ? Ses conversations dans l’organisation seront supprimées.',
+  'settings.invite': 'Inviter',
+  'settings.inviteEmail': 'E-mail à inviter',
+  'settings.invitations': 'Invitations en attente',
+  'settings.invitationRevoke': 'Annuler l’invitation de {email}',
+  'settings.inviteHint': 'La personne rejoint l’organisation à sa première connexion, avec son e-mail vérifié.',
+  'settings.sso': 'SSO de l’organisation',
+  'settings.ssoAlias': 'Alias de l’organisation Keycloak',
+  'settings.ssoRole': 'Rôle des nouveaux membres SSO',
+  'settings.ssoHint': 'Les comptes Entra ID ou Google Workspace de cette organisation Keycloak sont rattachés automatiquement.',
+  'role.owner': 'Propriétaire',
+  'role.admin': 'Admin',
+  'role.member': 'Membre',
+  'role.reader': 'Lecteur',
+} as const
+
+export type MessageKey = keyof typeof fr
+
+const en: Record<MessageKey, string> = {
+  'common.cancel': 'Cancel',
+  'common.close': 'Close',
+  'common.save': 'Save',
+  'common.create': 'Create',
+  'common.delete': 'Delete',
+  'common.confirm': 'Confirm',
+  'common.back': 'Back',
+  'common.rename': 'Rename',
+  'common.loading': 'Loading…',
+  'common.you': 'you',
+
+  'boot.accessDenied': 'Access denied: this account is not allowed on Snowfall.',
+  'boot.reconnect': 'Sign in again',
+  'boot.unreachable': 'Unable to reach the authentication service.',
+
+  'error.sessionExpired': 'Session expired. Redirecting to sign-in…',
+  'error.forbidden': 'Access denied.',
+  'error.tooMany': 'Too many requests. Try again in a moment.',
+  'error.notFound': 'Item not found.',
+  'error.server': 'Server error ({status}).',
+  'error.quota': 'Your organization has reached its token quota for this month.',
+  'error.providerQuota': 'This provider has reached its quota for this month.',
+  'error.providerNotAllowed': 'This provider is not allowed by your organization.',
+  'error.refused': 'The model declined this request.',
+  'error.providerUnavailable': 'This provider is not configured.',
+  'error.assistantUnavailable': 'The assistant is unavailable. Try again in a moment.',
+  'error.interrupted': 'The answer was interrupted.',
+  'error.emptyResponse': 'Empty server response.',
+  'error.unsupportedFile': 'Unsupported file type (PDF, Word, text, CSV, JSON, PNG, JPEG, WebP).',
+  'error.unreadableFile': 'Unable to read the text of this document.',
+  'error.fileTooLarge': 'File too large (10 MB max, 5 MB for an image).',
+  'error.tooManyFiles': 'Too many pending attachments for this conversation.',
+  'error.conflict': 'This item already exists.',
+  'error.copy': 'Copy failed: the browser denied clipboard access.',
+  'error.loadConversations': 'Unable to load conversations.',
+  'error.loadMessages': 'Unable to load messages.',
+  'error.createConversation': 'Unable to create the conversation.',
+  'error.deleteConversation': 'Unable to delete this conversation.',
+  'error.send': 'Unable to reach Snowfall.',
+
+  'sidebar.menuOpen': 'Open menu',
+  'sidebar.menuClose': 'Close menu',
+  'sidebar.navigation': 'Main navigation',
+  'sidebar.chats': 'Conversations',
+  'sidebar.projects': 'Projects',
+  'sidebar.agents': 'Agents',
+  'sidebar.settings': 'Settings',
+  'sidebar.newChat': 'New conversation',
+  'sidebar.creating': 'Creating…',
+  'sidebar.search': 'Search',
+  'sidebar.searchLabel': 'Search conversations',
+  'sidebar.searchClear': 'Clear search',
+  'sidebar.inMessages': 'IN MESSAGES',
+  'sidebar.pinned': 'PINNED',
+  'sidebar.allPinned': 'ALL PINNED',
+  'sidebar.history': 'HISTORY',
+  'sidebar.noPinned': 'No pinned conversation.',
+  'sidebar.noResult': 'No conversation found.',
+  'sidebar.noConversation': 'No conversation yet.',
+  'sidebar.loadingHistory': 'Loading history…',
+  'sidebar.pin': 'Pin',
+  'sidebar.unpin': 'Unpin',
+  'sidebar.deleteConversation': 'Delete conversation',
+  'sidebar.confirmDelete': 'Delete this conversation and all its messages?',
+  'sidebar.projectsTitle': 'PROJECTS',
+  'sidebar.createProject': 'Create a project',
+  'sidebar.projectName': 'Project name',
+  'sidebar.firstProject': 'Create your first project',
+  'sidebar.emptyProject': 'No conversation in this project.',
+  'sidebar.deleteProject': 'Delete project (conversations are kept)',
+  'sidebar.moveToProject': 'Move to a project',
+  'sidebar.noProject': 'No project',
+  'sidebar.agentsTitle': 'AGENTS',
+  'sidebar.createAgent': 'Create an agent',
+  'sidebar.firstAgent': 'Create your first agent',
+  'sidebar.editAgent': 'Edit {name}',
+  'sidebar.logout': 'Sign out',
+  'sidebar.session': 'Authenticated session',
+
+  'chat.newConversation': 'New conversation',
+  'chat.loading': 'Loading your conversation…',
+  'chat.workspace': 'Your workspace.',
+  'chat.startHint': 'Start by asking a question or sharing an idea.',
+  'chat.createHint': 'Create a new conversation to get started.',
+  'chat.placeholder': 'Ask a question, explore an idea...',
+  'chat.messageLabel': 'Your message',
+  'chat.send': 'Send',
+  'chat.sendLabel': 'Send message',
+  'chat.stop': 'Stop generating',
+  'chat.attach': 'Add an attachment',
+  'chat.removeAttachment': 'Remove {name}',
+  'chat.uploading': 'Uploading…',
+  'chat.answering': 'Answering',
+  'chat.disclaimer': 'Snowfall can make mistakes. Check important information.',
+  'chat.copy': 'Copy',
+  'chat.copyAnswer': 'Copy answer',
+  'chat.copied': 'Copied',
+  'chat.regenerate': 'Regenerate answer',
+  'chat.edit': 'Edit message',
+  'chat.editSave': 'Send edit',
+  'chat.download': 'Download {name}',
+  'chat.partial': 'Interrupted answer',
+  'chat.defaultTitle': 'New conversation',
+  'chat.dropFiles': 'Drop your files here',
+
+  'studio.create': 'Create an agent',
+  'studio.edit': 'Edit agent',
+  'studio.name': 'Name',
+  'studio.provider': 'Provider',
+  'studio.model': 'Model',
+  'studio.instructions': 'Instructions…',
+  'studio.instructionsLabel': 'Instructions',
+  'studio.notConfigured': '{provider} · not configured',
+  'studio.notAllowed': '{provider} · not allowed',
+  'studio.confirmDelete': 'Confirm deletion',
+  'studio.photo': 'Photo',
+  'studio.modelsUnavailable': 'Models unavailable.',
+  'studio.saveFailed': 'Unable to save.',
+  'studio.deleteFailed': 'Unable to delete.',
+  'studio.invalidImage': 'Invalid image.',
+  'studio.color': 'Color',
+  'studio.eyes': 'Eyes',
+  'studio.accessory': 'Accessory',
+  'model.choose': 'Choose a model',
+  'model.search': 'Search models',
+  'model.list': 'Models',
+  'model.none': 'No model',
+
+  'markdown.copyCode': 'Copy code',
+
+  'language.label': 'Language: {name}',
+  'language.choose': 'Choose language',
+
+  'settings.title': 'Settings',
+  'settings.profile': 'Profile',
+  'settings.account': 'Manage my account',
+  'settings.organization': 'Organization',
+  'settings.preferences': 'Preferences',
+  'settings.language': 'Language',
+  'settings.sendOnEnter': 'Enter to send',
+  'settings.sendOnEnterHint': 'Shift + Enter for a new line',
+  'settings.motion': 'Animations',
+  'settings.motion.system': 'System',
+  'settings.motion.on': 'Reduced',
+  'settings.motion.off': 'On',
+  'settings.usage': 'Usage this month',
+  'settings.usageMine': 'You',
+  'settings.usageOrg': 'Organization',
+  'settings.unlimited': 'unlimited',
+  'settings.tokens': '{count} tokens',
+  'settings.admin': 'Administration',
+  'settings.providers': 'Allowed providers',
+  'settings.providerOff': 'not configured on the platform',
+  'settings.quotas': 'Monthly quotas',
+  'settings.quotaOrg': 'Organization (tokens)',
+  'settings.quotaProvider': '{provider} (tokens)',
+  'settings.quotaPlaceholder': 'Unlimited',
+  'settings.saved': 'Saved',
+  'settings.members': 'Members',
+  'settings.memberRemove': 'Remove {email}',
+  'settings.memberRemoveConfirm': 'Remove this member? Their conversations in the organization will be deleted.',
+  'settings.invite': 'Invite',
+  'settings.inviteEmail': 'Email to invite',
+  'settings.invitations': 'Pending invitations',
+  'settings.invitationRevoke': 'Cancel invitation for {email}',
+  'settings.inviteHint': 'They join the organization on first sign-in, with their verified email.',
+  'settings.sso': 'Organization SSO',
+  'settings.ssoAlias': 'Keycloak organization alias',
+  'settings.ssoRole': 'Role for new SSO members',
+  'settings.ssoHint': 'Entra ID or Google Workspace accounts of this Keycloak organization are linked automatically.',
+  'role.owner': 'Owner',
+  'role.admin': 'Admin',
+  'role.member': 'Member',
+  'role.reader': 'Reader',
+}
+
+const dictionaries: Record<Locale, Record<MessageKey, string>> = { fr, en }
+
+const STORAGE_KEY = 'snowfall:locale'
+
+function initialLocale(): Locale {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (locales.includes(saved as Locale)) return saved as Locale
+  } catch {
+    // Stockage indisponible (navigation privée…).
+  }
+  return navigator.language.toLowerCase().startsWith('en') ? 'en' : 'fr'
+}
+
+let current: Locale = initialLocale()
+const listeners = new Set<() => void>()
+document.documentElement.lang = current
+
+export function getLocale() {
+  return current
+}
+
+export function setLocale(locale: Locale) {
+  if (locale === current) return
+  current = locale
+  document.documentElement.lang = locale
+  try {
+    localStorage.setItem(STORAGE_KEY, locale)
+  } catch {
+    // Préférence non conservée localement : sans gravité.
+  }
+  for (const listener of listeners) listener()
+}
+
+/** Traduction hors composant (messages d'erreur de l'API…). */
+export function t(key: MessageKey, params: Record<string, string | number> = {}) {
+  const template = dictionaries[current][key] ?? fr[key]
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
+}
+
+export function formatNumber(value: number) {
+  return new Intl.NumberFormat(current === 'fr' ? 'fr-FR' : 'en-US').format(value)
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+/** Re-rend le composant quand la langue change. */
+export function useI18n() {
+  const locale = useSyncExternalStore(subscribe, getLocale)
+  return { locale, t, setLocale, formatNumber }
+}

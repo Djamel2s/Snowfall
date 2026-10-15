@@ -11,6 +11,7 @@ import {
 import { defaultAlien } from '../lib/alien'
 import { toAvatarDataUrl } from '../lib/image'
 import { providerMeta } from '../lib/providers'
+import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
@@ -23,6 +24,7 @@ type Props = {
 }
 
 export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Props) {
+  const { t } = useI18n()
   const [catalog, setCatalog] = useState<ProviderCatalog[] | null>(null)
   const [name, setName] = useState(agent?.name ?? '')
   const [instructions, setInstructions] = useState(agent?.instructions ?? '')
@@ -47,18 +49,18 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
         setCatalog(providers)
         // Nouvel agent : premier fournisseur disponible présélectionné.
         if (!agent) {
-          const first = providers.find((item) => item.available)
+          const first = providers.find((item) => item.available && item.allowed !== false)
           if (first) {
             setProvider(first.id)
             setModel(first.models[0]?.id ?? '')
           }
         }
       })
-      .catch(() => !cancelled && setError('Modèles indisponibles.'))
+      .catch(() => !cancelled && setError(t('studio.modelsUnavailable')))
     return () => {
       cancelled = true
     }
-  }, [agent])
+  }, [agent, t])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
@@ -80,7 +82,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
       setAvatar({ kind: 'image', data: await toAvatarDataUrl(file) })
       setError('')
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Image invalide.')
+      setError(cause instanceof Error ? cause.message : t('studio.invalidImage'))
     }
   }
 
@@ -96,7 +98,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
         ),
       )
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Enregistrement impossible.')
+      setError(cause instanceof Error ? cause.message : t('studio.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -112,7 +114,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
       await api.deleteAgent(agent.id)
       onDeleted(agent.id)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Suppression impossible.')
+      setError(cause instanceof Error ? cause.message : t('studio.deleteFailed'))
     }
   }
 
@@ -128,22 +130,22 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
   return (
     <form
       className="agent-studio"
-      aria-label={agent ? 'Modifier l’agent' : 'Créer un agent'}
+      aria-label={agent ? t('studio.edit') : t('studio.create')}
       onSubmit={(event) => {
         event.preventDefault()
         void save()
       }}
     >
       <header className="studio-header">
-        <button type="button" className="studio-icon" aria-label="Retour" title="Retour" onClick={onClose}>
+        <button type="button" className="studio-icon" aria-label={t('common.back')} title={t('common.back')} onClick={onClose}>
           <ChevronLeft size={17} />
         </button>
         {agent?.canEdit && (
           <button
             type="button"
             className={`studio-icon studio-delete ${confirmDelete ? 'armed' : ''}`}
-            aria-label={confirmDelete ? 'Confirmer la suppression' : 'Supprimer'}
-            title={confirmDelete ? 'Confirmer' : 'Supprimer'}
+            aria-label={confirmDelete ? t('studio.confirmDelete') : t('common.delete')}
+            title={confirmDelete ? t('common.confirm') : t('common.delete')}
             onClick={() => void remove()}
             onBlur={() => setConfirmDelete(false)}
           >
@@ -165,7 +167,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
           type="button"
           role="tab"
           aria-selected={avatar.kind === 'image'}
-          title="Photo"
+          title={t('studio.photo')}
           onClick={() => fileRef.current?.click()}
         >
           <Camera size={14} />
@@ -186,15 +188,15 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
 
       <input
         className="studio-name"
-        aria-label="Nom"
-        placeholder="Nom"
+        aria-label={t('studio.name')}
+        placeholder={t('studio.name')}
         value={name}
         maxLength={40}
         autoFocus
         onChange={(event) => setName(event.target.value)}
       />
 
-      <div className="provider-grid" role="radiogroup" aria-label="Fournisseur">
+      <div className="provider-grid" role="radiogroup" aria-label={t('studio.provider')}>
         {providers.map((item) => (
           <button
             key={item.id}
@@ -202,9 +204,15 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
             role="radio"
             aria-checked={provider === item.id}
             aria-label={providerMeta[item.id].label}
-            disabled={!item.available}
+            disabled={!item.available || item.allowed === false}
             className="provider-tile"
-            title={item.available ? providerMeta[item.id].label : `${providerMeta[item.id].label} · non configuré`}
+            title={
+              !item.available
+                ? t('studio.notConfigured', { provider: providerMeta[item.id].label })
+                : item.allowed === false
+                  ? t('studio.notAllowed', { provider: providerMeta[item.id].label })
+                  : providerMeta[item.id].label
+            }
             onClick={() => {
               setProvider(item.id)
               setModel(item.models[0]?.id ?? '')
@@ -221,8 +229,8 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
 
       <textarea
         className="studio-instructions"
-        aria-label="Instructions"
-        placeholder="Instructions…"
+        aria-label={t('studio.instructionsLabel')}
+        placeholder={t('studio.instructions')}
         value={instructions}
         maxLength={4000}
         rows={5}
@@ -237,7 +245,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
         disabled={saving || !name.trim() || !provider || !model}
       >
         <Check size={16} />
-        {agent ? 'Enregistrer' : 'Créer'}
+        {agent ? t('common.save') : t('common.create')}
       </button>
     </form>
   )

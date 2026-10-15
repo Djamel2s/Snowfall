@@ -29,6 +29,8 @@ export interface ModelRegistry {
   isAllowed(selection: ModelSelection): Promise<boolean>;
   /** Sans sélection : modèle par défaut de la plateforme. */
   runner(selection?: ModelSelection): ChatRunner;
+  /** Fournisseur qui servira la sélection ("echo" : modèle local de développement). */
+  providerFor(selection?: ModelSelection): ProviderId | "echo";
 }
 
 const CATALOG_TTL_MS = 10 * 60 * 1000;
@@ -90,6 +92,10 @@ export class ProviderRegistry implements ModelRegistry {
   async isAllowed({ provider, model }: ModelSelection) {
     const models = await this.models(provider);
     return models?.some((item) => item.id === model) ?? false;
+  }
+
+  providerFor(selection?: ModelSelection): ProviderId | "echo" {
+    return (selection ?? this.options.defaultSelection)?.provider ?? "echo";
   }
 
   runner(selection?: ModelSelection): ChatRunner {

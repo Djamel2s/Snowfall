@@ -1,6 +1,7 @@
 import { ChatMistralAI } from "@langchain/mistralai";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { ChatModel } from "../graph/chat-graph.js";
+import { conversationTurns, imageDataUrl } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
 
@@ -17,15 +18,23 @@ export function createMistralModel(model: string, settings: ProviderSettings): C
   return {
     id: `mistral:${model}`,
 
-    async *stream({ history, message, instructions }, signal) {
+    async *stream(request, signal) {
       const timeout = AbortSignal.timeout(settings.timeoutMs);
       const stream = await llm.stream(
         [
-          new SystemMessage(buildSystemPrompt(instructions)),
-          ...history.map((turn) =>
-            turn.role === "user" ? new HumanMessage(turn.content) : new AIMessage(turn.content),
+          new SystemMessage(buildSystemPrompt(request.instructions)),
+          ...conversationTurns(request).map((turn) =>
+            turn.role === "assistant"
+              ? new AIMessage(turn.content)
+              : new HumanMessage({
+                  content: turn.images?.length
+                    ? [
+                        { type: "text", text: turn.content },
+                        ...turn.images.map((image) => ({ type: "image_url", image_url: imageDataUrl(image) })),
+                      ]
+                    : turn.content,
+                }),
           ),
-          new HumanMessage(message),
         ],
         { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
       );

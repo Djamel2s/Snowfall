@@ -54,6 +54,22 @@ describe("PostgresSessionStore", { skip: !appUrl || !ownerUrl }, () => {
     await owner.end();
   });
 
+  it("déconnexion back-channel : ferme la session Keycloak ciblée, et elle seule", async () => {
+    const subject = `kc-${randomUUID()}`;
+    const target = await store().create({ userId, subject, tokens, profile: {}, idpSessionId: "sid-a" });
+    const other = await store().create({ userId, subject, tokens, profile: {}, idpSessionId: "sid-b" });
+
+    // sid connu mais sub différent : refusé (le jeton doit être cohérent).
+    assert.deepEqual(await store().revokeIdpSession({ sid: "sid-a", subject: "autre" }), []);
+    assert.deepEqual(await store().revokeIdpSession({ sid: "sid-a", subject }), [userId]);
+    assert.equal((await store().resolve(target)).status, "missing");
+    assert.equal((await store().resolve(other)).status, "valid");
+
+    // Sans sid : toutes les sessions du sujet.
+    await store().revokeIdpSession({ subject });
+    assert.equal((await store().resolve(other)).status, "missing");
+  });
+
   it("résout une session valide sans stocker le jeton ni les secrets en clair", async () => {
     const token = await newSession();
     const resolution = await store().resolve(token);

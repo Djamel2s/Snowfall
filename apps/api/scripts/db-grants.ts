@@ -30,7 +30,22 @@ const privileges: Record<string, string[]> = {
   messages: ["SELECT", "INSERT", "DELETE"],
   sessions: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   audit_events: ["INSERT"],
+  organization_settings: ["SELECT", "INSERT", "UPDATE"],
+  token_usage: ["SELECT", "INSERT", "UPDATE"],
+  projects: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  user_preferences: ["SELECT", "INSERT", "UPDATE"],
+  organization_invitations: ["SELECT", "INSERT", "DELETE"],
 };
+
+// Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
+// ces fonctions SECURITY DEFINER, qui contrôlent elles-mêmes les droits.
+const functions = [
+  "snowfall_provision_identity(text, text, text, boolean, text[])",
+  "snowfall_set_member_role(uuid, text)",
+  "snowfall_remove_member(uuid)",
+  "snowfall_set_organization_sso(text, text)",
+];
 
 async function main() {
   await client.connect();
@@ -45,6 +60,10 @@ async function main() {
     await client.query(
       `GRANT ${grants.join(", ")} ON ${client.escapeIdentifier(table)} TO ${role}`,
     );
+  }
+  await client.query(`REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ${role}`);
+  for (const signature of functions) {
+    await client.query(`GRANT EXECUTE ON FUNCTION ${signature} TO ${role}`);
   }
   await client.query("COMMIT");
 

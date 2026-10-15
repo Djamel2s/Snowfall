@@ -1,6 +1,13 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 
-export type ChatTurn = { role: "user" | "assistant"; content: string };
+/** Image jointe, transmise en base64 aux modèles multimodaux. */
+export type ModelImage = { mediaType: "image/png" | "image/jpeg" | "image/webp"; data: string };
+
+/**
+ * Tour de conversation. Le texte des documents joints est déjà intégré à
+ * content (balises <document>) ; les images sont passées à part.
+ */
+export type ChatTurn = { role: "user" | "assistant"; content: string; images?: ModelImage[] };
 
 export type TokenUsage = { inputTokens: number; outputTokens: number };
 
@@ -11,6 +18,8 @@ export type ChatChunk =
 export type ChatRequest = {
   history: ChatTurn[];
   message: string;
+  /** Images jointes au message courant. */
+  images?: ModelImage[] | undefined;
   /** Instructions de l'agent, ajoutées au prompt système de la plateforme. */
   instructions?: string | undefined;
 };
@@ -35,7 +44,12 @@ export type ChatResult = {
 };
 
 export type ChatRunner = (
-  input: { message: string; history?: ChatTurn[]; instructions?: string | undefined },
+  input: {
+    message: string;
+    history?: ChatTurn[];
+    images?: ModelImage[] | undefined;
+    instructions?: string | undefined;
+  },
   options?: { onToken?: (text: string) => void; signal?: AbortSignal },
 ) => Promise<ChatResult>;
 
@@ -51,6 +65,7 @@ export const echoModel: ChatModel = {
 const ChatState = Annotation.Root({
   message: Annotation<string>,
   history: Annotation<ChatTurn[]>,
+  images: Annotation<ModelImage[] | undefined>,
   response: Annotation<string>,
   usage: Annotation<TokenUsage | undefined>,
   instructions: Annotation<string | undefined>,
@@ -65,6 +80,7 @@ export function buildChatGraph(model: ChatModel = echoModel) {
       const request = {
         history: state.history,
         message: state.message,
+        images: state.images,
         instructions: state.instructions,
       };
 
@@ -92,6 +108,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
       {
         message: input.message,
         history: input.history ?? [],
+        images: input.images,
         instructions: input.instructions,
         response: "",
         usage: undefined,

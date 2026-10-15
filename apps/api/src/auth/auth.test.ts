@@ -37,6 +37,7 @@ function authenticator(options: {
       };
     },
     revoke: async () => null,
+    revokeIdpSession: async () => [],
     purgeExpired: async () => 0,
   };
 

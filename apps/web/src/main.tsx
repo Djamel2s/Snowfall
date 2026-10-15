@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { loadSession, login } from './auth/session'
+import { t } from './lib/i18n'
 
 const root = createRoot(document.getElementById('root')!)
 
@@ -12,7 +13,7 @@ function messageScreen(text: string, retry = false) {
       <p>{text}</p>
       {retry && (
         <button type="button" onClick={login}>
-          Se reconnecter
+          {t('boot.reconnect')}
         </button>
       )}
     </main>
@@ -24,9 +25,7 @@ async function start() {
   // la session SSO Keycloak étant encore ouverte, cela bouclerait.
   if (new URLSearchParams(window.location.search).has('auth_error')) {
     window.history.replaceState(null, '', '/')
-    root.render(
-      messageScreen("Accès refusé : ce compte n'est pas autorisé sur Snowfall.", true),
-    )
+    root.render(messageScreen(t('boot.accessDenied'), true))
     return
   }
 
@@ -44,7 +43,7 @@ async function start() {
       </StrictMode>,
     )
   } catch {
-    root.render(messageScreen("Impossible de joindre le service d'authentification."))
+    root.render(messageScreen(t('boot.unreachable')))
   }
 }
 

@@ -43,9 +43,16 @@ export interface SessionStore {
     subject: string;
     tokens: OidcTokens;
     profile: UserProfile;
+    /** Claim "sid" de l'ID token Keycloak. */
+    idpSessionId?: string | undefined;
   }): Promise<string>;
   resolve(token: string | undefined): Promise<SessionResolution>;
   revoke(token: string | undefined): Promise<{ userId: string; idToken: string } | null>;
+  /**
+   * Déconnexion back-channel : ferme la session Keycloak sid, ou toutes les
+   * sessions du sujet si le jeton ne porte pas de sid.
+   */
+  revokeIdpSession(target: { sid?: string; subject?: string }): Promise<string[]>;
   purgeExpired(): Promise<number>;
 }
 
@@ -93,14 +100,15 @@ export class PostgresSessionStore implements SessionStore {
     subject: string;
     tokens: OidcTokens;
     profile: UserProfile;
+    idpSessionId?: string | undefined;
   }) {
     const token = randomBytes(32).toString("base64url");
     const idHash = hashSessionToken(token);
 
     await this.pool.query(
       `INSERT INTO sessions
-         (id_hash, user_id, subject, refresh_token_enc, id_token_enc, profile_enc, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))`,
+         (id_hash, user_id, subject, refresh_token_enc, id_token_enc, profile_enc, expires_at, idp_session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7), $8)`,
       [
         idHash,
         input.userId,
@@ -109,10 +117,27 @@ export class PostgresSessionStore implements SessionStore {
         this.sealField(idHash, "id_token", input.tokens.idToken),
         this.sealField(idHash, "profile", JSON.stringify(input.profile)),
         SESSION_MAX_SECONDS,
+        input.idpSessionId ?? null,
       ],
     );
 
     return token;
+  }
+
+  async revokeIdpSession(target: { sid?: string; subject?: string }) {
+    if (!target.sid && !target.subject) return [];
+    const result = target.sid
+      ? await this.pool.query<{ user_id: string }>(
+          // sid seul suffit ; si le jeton porte aussi sub, il doit correspondre.
+          `DELETE FROM sessions WHERE idp_session_id = $1 AND ($2::text IS NULL OR subject = $2)
+           RETURNING user_id`,
+          [target.sid, target.subject ?? null],
+        )
+      : await this.pool.query<{ user_id: string }>(
+          "DELETE FROM sessions WHERE subject = $1 RETURNING user_id",
+          [target.subject],
+        );
+    return result.rows.map((row) => row.user_id);
   }
 
   async resolve(token: string | undefined): Promise<SessionResolution> {

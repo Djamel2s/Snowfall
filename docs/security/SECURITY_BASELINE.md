@@ -105,37 +105,44 @@ IdP-side revocation, logout).
 
 | Control | Implementation |
 |---|---|
-| Identity | Keycloak OIDC, confidential client `snowfall-bff`, PKCE S256 + PAR, ID token validated by `openid-client` (signature, iss, aud, exp, nonce, state). |
-| Sessions | BFF pattern: no token in the browser. Opaque session cookie `HttpOnly`, `SameSite=Strict`, `__Host-`/`Secure` over HTTPS. Server-side store (SHA-256 of token), 30 min idle, 10 h absolute, revalidated with Keycloak every 4 min (refresh-token rotation). |
-| Accounts | Password policy (12+ chars, history 5), brute-force lockout after 5 failures, verified e-mail, mandatory TOTP enrolment, no self-registration, no offline tokens. |
+| Identity | Keycloak OIDC, confidential client `snowfall-bff`, PKCE S256 + PAR, ID token validated by `openid-client` (signature, iss, aud, exp, nonce, state). UI language relayed with `ui_locales` (closed list). |
+| Sessions | BFF pattern: no token in the browser. Opaque session cookie `HttpOnly`, `SameSite=Strict`, `__Host-`/`Secure` over HTTPS. Server-side store (SHA-256 of token), 30 min idle, 10 h absolute, revalidated with Keycloak every 4 min (refresh-token rotation). OIDC Back-Channel Logout: Keycloak's `logout_token` (signature via JWKS, iss, aud, age ≤ 5 min, event claim, no nonce, `jti` replay cache) closes the matching session (`sid`) immediately. |
+| Accounts | Password policy (12+ chars, history 5), brute-force lockout after 5 failures, verified e-mail, mandatory TOTP enrolment, no self-registration, no offline tokens. SMTP configured (Mailpit in development, authenticated STARTTLS/TLS required in production) for e-mail verification and password reset. |
+| Provisioning | No open sign-up. An unknown identity is linked only through a pending invitation matching its Keycloak-verified e-mail, or through SSO: the ID token's `organization` claim must carry the alias of a Keycloak organization linked by an owner (Entra ID / Google Workspace brokered by Keycloak). An e-mail already bound to another identity is never relinked. Done by `snowfall_provision_identity` (SECURITY DEFINER). |
+| Organization governance | Member roles changed and members removed only through SECURITY DEFINER functions scoped to the tenant context: owner/admin only, nobody changes their own role, only an owner touches or appoints an owner, SSO linking reserved to owners. The application role still has no write access to `organization_members`. Removing a member deletes their conversations in the organization (right to erasure). |
+| Quotas and providers | Per-organization allow-list of AI providers (enforced on generation, agent creation and the catalog) and monthly token limits (organization-wide and per provider), checked before every generation. Usage aggregated per month, provider and member; interrupted answers counted (estimated when the provider reports nothing). Refusals audited. |
 | Authorization | Deny-by-default `onRequest` hook (routes must opt into `public`), role check on writes, tenant resolved from DB memberships only. |
 | CSRF | `Origin` must equal `APP_ORIGIN` on every non-GET request, plus `SameSite=Strict`. |
 | Tenant isolation | Explicit `(organization_id, user_id)` filters + composite FKs + PostgreSQL RLS (`FORCE`) driven by a transaction-scoped tenant context. |
 | Database privileges | Separate roles: superuser (setup only), `snowfall_migrator` (schema owner), `snowfall_app` (minimal per-table grants, `NOBYPASSRLS`, statement timeout). Keycloak in its own database and role. |
-| Encryption at rest | Message contents and titles encrypted with AES-256-GCM using a per-organization key (DEK), wrapped by a KEK derived from `SNOWFALL_MASTER_KEY`. AAD binds every ciphertext to its tenant/row. DB constraints reject plaintext. Session secrets encrypted too. |
+| Encryption at rest | Message contents, titles, project names, agent profiles and attachments (name, content, extracted text) encrypted with AES-256-GCM using a per-organization key (DEK). DEKs wrapped by a KMS: HashiCorp Vault / OpenBao Transit (`KMS_PROVIDER=vault`, derived key bound to organization and version) or, in development, a KEK derived from `SNOWFALL_MASTER_KEY`. AAD binds every ciphertext to its tenant/row. DB constraints reject plaintext. Session secrets encrypted too. |
+| Key rotation | `npm run keys:rotate -- --kek` rewraps every DEK with the active KEK (Transit `rewrap` after a Vault key rotation, or migration from the local KEK to the KMS); `--dek [--org] [--reencrypt]` creates a new DEK version used immediately for writes and optionally re-encrypts existing data. Verified end-to-end against OpenBao 2.6.3. |
 | Transport | `sslmode=verify-full` enforced for PostgreSQL in production; HTTPS required for `APP_ORIGIN`/issuer in production; TLS 1.3 on PostgreSQL in `compose.prod.yaml`. |
-| Audit | Keycloak user and admin events (180 days). Application `audit_events` table: logins, logouts, session revocations, denied writes, cross-tenant access attempts, CSRF rejections, conversation lifecycle. Append-only (INSERT-only grant + trigger). No message content, tokens or secrets. |
+| Audit | Keycloak user and admin events (180 days). Application `audit_events` table: logins, provisioning, logouts, back-channel and session revocations, denied writes, cross-tenant access attempts, CSRF rejections, CSP violations, quota refusals, conversation, project, attachment, member, invitation, settings and SSO changes. Append-only (INSERT-only grant + trigger). No message content, e-mail address, tokens or secrets. |
+| Audit retention and SIEM | Each event is also emitted as one JSON line on the API output (`AUDIT_STDOUT`, for Vector/Fluent Bit) and, optionally, batched to a SIEM over HTTPS (`SIEM_WEBHOOK_URL`, JSON or Splunk HEC, bounded queue, retries, dropped events reported). Retention `AUDIT_RETENTION_DAYS` (default 365): `npm run audit:purge` (migration role only) archives to JSONL then deletes; the trigger refuses any deletion younger than 90 days or without `snowfall.audit_purge`, and each purge is itself audited. |
 | Logging | Authorization/cookie headers redacted, query strings never logged. |
 | Rate limiting | 300 req/min per IP, 20 login attempts/min per IP, 20 messages/min per user; Redis store for multi-instance; explicit `TRUST_PROXY`. |
 | Agents | Org-shared agents (provider + model + instructions + avatar). Name, avatar and instructions encrypted per organization; RLS on `agents`; composite FK forbids linking a conversation to another organization's agent. Only the author or an owner/admin can edit or delete. Model allow-list: a provider must be configured server-side and the model must appear in its live catalog. Avatar images: PNG/JPEG/WebP only, verified by magic bytes, ≤150 KB, re-encoded client-side (strips EXIF/GPS); SVG refused. Agent instructions are wrapped after the platform rules, which they cannot replace. |
 | AI provider | Mistral, OpenAI, Anthropic (official SDK, server-side refusal fallback), Google Gemini (REST API without SDK to limit dependencies; key sent in the `x-goog-api-key` header, never in the URL; provider error bodies discarded; safety blocks mapped to a refusal) and OpenAI-compatible local servers (base URL from config only, never from users). Only the current message and the last 20 turns of the same conversation are sent, with a fixed system prompt. Output capped (`LLM_MAX_OUTPUT_TOKENS`), hard timeout (`LLM_TIMEOUT_MS`), generation aborted when the client disconnects, nothing persisted on failure. Model id and token counts audited, never content. The local `echo` model is refused in production. |
 | Output rendering | Assistant answers rendered as Markdown by an in-house parser (no third-party dependency) producing React elements only: no `dangerouslySetInnerHTML`, raw HTML shown as text. Links limited to `https`/`http`/`mailto`, opened with `noopener noreferrer`. Images are never loaded (blocks prompt-injection exfiltration through image URLs). Parser regexes reviewed for catastrophic backtracking; tests in `apps/web/tests`. |
+| Attachments | PDF, DOCX, text, CSV, JSON, PNG, JPEG, WebP only, identified by magic bytes (never by extension or declared type); 10 MB (5 MB images), 10 pending per conversation, upload rate-limited. Images re-encoded in the browser (EXIF/GPS stripped). Text extracted in an isolated worker thread (256 MB heap cap, 20 s timeout, ZIP-bomb ceiling, pdf.js without code evaluation). Extracted text is sent to models inside `<document>` tags declared untrusted by the system prompt, with per-request budgets. Downloads served as `attachment` with `nosniff` and `sandbox` CSP; unsent files purged after 24 h. |
+| Content-Security-Policy | nginx (`infra/nginx`) serves the UI with a strict CSP (`default-src 'none'`, scripts and styles from self only, no inline code, Trusted Types enforced, `frame-ancestors 'none'`), HSTS, COOP/COEP/CORP, Permissions-Policy and reports to `/api/security/csp-report` (audited, blocked origin only). TLS 1.3 only. |
+| Supply chain | CI actions pinned by commit SHA, least-privilege tokens, CodeQL (`security-extended`), CycloneDX SBOM (`npm sbom`), Trivy scans of both images and of Docker/compose configuration, gitleaks, `npm audit`. Dependabot with a 14-day cooldown for npm, actions, Dockerfiles and compose. Base images pinned by digest, system packages upgraded at build, both containers run as non-root, read-only, all capabilities dropped. |
 | Backups | `pg_dump` piped to `age` (never plaintext on disk), checksum, restore script. |
 
 ## 12. Known gaps
 
-- KEK is derived locally from an environment secret: move it to a KMS/HSM
-  (`KeyEncryptionProvider` interface) before production. Key rotation is supported
-  by the schema (`organization_keys.version`) but no rotation job exists yet.
-- Keycloak back-channel logout is not consumed: IdP-side revocation takes up to 4 min.
-- SMTP is not configured (required for e-mail verification and password reset).
-- Audit log retention/purge procedure and log shipping to a SIEM are not defined.
-- No Content-Security-Policy is defined for the production web server yet.
-- CI: actions not pinned by SHA, no SAST, no SBOM, no container image scanning.
+- `SNOWFALL_MASTER_KEY` still protects session secrets and the login transaction
+  cookie (short-lived data), even with the KMS: inject it from the secret manager.
+- The Vault token is static: prefer AppRole or Kubernetes auth with short TTLs.
+- SSO federation (Entra ID, Google Workspace) is configured in Keycloak by an
+  operator; it has been verified with a Keycloak organization, not yet against a
+  real Entra ID or Google Workspace tenant.
+- Search decrypts the user's 200 most recent conversations on the server: fine for
+  current volumes, a blind index will be needed at scale.
 - AI providers: sign each provider's DPA (Mistral, OpenAI, Anthropic, Google), confirm data
   location and retention (request zero data retention where eligible), list them as
-  subprocessors, and let each organization restrict which providers it allows.
-  No per-organization model allow-list or token quota yet.
+  subprocessors.
 - Monitoring, alerting, incident response and periodic restore tests require
   owners and evidence.
 

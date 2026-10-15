@@ -1,4 +1,5 @@
 import { ModelRefusalError, type ChatModel } from "../graph/chat-graph.js";
+import { conversationTurns } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
 
@@ -62,7 +63,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
   return {
     id: `google:${model}`,
 
-    async *stream({ history, message, instructions }, signal) {
+    async *stream(chat, signal) {
       const timeout = AbortSignal.timeout(settings.timeoutMs);
       const response = await request(
         // L'identifiant vient de la liste blanche ; encodé par sécurité.
@@ -71,14 +72,16 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
           method: "POST",
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           body: JSON.stringify({
-            systemInstruction: { parts: [{ text: buildSystemPrompt(instructions) }] },
-            contents: [
-              ...history.map((turn) => ({
-                role: turn.role === "assistant" ? "model" : "user",
-                parts: [{ text: turn.content }],
-              })),
-              { role: "user", parts: [{ text: message }] },
-            ],
+            systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions) }] },
+            contents: conversationTurns(chat).map((turn) => ({
+              role: turn.role === "assistant" ? "model" : "user",
+              parts: [
+                ...(turn.images ?? []).map((image) => ({
+                  inlineData: { mimeType: image.mediaType, data: image.data },
+                })),
+                { text: turn.content },
+              ],
+            })),
             generationConfig: { maxOutputTokens: settings.maxOutputTokens, temperature: 0.3 },
           }),
         },

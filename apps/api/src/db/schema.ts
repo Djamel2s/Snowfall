@@ -9,6 +9,9 @@
   foreignKey,
   check,
   integer,
+  bigint,
+  boolean,
+  date,
   jsonb,
   primaryKey,
   pgPolicy,
@@ -39,13 +42,25 @@ function tenantPolicy(
   });
 }
 
-export const organizations = pgTable("organizations", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    // Alias de l'organisation Keycloak dont les membres SSO (Entra ID, Google
+    // Workspace…) sont rattachés automatiquement, avec le rôle par défaut.
+    ssoAlias: text("sso_alias"),
+    ssoDefaultRole: text("sso_default_role").notNull().default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("organizations_sso_alias_idx").on(table.ssoAlias),
+    check("organizations_sso_alias_check", sql`${table.ssoAlias} ~ '^[a-z0-9][a-z0-9-]{1,62}$'`),
+    check("organizations_sso_role_check", sql`${table.ssoDefaultRole} IN ('member', 'reader')`),
+  ],
+);
 
 export const users = pgTable(
   "users",
@@ -153,10 +168,14 @@ export const sessions = pgTable(
       .defaultNow()
       .notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Claim "sid" de Keycloak : cible de la déconnexion back-channel.
+    idpSessionId: text("idp_session_id"),
   },
   (table) => [
     index("sessions_user_idx").on(table.userId),
     index("sessions_expires_idx").on(table.expiresAt),
+    index("sessions_idp_session_idx").on(table.idpSessionId),
+    index("sessions_subject_idx").on(table.subject),
   ],
 );
 
@@ -236,6 +255,8 @@ export const conversations = pgTable.withRLS(
     // Clé étrangère composite (agent_id, organization_id) posée en SQL :
     // ON DELETE SET NULL (agent_id) n'est pas exprimable avec Drizzle.
     agentId: uuid("agent_id"),
+    // Même principe que agent_id : FK composite ON DELETE SET NULL (project_id) en SQL.
+    projectId: uuid("project_id"),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -301,5 +322,212 @@ export const messages = pgTable.withRLS(
     }).onDelete("cascade"),
     check("messages_role_check", sql`${table.role} IN ('user', 'assistant')`),
     tenantPolicy("messages_owner", table.organizationId, table.userId),
+  ],
+);
+
+const providerList = sql.raw(agentProviders.map((provider) => `'${provider}'`).join(", "));
+
+// Réglages d'administration propres à chaque organisation.
+export const organizationSettings = pgTable.withRLS(
+  "organization_settings",
+  {
+    organizationId: uuid("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Fournisseurs LLM que les membres peuvent utiliser (sous-ensemble des
+    // fournisseurs configurés sur la plateforme).
+    allowedProviders: text("allowed_providers")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[${providerList}]::text[]`),
+    // Plafond mensuel de tokens (entrée + sortie) ; NULL = illimité.
+    monthlyTokenLimit: bigint("monthly_token_limit", { mode: "number" }),
+    // Plafonds mensuels par fournisseur : { "openai": 2000000, ... }.
+    providerTokenLimits: jsonb("provider_token_limits").notNull().default({}),
+    updatedBy: uuid("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "organization_settings_providers_check",
+      sql`${table.allowedProviders} <@ ARRAY[${providerList}]::text[]`,
+    ),
+    check(
+      "organization_settings_limit_check",
+      sql`${table.monthlyTokenLimit} IS NULL OR ${table.monthlyTokenLimit} > 0`,
+    ),
+    check(
+      "organization_settings_provider_limits_check",
+      sql`jsonb_typeof(${table.providerTokenLimits}) = 'object'`,
+    ),
+    tenantPolicy("organization_settings_tenant", table.organizationId),
+  ],
+);
+
+// Consommation de tokens agrégée par mois, fournisseur et membre.
+export const tokenUsage = pgTable.withRLS(
+  "token_usage",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Pas de clé étrangère : la consommation reste comptée même après le
+    // départ du membre (sinon supprimer un compte contournerait le quota).
+    userId: uuid("user_id").notNull(),
+    provider: text("provider").notNull(),
+    period: date("period").notNull(),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.period, table.provider, table.userId] }),
+    check("token_usage_provider_check", sql`${table.provider} IN (${providerList}, 'echo')`),
+    check("token_usage_period_check", sql`${table.period} = date_trunc('month', ${table.period})::date`),
+    check("token_usage_counts_check", sql`${table.inputTokens} >= 0 AND ${table.outputTokens} >= 0`),
+    tenantPolicy("token_usage_tenant", table.organizationId),
+  ],
+);
+
+// Projets personnels : regroupent des conversations. Nom chiffré.
+export const projects = pgTable.withRLS(
+  "projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("projects_org_user_idx").on(table.organizationId, table.userId, table.updatedAt),
+    unique("projects_id_org_user_unique").on(table.id, table.organizationId, table.userId),
+    foreignKey({
+      name: "projects_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    tenantPolicy("projects_owner", table.organizationId, table.userId),
+  ],
+);
+
+export const attachmentKinds = ["document", "image"] as const;
+export const attachmentMediaTypes = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+] as const;
+export const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+
+// Pièces jointes d'une conversation. Nom, contenu et texte extrait chiffrés
+// avec la clé de l'organisation.
+export const attachments = pgTable.withRLS(
+  "attachments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    // NULL tant que le message n'est pas envoyé (purgé après 24 h).
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(),
+    mediaType: text("media_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    name: text("name").notNull(),
+    content: text("content").notNull(),
+    extractedText: text("extracted_text"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("attachments_conversation_idx").on(table.conversationId, table.createdAt),
+    index("attachments_message_idx").on(table.messageId),
+    foreignKey({
+      name: "attachments_conversation_owner_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check("attachments_kind_check", sql`${table.kind} IN ('document', 'image')`),
+    check(
+      "attachments_media_type_check",
+      sql.raw(`media_type IN (${attachmentMediaTypes.map((type) => `'${type}'`).join(", ")})`),
+    ),
+    check("attachments_size_check", sql.raw(`size_bytes BETWEEN 1 AND ${ATTACHMENT_MAX_BYTES}`)),
+    tenantPolicy("attachments_owner", table.organizationId, table.userId),
+  ],
+);
+
+// Préférences d'interface d'un membre (non sensibles, non chiffrées).
+export const userPreferences = pgTable.withRLS(
+  "user_preferences",
+  {
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    locale: text("locale"),
+    sendOnEnter: boolean("send_on_enter").notNull().default(true),
+    reduceMotion: text("reduce_motion").notNull().default("system"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId] }),
+    foreignKey({
+      name: "user_preferences_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    check("user_preferences_locale_check", sql`${table.locale} IS NULL OR ${table.locale} IN ('fr', 'en')`),
+    check("user_preferences_motion_check", sql`${table.reduceMotion} IN ('system', 'on', 'off')`),
+    tenantPolicy("user_preferences_owner", table.organizationId, table.userId),
+  ],
+);
+
+// Invitations : l'e-mail pré-autorisé est rattaché à la première connexion,
+// seulement si Keycloak l'a vérifié.
+export const organizationInvitations = pgTable.withRLS(
+  "organization_invitations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull(),
+    invitedBy: uuid("invited_by"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedBy: uuid("accepted_by"),
+  },
+  (table) => [
+    uniqueIndex("organization_invitations_pending_idx")
+      .on(table.organizationId, sql`lower(${table.email})`)
+      .where(sql`${table.acceptedAt} IS NULL`),
+    index("organization_invitations_email_idx").on(sql`lower(${table.email})`),
+    check("organization_invitations_role_check", sql`${table.role} IN ('admin', 'member', 'reader')`),
+    check(
+      "organization_invitations_email_check",
+      sql`length(${table.email}) BETWEEN 3 AND 254 AND ${table.email} ~ '^[^@[:space:]]+@[^@[:space:]]+$'`,
+    ),
+    tenantPolicy("organization_invitations_tenant", table.organizationId),
   ],
 );

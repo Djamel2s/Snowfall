@@ -42,3 +42,34 @@ export async function toAvatarDataUrl(file: File): Promise<string> {
   }
   throw new Error('Image trop lourde.')
 }
+
+const ATTACHMENT_MAX_SIDE = 2048
+const ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024
+
+/**
+ * Image jointe à un message : réduite à 2048 px et réencodée dans le
+ * navigateur, ce qui retire EXIF, GPS et toute donnée cachée avant l'envoi.
+ */
+export async function toAttachmentImage(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, ATTACHMENT_MAX_SIDE / Math.max(bitmap.width, bitmap.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * scale)
+  canvas.height = Math.round(bitmap.height * scale)
+
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('IMAGE_UNREADABLE')
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+
+  const encode = (type: string, quality: number) =>
+    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality))
+
+  for (const type of ['image/webp', 'image/jpeg']) {
+    for (const quality of [0.88, 0.78, 0.65]) {
+      const blob = await encode(type, quality)
+      if (blob && blob.type === type && blob.size <= ATTACHMENT_MAX_BYTES) return blob
+    }
+  }
+  throw new Error('IMAGE_TOO_LARGE')
+}

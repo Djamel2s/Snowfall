@@ -1,35 +1,51 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { getSession, logout as endSession } from './auth/session'
-import { api, type Agent, type Message } from './lib/api'
+import {
+  api,
+  type Agent,
+  type AttachmentMeta,
+  type Message,
+  type Preferences,
+  type Project,
+  type SearchHit,
+} from './lib/api'
+import { setLocale, useI18n } from './lib/i18n'
+import { toAttachmentImage } from './lib/image'
 import './App.css'
 import './agents.css'
-import {
-  ArrowUp,
-  Check,
-  Copy,
-  Menu,
-  Paperclip,
-} from 'lucide-react'
-import Sidebar, {
-  type SidebarPanel,
-} from './components/Sidebar'
+import './workspace.css'
+import { ArrowUp, Check, Copy, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
+import Sidebar, { type SidebarPanel } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, ProviderLogo } from './components/AgentAvatar'
+import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
 
 type Conversation = {
   id: string
   title: string
   agentId: string | null
+  projectId: string | null
   messages: Message[]
   updatedAt: number
 }
 
-export type Project = {
-  id: string
+type PendingFile = {
+  localId: string
+  conversationId: string
   name: string
-  conversationIds: string[]
+  size: number
+  kind: 'document' | 'image'
+  status: 'uploading' | 'ready' | 'error'
+  preview?: string
+  attachment?: AttachmentMeta
 }
+
+const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduceMotion: 'system' }
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const ACCEPT = '.pdf,.docx,.txt,.md,.csv,.json,image/png,image/jpeg,image/webp'
+const DOCUMENT_MAX = 10 * 1024 * 1024
+const LEGACY_PROJECTS_KEY = 'snowfall:projects'
 
 function Snowfall() {
   return (
@@ -52,7 +68,23 @@ function Snowfall() {
   )
 }
 
+const toConversation = (item: {
+  id: string
+  title: string
+  agentId: string | null
+  projectId: string | null
+  updatedAt: string
+}): Conversation => ({
+  id: item.id,
+  title: item.title,
+  agentId: item.agentId,
+  projectId: item.projectId,
+  messages: [],
+  updatedAt: new Date(item.updatedAt).getTime(),
+})
+
 function App() {
+  const { t } = useI18n()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(true)
@@ -61,192 +93,178 @@ function App() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [streamingText, setStreamingText] = useState('')
+  // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
+  const [regenerating, setRegenerating] = useState(false)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
   const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
   const [copiedId, setCopiedId] = useState<string | null>(null)
-
-  async function copyMessage(message: Message) {
-    try {
-      await navigator.clipboard.writeText(message.content)
-      setCopiedId(message.id)
-      setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1500)
-    } catch {
-      setError('Copie impossible : le navigateur a refusé l’accès au presse-papiers.')
-    }
-  }
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem('snowfall:projects')
-      return saved ? JSON.parse(saved) as Project[] : []
-    } catch {
-      return []
-    }
-  })
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
   // undefined = studio fermé, null = création, Agent = édition.
   const [studioAgent, setStudioAgent] = useState<Agent | null | undefined>(undefined)
+  const [preferences, setPreferences] = useState<Preferences>(defaultPreferences)
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
+  const [dragging, setDragging] = useState(false)
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const stoppedRef = useRef(false)
 
   const messagesLoading = activeId !== null && loadedId !== activeId
-  const activeConversation = conversations.find(
-    (conversation) => conversation.id === activeId,
-  )
-  const activeAgent =
-    agents.find((agent) => agent.id === activeConversation?.agentId) ?? null
+  const activeConversation = conversations.find((conversation) => conversation.id === activeId)
+  const activeAgent = agents.find((agent) => agent.id === activeConversation?.agentId) ?? null
 
-  const conversationIsEmpty =
-    !activeConversation || activeConversation.messages.length === 0
+  const conversationIsEmpty = !activeConversation || activeConversation.messages.length === 0
+  // Pièces jointes en attente de la conversation affichée uniquement.
+  const activeFiles = pendingFiles.filter((file) => file.conversationId === activeId)
+  const shownResults = search.trim().length >= 2 ? searchResults : []
 
-  const { profile } = getSession()
+  const session = getSession()
+  const { profile } = session
   const username = profile.name ?? profile.username ?? 'Utilisateur'
+  const canWrite = session.user.role !== 'reader'
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>('chats')
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('snowfall:pinned-conversations')
-      return saved ? JSON.parse(saved) as string[] : []
+      return saved ? (JSON.parse(saved) as string[]) : []
     } catch {
       return []
     }
   })
 
   useEffect(() => {
-    localStorage.setItem(
-      'snowfall:pinned-conversations',
-      JSON.stringify(pinnedIds),
-    )
+    try {
+      localStorage.setItem('snowfall:pinned-conversations', JSON.stringify(pinnedIds))
+    } catch {
+      // Épingles non conservées : sans gravité.
+    }
   }, [pinnedIds])
 
+  // Animations réduites à la demande, en plus de la préférence système.
   useEffect(() => {
-    localStorage.setItem('snowfall:projects', JSON.stringify(projects))
-  }, [projects])
+    document.documentElement.classList.toggle('reduce-motion', preferences.reduceMotion === 'on')
+  }, [preferences.reduceMotion])
 
   function togglePinned(id: string) {
-    setPinnedIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [id, ...current],
-    )
+    setPinnedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [id, ...current]))
+  }
+
+  function fail(cause: unknown, fallback: Parameters<typeof t>[0]) {
+    setError(cause instanceof Error ? cause.message : t(fallback))
   }
 
   useEffect(() => {
     // Pendant le streaming, défilement instantané : un défilement animé à
     // chaque fragment saccaderait.
-    bottomRef.current?.scrollIntoView({
-      behavior: streamingText ? 'auto' : 'smooth',
-      block: 'end',
-    })
+    bottomRef.current?.scrollIntoView({ behavior: streamingText ? 'auto' : 'smooth', block: 'end' })
   }, [activeConversation?.messages, sending, streamingText])
 
-  useEffect(() => {
-    return () => abortRef.current?.abort()
-  }, [])
+  useEffect(() => () => abortRef.current?.abort(), [])
 
-  // Charge les conversations enregistrées pour l'utilisateur connecté.
+  // Chargement initial : conversations, agents, projets, préférences.
   useEffect(() => {
     let cancelled = false
 
-    async function loadHistory() {
+    async function load() {
       setHistoryLoading(true)
       setError('')
-
       try {
-        const history = await api.listConversations()
+        await migrateLegacyProjects()
+        const [history, projectList] = await Promise.all([api.listConversations(), api.listProjects()])
         if (cancelled) return
-
-        const items: Conversation[] = history.map((item) => ({
-          id: item.id,
-          title: item.title,
-          agentId: item.agentId,
-          messages: [],
-          updatedAt: new Date(item.updatedAt).getTime(),
-        }))
+        const items = history.map(toConversation)
 
         setConversations(items)
+        setProjects(projectList)
         setActiveId((current) =>
-          current && items.some((item) => item.id === current)
-            ? current
-            : items[0]?.id ?? null,
+          current && items.some((item) => item.id === current) ? current : items[0]?.id ?? null,
         )
       } catch (cause) {
-        if (!cancelled) {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : 'Impossible de charger les conversations.',
-          )
-        }
+        if (!cancelled) fail(cause, 'error.loadConversations')
       } finally {
         if (!cancelled) setHistoryLoading(false)
       }
     }
 
-    void loadHistory()
+    void load()
+    api.listAgents().then((items) => !cancelled && setAgents(items)).catch(() => undefined)
     api
-      .listAgents()
-      .then((items) => !cancelled && setAgents(items))
+      .getPreferences()
+      .then((saved) => {
+        if (cancelled) return
+        setPreferences(saved)
+        if (saved.locale) setLocale(saved.locale)
+      })
       .catch(() => undefined)
 
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-    useEffect(() => {
-      if (!activeId) return
+  useEffect(() => {
+    if (!activeId) return
 
-      const id = activeId
-      let cancelled = false
+    const id = activeId
+    let cancelled = false
 
-      async function loadMessages() {
-        try {
-          const messages = await api.getMessages(id)
-          if (cancelled) return
-
-          setConversations((current) =>
-            current.map((conversation) =>
-              conversation.id === id
-                ? { ...conversation, messages }
-                : conversation,
-            ),
-          )
-        } catch (cause) {
-          if (!cancelled) {
-            setError(
-              cause instanceof Error
-                ? cause.message
-                : 'Impossible de charger les messages.',
-            )
-          }
-        } finally {
-          if (!cancelled) setLoadedId(id)
-        }
+    async function loadMessages() {
+      try {
+        const messages = await api.getMessages(id)
+        if (cancelled) return
+        updateConversation(id, (conversation) => ({ ...conversation, messages }))
+      } catch (cause) {
+        if (!cancelled) fail(cause, 'error.loadMessages')
+      } finally {
+        if (!cancelled) setLoadedId(id)
       }
+    }
 
-      void loadMessages()
+    void loadMessages()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId])
 
-      return () => {
-        cancelled = true
-      }
-    }, [activeId])
+  // Recherche dans le contenu des messages (côté serveur, chiffré au repos).
+  useEffect(() => {
+    const query = search.trim()
+    if (query.length < 2) return
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      api
+        .searchConversations(query, controller.signal)
+        .then(setSearchResults)
+        .catch(() => undefined)
+    }, 300)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [search])
 
-  function updateConversation(
-    id: string,
-    updater: (conversation: Conversation) => Conversation,
-  ) {
+  function updateConversation(id: string, updater: (conversation: Conversation) => Conversation) {
     setConversations((current) =>
-      current.map((conversation) =>
-        conversation.id === id ? updater(conversation) : conversation,
-      ),
+      current.map((conversation) => (conversation.id === id ? updater(conversation) : conversation)),
     )
+  }
+
+  function savePreferences(next: Preferences) {
+    setPreferences(next)
+    api.savePreferences(next).catch((cause) => fail(cause, 'error.send'))
   }
 
   async function newChat(agent?: Agent) {
@@ -259,57 +277,67 @@ function App() {
     setCreating(true)
 
     try {
-      const created = await api.createConversation(agent ? { agentId: agent.id } : {})
-
-      const conversation: Conversation = {
-        id: created.id,
-        title: created.title,
-        agentId: created.agentId,
-        messages: [],
-        updatedAt: new Date(created.updatedAt).getTime(),
-      }
-
-      setConversations((current) => [
-        conversation,
-        ...current.filter((item) => item.id !== conversation.id),
-      ])
-      if (activeProjectId) {
-        setProjects((current) =>
-          current.map((project) =>
-            project.id === activeProjectId &&
-            !project.conversationIds.includes(conversation.id)
-              ? {
-                  ...project,
-                  conversationIds: [...project.conversationIds, conversation.id],
-                }
-              : project,
-          ),
-        )
-      }
+      const created = await api.createConversation({
+        ...(agent ? { agentId: agent.id } : {}),
+        ...(activeProjectId ? { projectId: activeProjectId } : {}),
+      })
+      const conversation = toConversation(created)
+      setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)])
       setActiveId(conversation.id)
-
       requestAnimationFrame(() => inputRef.current?.focus())
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Impossible de créer la conversation.',
-      )
+      fail(cause, 'error.createConversation')
     } finally {
       setCreating(false)
     }
-
   }
 
-  function createProject(name: string) {
-    const project: Project = {
-      id: crypto.randomUUID(),
-      name,
-      conversationIds: [],
+  async function createProject(name: string) {
+    try {
+      const project = await api.createProject(name)
+      setProjects((current) => [project, ...current])
+      setActiveProjectId(project.id)
+    } catch (cause) {
+      fail(cause, 'error.send')
     }
+  }
 
-    setProjects((current) => [project, ...current])
-    setActiveProjectId(project.id)
+  async function renameProject(id: string, name: string) {
+    try {
+      const project = await api.renameProject(id, name)
+      setProjects((current) => current.map((item) => (item.id === id ? project : item)))
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
+  }
+
+  async function deleteProject(id: string) {
+    try {
+      await api.deleteProject(id)
+      setProjects((current) => current.filter((item) => item.id !== id))
+      setConversations((current) => current.map((item) => (item.projectId === id ? { ...item, projectId: null } : item)))
+      if (activeProjectId === id) setActiveProjectId(null)
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
+  }
+
+  async function renameConversation(id: string, title: string) {
+    try {
+      const saved = await api.updateConversation(id, { title })
+      updateConversation(id, (conversation) => ({ ...conversation, title: saved.title }))
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
+  }
+
+  async function moveConversation(id: string, projectId: string | null) {
+    try {
+      await api.updateConversation(id, { projectId })
+      updateConversation(id, (conversation) => ({ ...conversation, projectId }))
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
   }
 
   function openAgentEditor(agent: Agent | null) {
@@ -320,164 +348,275 @@ function App() {
   }
 
   const visibleConversations = activeProjectId
-    ? conversations.filter((conversation) =>
-        projects
-          .find((project) => project.id === activeProjectId)
-          ?.conversationIds.includes(conversation.id),
-      )
+    ? conversations.filter((conversation) => conversation.projectId === activeProjectId)
     : conversations
 
-  async function sendMessage(text = input) {
-    const message = text.trim()
-    const conversation = conversations.find((item) => item.id === activeId)
+  // ---- Pièces jointes -----------------------------------------------------
 
-    if (!message || sending || !conversation || messagesLoading) return
+  async function addFiles(files: File[]) {
+    const conversation = activeConversation
+    if (!conversation || !canWrite) return
 
-    const conversationId = conversation.id
-    const previousMessages = conversation.messages
+    for (const file of files) {
+      const localId = crypto.randomUUID()
+      const isImage = IMAGE_TYPES.includes(file.type)
+      if (!isImage && file.size > DOCUMENT_MAX) {
+        setError(t('error.fileTooLarge'))
+        continue
+      }
+      const preview = isImage ? URL.createObjectURL(file) : undefined
+      setPendingFiles((current) => [
+        ...current,
+        { localId, conversationId: conversation.id, name: file.name, size: file.size, kind: isImage ? 'image' : 'document', status: 'uploading', ...(preview ? { preview } : {}) },
+      ])
 
-    setInput('')
+      try {
+        // Images réencodées dans le navigateur : EXIF et GPS ne partent jamais.
+        const body = isImage ? await toAttachmentImage(file) : file
+        const attachment = await api.uploadAttachment(conversation.id, body, file.name)
+        setPendingFiles((current) =>
+          current.map((item) => (item.localId === localId ? { ...item, status: 'ready', attachment, size: attachment.size } : item)),
+        )
+      } catch (cause) {
+        setPendingFiles((current) => current.map((item) => (item.localId === localId ? { ...item, status: 'error' } : item)))
+        setError(
+          cause instanceof Error && cause.message === 'IMAGE_TOO_LARGE'
+            ? t('error.fileTooLarge')
+            : cause instanceof Error
+              ? cause.message
+              : t('error.send'),
+        )
+      }
+    }
+  }
+
+  function removePendingFile(file: PendingFile) {
+    setPendingFiles((current) => current.filter((item) => item.localId !== file.localId))
+    if (file.preview) URL.revokeObjectURL(file.preview)
+    if (file.attachment) void api.deleteAttachment(file.attachment.id).catch(() => undefined)
+  }
+
+  function onDrop(event: DragEvent) {
+    event.preventDefault()
+    setDragging(false)
+    if (event.dataTransfer.files.length) void addFiles([...event.dataTransfer.files])
+  }
+
+  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = [...event.clipboardData.files]
+    if (files.length) {
+      event.preventDefault()
+      void addFiles(files)
+    }
+  }
+
+  // ---- Génération (envoi, modification, régénération, arrêt) ---------------
+
+  async function stream(
+    conversationId: string,
+    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<void>,
+    rollback: () => void,
+  ) {
     setError('')
     setSending(true)
-
+    stoppedRef.current = false
     const controller = new AbortController()
     abortRef.current = controller
 
-    // Affichage optimiste : le message apparaît immédiatement.
-    const optimisticMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: message,
-      createdAt: new Date().toISOString(),
-    }
-
-    updateConversation(conversationId, (current) => ({
-      ...current,
-      title:
-        current.messages.length === 0
-          ? message.slice(0, 80)
-          : current.title,
-      messages: [...current.messages, optimisticMessage],
-      updatedAt: Date.now(),
-    }))
-
     try {
-      // La réponse arrive par fragments ; la route enregistre ensuite le
-      // message utilisateur et la réponse complète.
-      const result = await api.sendMessage(conversationId, message, {
-        signal: controller.signal,
-        onToken: (text) => {
-          if (!controller.signal.aborted) setStreamingText((current) => current + text)
-        },
+      await run(controller.signal, (text) => {
+        if (!controller.signal.aborted) setStreamingText((current) => current + text)
       })
-
-      if (controller.signal.aborted) return
-
-      updateConversation(conversationId, (current) => ({
-        ...current,
-        title:
-          previousMessages.length === 0
-            ? result.userMessage.content.slice(0, 80)
-            : current.title,
-        messages: [
-          ...current.messages.filter(
-            (item) => item.id !== optimisticMessage.id,
-          ),
-          result.userMessage,
-          result.assistantMessage,
-        ],
-        updatedAt: Date.now(),
-      }))
-
       // Synchronise l'ordre et les titres depuis le serveur.
       const history = await api.listConversations()
-      if (controller.signal.aborted) return
-
       setConversations((current) =>
         current
           .map((item) => {
             const saved = history.find((entry) => entry.id === item.id)
-            return saved
-              ? {
-                  ...item,
-                  title: saved.title,
-                  updatedAt: new Date(saved.updatedAt).getTime(),
-                }
-              : item
+            return saved ? { ...item, title: saved.title, updatedAt: new Date(saved.updatedAt).getTime() } : item
           })
           .sort((a, b) => b.updatedAt - a.updatedAt),
       )
     } catch (cause) {
-      if (cause instanceof Error && cause.name === 'AbortError') return
-
-      // Retire le message optimiste si l'envoi a échoué.
-      updateConversation(conversationId, (current) => ({
-        ...current,
-        messages: current.messages.filter(
-          (item) => item.id !== optimisticMessage.id,
-        ),
-      }))
-
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Impossible de contacter Snowfall.',
-      )
+      if (cause instanceof Error && cause.name === 'AbortError') {
+        // Arrêt volontaire : la réponse partielle est enregistrée côté serveur.
+        if (stoppedRef.current) {
+          setTimeout(() => {
+            api
+              .getMessages(conversationId)
+              .then((messages) => updateConversation(conversationId, (conversation) => ({ ...conversation, messages })))
+              .catch(() => undefined)
+          }, 600)
+        }
+        return
+      }
+      rollback()
+      fail(cause, 'error.send')
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null
         setSending(false)
         setStreamingText('')
+        setRegenerating(false)
       }
+    }
+  }
+
+  function stopGeneration() {
+    stoppedRef.current = true
+    abortRef.current?.abort()
+  }
+
+  async function sendMessage() {
+    const message = input.trim()
+    const conversation = activeConversation
+    const ready = activeFiles.filter((file) => file.status === 'ready' && file.attachment)
+    const uploading = activeFiles.some((file) => file.status === 'uploading')
+
+    if ((!message && ready.length === 0) || uploading || sending || !conversation || messagesLoading) return
+
+    const conversationId = conversation.id
+    const attachments = ready.map((file) => file.attachment!)
+    const optimistic: Message = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: message,
+      createdAt: new Date().toISOString(),
+      attachments,
+    }
+
+    setInput('')
+    setPendingFiles((current) => current.filter((file) => file.conversationId !== conversationId))
+    updateConversation(conversationId, (current) => ({
+      ...current,
+      title: current.messages.length === 0 ? (message || attachments[0]?.name || current.title).slice(0, 80) : current.title,
+      messages: [...current.messages, optimistic],
+      updatedAt: Date.now(),
+    }))
+
+    await stream(
+      conversationId,
+      async (signal, onToken) => {
+        const result = await api.sendMessage(
+          conversationId,
+          { content: message, attachmentIds: attachments.map((file) => file.id) },
+          { signal, onToken },
+        )
+        updateConversation(conversationId, (current) => ({
+          ...current,
+          messages: [...current.messages.filter((item) => item.id !== optimistic.id), result.userMessage, result.assistantMessage],
+        }))
+      },
+      () => {
+        updateConversation(conversationId, (current) => ({
+          ...current,
+          messages: current.messages.filter((item) => item.id !== optimistic.id),
+        }))
+        setInput(message)
+        setPendingFiles((current) => [...current, ...ready])
+      },
+    )
+  }
+
+  async function submitEdit() {
+    const conversation = activeConversation
+    if (!editing || !conversation || sending) return
+    const text = editing.text.trim()
+    const index = conversation.messages.findIndex((item) => item.id === editing.id)
+    const original = conversation.messages[index]
+    if (!original || (!text && !original.attachments?.length)) return
+
+    const previous = conversation.messages
+    const attachmentIds = original.attachments?.map((file) => file.id) ?? []
+    const optimistic: Message = { ...original, id: crypto.randomUUID(), content: text }
+    setEditing(null)
+    updateConversation(conversation.id, (current) => ({ ...current, messages: [...previous.slice(0, index), optimistic] }))
+
+    await stream(
+      conversation.id,
+      async (signal, onToken) => {
+        const result = await api.sendMessage(
+          conversation.id,
+          { content: text, attachmentIds, editMessageId: original.id },
+          { signal, onToken },
+        )
+        updateConversation(conversation.id, (current) => ({
+          ...current,
+          messages: [...previous.slice(0, index), result.userMessage, result.assistantMessage],
+        }))
+      },
+      () => updateConversation(conversation.id, (current) => ({ ...current, messages: previous })),
+    )
+  }
+
+  async function regenerate() {
+    const conversation = activeConversation
+    if (!conversation || sending) return
+    setRegenerating(true)
+
+    await stream(
+      conversation.id,
+      async (signal, onToken) => {
+        const result = await api.regenerate(conversation.id, { signal, onToken })
+        updateConversation(conversation.id, (current) => ({
+          ...current,
+          messages: [...current.messages.slice(0, -1), result.assistantMessage],
+        }))
+      },
+      () => undefined,
+    )
+  }
+
+  async function copyMessage(message: Message) {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopiedId(message.id)
+      setTimeout(() => setCopiedId((current) => (current === message.id ? null : current)), 1500)
+    } catch {
+      setError(t('error.copy'))
     }
   }
 
   async function deleteConversation(id: string) {
     if (sending) return
-
-    const confirmed = window.confirm(
-      'Supprimer cette conversation et tous ses messages ?',
-    )
-    if (!confirmed) return
-
     setError('')
-
     try {
       await api.deleteConversation(id)
-
       const remaining = conversations.filter((item) => item.id !== id)
       setConversations(remaining)
-
-      if (activeId === id) {
-        setActiveId(remaining[0]?.id ?? null)
-      }
+      if (activeId === id) setActiveId(remaining[0]?.id ?? null)
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Impossible de supprimer cette conversation.',
-      )
+      fail(cause, 'error.deleteConversation')
     }
   }
 
-  function logout() {
-    void endSession()
-  }
-
-  function handleComposerKeyDown(
-    event: React.KeyboardEvent<HTMLTextAreaElement>,
-  ) {
-    if (event.key === 'Enter' && !event.shiftKey) {
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey) return
+    // Préférence : Entrée envoie, sinon Ctrl/Cmd + Entrée.
+    if (preferences.sendOnEnter || event.ctrlKey || event.metaKey) {
       event.preventDefault()
       void sendMessage()
     }
   }
+
+  const messages = activeConversation?.messages ?? []
+  const lastAssistantId = messages.at(-1)?.role === 'assistant' ? messages.at(-1)?.id : undefined
+  const shownMessages = regenerating ? messages.slice(0, -1) : messages
+  const uploading = activeFiles.some((file) => file.status === 'uploading')
+  const canSend =
+    (input.trim().length > 0 || activeFiles.some((file) => file.status === 'ready')) &&
+    !uploading &&
+    !sending &&
+    !!activeConversation &&
+    !messagesLoading &&
+    canWrite
 
   return (
     <main className="snowfall-app">
       <Snowfall />
 
       <Sidebar
+        conversations={conversations}
         visibleConversations={visibleConversations}
         projects={projects}
         activeProjectId={activeProjectId}
@@ -489,6 +628,7 @@ function App() {
         sidebarCollapsed={sidebarCollapsed}
         sidebarPanel={sidebarPanel}
         search={search}
+        searchResults={shownResults}
         pinnedIds={pinnedIds}
         onNewChat={() => void newChat()}
         onSelectConversation={(id) => {
@@ -497,8 +637,10 @@ function App() {
           setError('')
         }}
         onDeleteConversation={(id) => void deleteConversation(id)}
+        onRenameConversation={(id, title) => void renameConversation(id, title)}
+        onMoveConversation={(id, projectId) => void moveConversation(id, projectId)}
         onTogglePinned={togglePinned}
-        onLogout={logout}
+        onLogout={() => void endSession()}
         onSearchChange={setSearch}
         onSidebarOpenChange={setSidebarOpen}
         onSidebarCollapsedChange={setSidebarCollapsed}
@@ -506,19 +648,12 @@ function App() {
         onProjectSelect={(id) => {
           setActiveProjectId(id)
           setSidebarPanel('projects')
-          setActiveId(
-            id
-              ? projects
-                  .find((project) => project.id === id)
-                  ?.conversationIds
-                  .map((conversationId) =>
-                    conversations.find((item) => item.id === conversationId),
-                  )
-                  .find(Boolean)?.id ?? null
-              : conversations[0]?.id ?? null,
-          )
+          const first = conversations.find((item) => (id ? item.projectId === id : true))
+          setActiveId(first?.id ?? null)
         }}
-        onCreateProject={createProject}
+        onCreateProject={(name) => void createProject(name)}
+        onRenameProject={(id, name) => void renameProject(id, name)}
+        onDeleteProject={(id) => void deleteProject(id)}
         agents={agents}
         activeAgentId={activeAgent?.id ?? null}
         onCreateAgent={() => openAgentEditor(null)}
@@ -529,9 +664,7 @@ function App() {
         onAgentSaved={(saved) => {
           const isNew = !agents.some((agent) => agent.id === saved.id)
           setAgents((current) =>
-            isNew
-              ? [...current, saved]
-              : current.map((agent) => (agent.id === saved.id ? saved : agent)),
+            isNew ? [...current, saved] : current.map((agent) => (agent.id === saved.id ? saved : agent)),
           )
           setStudioAgent(undefined)
           if (isNew) void newChat(saved)
@@ -539,14 +672,11 @@ function App() {
         onAgentDeleted={(id) => {
           setAgents((current) => current.filter((agent) => agent.id !== id))
           // Les conversations restent, rattachées au modèle par défaut.
-          setConversations((current) =>
-            current.map((item) => (item.agentId === id ? { ...item, agentId: null } : item)),
-          )
+          setConversations((current) => current.map((item) => (item.agentId === id ? { ...item, agentId: null } : item)))
           setStudioAgent(undefined)
         }}
-        onSettings={() =>
-          setError('Les paramètres dédiés seront ajoutés dans une prochaine étape.')
-        }
+        preferences={preferences}
+        onPreferencesChange={savePreferences}
       />
 
       <section className="chat-workspace">
@@ -554,7 +684,7 @@ function App() {
           <div className="topbar-left">
             <button
               className="icon-button mobile-menu-button"
-              aria-label="Ouvrir le menu"
+              aria-label={t('sidebar.menuOpen')}
               onClick={() => setSidebarOpen(true)}
             >
               <Menu size={19} />
@@ -566,20 +696,25 @@ function App() {
                 <ProviderLogo provider={activeAgent.provider} size={12} />
               </span>
             )}
-            <span className="topbar-current">
-              {activeConversation?.title ?? 'Nouvelle conversation'}
-            </span>
+            <span className="topbar-current">{activeConversation?.title ?? t('chat.newConversation')}</span>
           </div>
 
           <div className="topbar-right">
-            <LanguageSwitcher />
+            <LanguageSwitcher onChange={(locale) => savePreferences({ ...preferences, locale })} />
           </div>
         </header>
 
         <div
-          className={`chat-content ${
-            conversationIsEmpty ? 'chat-content-empty' : ''
-          }`}
+          className={`chat-content ${conversationIsEmpty ? 'chat-content-empty' : ''} ${dragging ? 'chat-dragging' : ''}`}
+          onDragOver={(event) => {
+            if (!activeConversation || !canWrite || !event.dataTransfer.types.includes('Files')) return
+            event.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false)
+          }}
+          onDrop={onDrop}
         >
           {/* Logo en fond : centré à l'accueil, il « se couche » derrière le
               composer dès que la conversation commence. */}
@@ -589,17 +724,17 @@ function App() {
             aria-hidden="true"
             className={`snowfall-sun ${conversationIsEmpty ? '' : 'snowfall-sun-set'}`}
           />
+          {dragging && <div className="drop-overlay">{t('chat.dropFiles')}</div>}
+
           <div className="chat-scroll-area">
             {historyLoading || messagesLoading ? (
               <div className="welcome">
-                <div className="typing-indicator" aria-label="Chargement">
+                <div className="typing-indicator" aria-label={t('common.loading')}>
                   <span />
                   <span />
                   <span />
                 </div>
-                <p className="welcome-description">
-                  Chargement de votre conversation…
-                </p>
+                <p className="welcome-description">{t('chat.loading')}</p>
               </div>
             ) : conversationIsEmpty && activeAgent ? (
               <section className="welcome welcome-agent">
@@ -617,25 +752,16 @@ function App() {
                 <h1>
                   Snowfall
                   <br />
-                  <span>Votre espace de travail.</span>
+                  <span>{t('chat.workspace')}</span>
                 </h1>
-                <p className="welcome-description">
-                  {activeConversation
-                    ? 'Commencez par poser une question ou partager une idée.'
-                    : 'Créez une nouvelle conversation pour commencer.'}
-                </p>
+                <p className="welcome-description">{activeConversation ? t('chat.startHint') : t('chat.createHint')}</p>
               </section>
             ) : (
               <section className="messages" aria-live="polite">
-                {activeConversation.messages.map((message) => (
-                  <article
-                    className={`message message-${message.role}`}
-                    key={message.id}
-                  >
+                {shownMessages.map((message) => (
+                  <article className={`message message-${message.role}`} key={message.id}>
                     <div
-                      className={`message-avatar ${
-                        message.role === 'assistant' && activeAgent ? 'message-avatar-agent' : ''
-                      }`}
+                      className={`message-avatar ${message.role === 'assistant' && activeAgent ? 'message-avatar-agent' : ''}`}
                     >
                       {message.role === 'user' ? (
                         username.slice(0, 1).toUpperCase()
@@ -649,20 +775,90 @@ function App() {
                       <div className="message-author">
                         {message.role === 'user' ? username : activeAgent?.name ?? 'Snowfall'}
                       </div>
-                      {message.role === 'assistant' ? (
+
+                      {message.attachments?.length ? (
+                        <div className="message-attachments">
+                          {message.attachments.map((file) => (
+                            <AttachmentChip key={file.id} attachment={file} name={file.name} size={file.size} kind={file.kind} />
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {editing?.id === message.id ? (
+                        <form
+                          className="message-edit"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            void submitEdit()
+                          }}
+                        >
+                          <textarea
+                            autoFocus
+                            aria-label={t('chat.edit')}
+                            value={editing.text}
+                            maxLength={4000}
+                            onChange={(event) => setEditing({ id: message.id, text: event.target.value })}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Escape') setEditing(null)
+                              if (event.key === 'Enter' && !event.shiftKey) {
+                                event.preventDefault()
+                                void submitEdit()
+                              }
+                            }}
+                          />
+                          <div className="message-edit-actions">
+                            <button type="button" onClick={() => setEditing(null)}>
+                              {t('common.cancel')}
+                            </button>
+                            <button type="submit" className="primary">
+                              {t('chat.editSave')}
+                            </button>
+                          </div>
+                        </form>
+                      ) : message.role === 'assistant' ? (
                         <Markdown source={message.content} />
                       ) : (
-                        <p>{message.content}</p>
+                        message.content && <p>{message.content}</p>
                       )}
-                      {message.role === 'assistant' && (
-                        <button
-                          className="copy-message"
-                          aria-label={copiedId === message.id ? 'Copié' : 'Copier la réponse'}
-                          title={copiedId === message.id ? 'Copié' : 'Copier'}
-                          onClick={() => void copyMessage(message)}
-                        >
-                          {copiedId === message.id ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
+
+                      {editing?.id !== message.id && (
+                        <div className="message-actions">
+                          {message.role === 'assistant' ? (
+                            <>
+                              <button
+                                className="copy-message"
+                                aria-label={copiedId === message.id ? t('chat.copied') : t('chat.copyAnswer')}
+                                title={copiedId === message.id ? t('chat.copied') : t('chat.copy')}
+                                onClick={() => void copyMessage(message)}
+                              >
+                                {copiedId === message.id ? <Check size={14} /> : <Copy size={14} />}
+                              </button>
+                              {message.id === lastAssistantId && canWrite && (
+                                <button
+                                  className="copy-message"
+                                  aria-label={t('chat.regenerate')}
+                                  title={t('chat.regenerate')}
+                                  disabled={sending}
+                                  onClick={() => void regenerate()}
+                                >
+                                  <RefreshCw size={14} />
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            canWrite && (
+                              <button
+                                className="copy-message"
+                                aria-label={t('chat.edit')}
+                                title={t('chat.edit')}
+                                disabled={sending}
+                                onClick={() => setEditing({ id: message.id, text: message.content })}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                            )
+                          )}
+                        </div>
                       )}
                     </div>
                   </article>
@@ -671,21 +867,14 @@ function App() {
                 {sending && (
                   <div className="message message-assistant">
                     <div className={`message-avatar ${activeAgent ? 'message-avatar-agent' : ''}`}>
-                      {activeAgent ? (
-                        <AgentAvatar avatar={activeAgent.avatar} size={30} mood={agentMood} />
-                      ) : (
-                        '✳'
-                      )}
+                      {activeAgent ? <AgentAvatar avatar={activeAgent.avatar} size={30} mood={agentMood} /> : '✳'}
                     </div>
                     <div className="message-body">
                       <div className="message-author">{activeAgent?.name ?? 'Snowfall'}</div>
                       {streamingText ? (
                         <Markdown source={streamingText} />
                       ) : (
-                        <div
-                          className="typing-indicator"
-                          aria-label="Réponse en cours"
-                        >
+                        <div className="typing-indicator" aria-label={t('chat.answering')}>
                           <span />
                           <span />
                           <span />
@@ -700,58 +889,142 @@ function App() {
           </div>
 
           <footer className="composer-area">
-          {error && (
-            <div className="error-notice" role="alert">
-              <span>{error}</span>
-              <button onClick={() => setError('')} aria-label="Fermer">
-                ×
-              </button>
-            </div>
-          )}
+            {error && (
+              <div className="error-notice" role="alert">
+                <span>{error}</span>
+                <button onClick={() => setError('')} aria-label={t('common.close')}>
+                  <X size={14} />
+                </button>
+              </div>
+            )}
 
-          <div className="composer">
-            <div className="composer-toolbar">
-              <div className="composer-hints">
-                <button
-                  className="attachment-button"
-                  type="button"
-                  aria-label="Ajouter une pièce jointe"
-                  title="Ajouter une pièce jointe"
-                >
-                  <Paperclip size={16} />
-                </button>
-              </div>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={handleComposerKeyDown}
-                placeholder="Posez votre question, explorez une idée..."
-                rows={1}
-                aria-label="Votre message"
-                disabled={sending || !activeConversation || messagesLoading}
-              />
-              <div className="composer-actions">
-                <button
-                  className="send-button"
-                  onClick={() => void sendMessage()}
-                  disabled={!input.trim() || sending || !activeConversation || messagesLoading}
-                  aria-label="Envoyer le message"
-                  title="Envoyer"
-                >
-                  <ArrowUp size={18} />
-                </button>
+            <div className="composer">
+              {activeFiles.length > 0 && (
+                <div className="composer-attachments">
+                  {activeFiles.map((file) => (
+                    <AttachmentChip
+                      key={file.localId}
+                      {...(file.attachment ? { attachment: file.attachment } : {})}
+                      name={file.name}
+                      size={file.size}
+                      kind={file.kind}
+                      status={file.status}
+                      {...(file.preview ? { preview: file.preview } : {})}
+                      onRemove={() => removePendingFile(file)}
+                    />
+                  ))}
+                </div>
+              )}
+              <div className="composer-toolbar">
+                <div className="composer-hints">
+                  <button
+                    className="attachment-button"
+                    type="button"
+                    aria-label={t('chat.attach')}
+                    title={t('chat.attach')}
+                    disabled={!activeConversation || !canWrite || messagesLoading}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <Paperclip size={16} />
+                  </button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    hidden
+                    multiple
+                    accept={ACCEPT}
+                    onChange={(event) => {
+                      void addFiles([...(event.target.files ?? [])])
+                      event.target.value = ''
+                    }}
+                  />
+                </div>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                  onPaste={onPaste}
+                  placeholder={t('chat.placeholder')}
+                  rows={1}
+                  aria-label={t('chat.messageLabel')}
+                  disabled={!activeConversation || messagesLoading || !canWrite}
+                />
+                <div className="composer-actions">
+                  {sending ? (
+                    <button
+                      className="send-button stop-button"
+                      onClick={stopGeneration}
+                      aria-label={t('chat.stop')}
+                      title={t('chat.stop')}
+                    >
+                      <Square size={14} fill="currentColor" />
+                    </button>
+                  ) : (
+                    <button
+                      className="send-button"
+                      onClick={() => void sendMessage()}
+                      disabled={!canSend}
+                      aria-label={t('chat.sendLabel')}
+                      title={t('chat.send')}
+                    >
+                      <ArrowUp size={18} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-          <p className="composer-disclaimer">
-            Snowfall peut se tromper. Vérifiez les informations importantes.
-          </p>
+            <p className="composer-disclaimer">{t('chat.disclaimer')}</p>
           </footer>
         </div>
       </section>
     </main>
   )
+}
+
+let legacyMigration: Promise<void> | null = null
+
+/**
+ * Reprise unique des projets autrefois conservés dans le navigateur : créés
+ * côté serveur (chiffrés, RLS) puis retirés du stockage local. Mémorisée au
+ * niveau du module pour ne jamais s'exécuter deux fois (StrictMode).
+ */
+function migrateLegacyProjects() {
+  legacyMigration ??= (async () => {
+    const legacy = readLegacyProjects()
+    if (legacy.length === 0) return
+    if ((await api.listProjects()).length === 0) {
+      const known = new Set((await api.listConversations()).map((item) => item.id))
+      for (const old of legacy) {
+        const created = await api.createProject(old.name)
+        for (const conversationId of old.conversationIds.filter((id) => known.has(id))) {
+          await api.updateConversation(conversationId, { projectId: created.id }).catch(() => undefined)
+        }
+      }
+    }
+    try {
+      localStorage.removeItem(LEGACY_PROJECTS_KEY)
+    } catch {
+      // Rien à nettoyer.
+    }
+  })().catch(() => undefined)
+  return legacyMigration
+}
+
+/** Projets autrefois enregistrés dans le navigateur (avant leur passage côté serveur). */
+function readLegacyProjects(): { name: string; conversationIds: string[] }[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LEGACY_PROJECTS_KEY) ?? '[]') as unknown
+    if (!Array.isArray(saved)) return []
+    return saved
+      .filter(
+        (item): item is { name: string; conversationIds: string[] } =>
+          typeof item?.name === 'string' && Array.isArray(item?.conversationIds),
+      )
+      .map((item) => ({ name: item.name.slice(0, 80), conversationIds: item.conversationIds.filter((id) => typeof id === 'string') }))
+  } catch {
+    return []
+  }
 }
 
 export default App

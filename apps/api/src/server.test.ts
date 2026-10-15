@@ -5,10 +5,7 @@ import { cookieNames, createAppServer, type AppDependencies } from "./server.js"
 import type { AuditEvent, AuditLog } from "./audit/audit.js";
 import { LoginTransactionCodec, type OidcClient } from "./auth/oidc.js";
 import type { SessionStore } from "./auth/session-store.js";
-import type {
-  ConversationStore,
-  ConversationOwner,
-} from "./conversations/store.js";
+import { createFakeConversationStore } from "./testing/fakes.js";
 
 const ORIGIN = "http://localhost:5173";
 
@@ -18,88 +15,8 @@ const testUser = {
   role: "member" as const,
 };
 
-function createFakeStore(): ConversationStore {
-  const conversations = new Map<
-    string,
-    {
-      id: string;
-      owner: ConversationOwner;
-      title: string;
-      agentId: string | null;
-      createdAt: string;
-      updatedAt: string;
-    }
-  >();
-  const messages = new Map<
-    string,
-    { id: string; role: "user" | "assistant"; content: string; createdAt: string }[]
-  >();
-
-  function owns(owner: ConversationOwner, id: string) {
-    const conversation = conversations.get(id);
-    return conversation?.owner.userId === owner.userId &&
-      conversation.owner.organizationId === owner.organizationId;
-  }
-
-  return {
-    list: async (owner) =>
-      [...conversations.values()]
-        .filter((item) =>
-          item.owner.userId === owner.userId &&
-          item.owner.organizationId === owner.organizationId
-        )
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .map(({ id, title, agentId, createdAt, updatedAt }) => ({
-          id, title, agentId, createdAt, updatedAt,
-        })),
-
-    create: async (owner, title = "Nouvelle conversation", agentId) => {
-      const now = new Date().toISOString();
-      const conversation = {
-        id: crypto.randomUUID(),
-        owner: { userId: owner.userId, organizationId: owner.organizationId },
-        title,
-        agentId: agentId ?? null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      conversations.set(conversation.id, conversation);
-      messages.set(conversation.id, []);
-      return { id: conversation.id, title, agentId: conversation.agentId, createdAt: now, updatedAt: now };
-    },
-
-    get: async (owner, id) => {
-      if (!owns(owner, id)) return null;
-      const { owner: _owner, ...summary } = conversations.get(id)!;
-      return summary;
-    },
-
-    getMessages: async (owner, id) => {
-      if (!owns(owner, id)) return null;
-      return [...(messages.get(id) ?? [])];
-    },
-
-    delete: async (owner, id) => {
-      if (!owns(owner, id)) return false;
-      conversations.delete(id);
-      messages.delete(id);
-      return true;
-    },
-
-    appendExchange: async (owner, id, userContent, assistantContent) => {
-      if (!owns(owner, id)) return null;
-      const make = (role: "user" | "assistant", content: string) => ({
-        id: crypto.randomUUID(),
-        role,
-        content,
-        createdAt: new Date().toISOString(),
-      });
-      const userMessage = make("user", userContent);
-      const assistantMessage = make("assistant", assistantContent);
-      messages.get(id)!.push(userMessage, assistantMessage);
-      return { userMessage, assistantMessage };
-    },
-  };
+function createFakeStore() {
+  return createFakeConversationStore();
 }
 
 function parseSse(body: string) {
@@ -344,7 +261,15 @@ describe("API HTTP : conversations", () => {
     assert.deepEqual(saved?.map((message) => message.content), ["Salut", "Bonjour"]);
 
     const created = audit.find((event) => event.eventType === "message.create");
-    assert.deepEqual(created?.details, { agentId: "", model: "fake", inputTokens: 5, outputTokens: 2 });
+    assert.deepEqual(created?.details, {
+      agentId: "",
+      model: "fake",
+      inputTokens: 5,
+      outputTokens: 2,
+      attachments: 0,
+      edited: false,
+      partial: false,
+    });
   });
 
   it("signale l'échec du modèle et n'enregistre rien", async (t) => {
@@ -418,6 +343,8 @@ describe("API HTTP : connexion BFF", () => {
           subject: "kc-sub",
           tokens: { refreshToken: "rt", idToken: "it" },
           profile: { name: "Alice" },
+          emailVerified: true,
+          organizations: [],
         };
       },
       refresh: async () => null,
@@ -437,6 +364,7 @@ describe("API HTTP : connexion BFF", () => {
         sessions.delete(token);
         return session;
       },
+      revokeIdpSession: async () => [],
       purgeExpired: async () => 0,
     };
 

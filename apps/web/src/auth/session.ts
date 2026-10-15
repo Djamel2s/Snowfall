@@ -1,5 +1,6 @@
 // La session est portée par un cookie HttpOnly posé par l'API (pattern BFF) :
 // aucun jeton n'est accessible au JavaScript de la page.
+import { getLocale } from '../lib/i18n'
 
 export type Session = {
   user: {
@@ -12,6 +13,8 @@ export type Session = {
     email?: string
     username?: string
   }
+  /** Console de compte Keycloak (mot de passe, 2FA, sessions). */
+  accountUrl?: string
 }
 
 let current: Session | null = null
@@ -34,8 +37,9 @@ export async function loadSession(): Promise<Session | null> {
   return current
 }
 
+/** La langue de l'interface est relayée à la page de connexion Keycloak. */
 export function login() {
-  window.location.assign('/api/auth/login')
+  window.location.assign(`/api/auth/login?locale=${getLocale()}`)
 }
 
 export async function logout() {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { Check, ChevronDown, Search } from 'lucide-react'
 import type { ProviderId } from '../lib/api'
+import { useI18n } from '../lib/i18n'
 import { ProviderLogo } from './AgentAvatar'
 
 type Props = {
@@ -14,6 +15,7 @@ type Props = {
 const SEARCH_FROM = 8
 
 export default function ModelSelect({ provider, models, value, onChange }: Props) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
@@ -98,14 +100,14 @@ export default function ModelSelect({ provider, models, value, onChange }: Props
         type="button"
         className="model-select-trigger"
         role="combobox"
-        aria-label="Modèle"
+        aria-label={t('studio.model')}
         aria-expanded={open}
         aria-controls={listId}
         aria-haspopup="listbox"
         onClick={() => (open ? setOpen(false) : show())}
       >
         <ProviderLogo provider={provider} size={15} />
-        <span className="model-select-value" title={selected?.id}>{selected?.label ?? 'Choisir un modèle'}</span>
+        <span className="model-select-value" title={selected?.id}>{selected?.label ?? t('model.choose')}</span>
         <ChevronDown size={15} className="model-select-chevron" />
       </button>
 
@@ -116,8 +118,8 @@ export default function ModelSelect({ provider, models, value, onChange }: Props
               <Search size={13} />
               <input
                 ref={searchRef}
-                aria-label="Rechercher un modèle"
-                placeholder="Rechercher"
+                aria-label={t('model.search')}
+                placeholder={t('sidebar.search')}
                 value={query}
                 onChange={(event) => {
                   setQuery(event.target.value)
@@ -130,7 +132,7 @@ export default function ModelSelect({ provider, models, value, onChange }: Props
             id={listId}
             ref={listRef}
             role="listbox"
-            aria-label="Modèles"
+            aria-label={t('model.list')}
             tabIndex={-1}
             aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
           >
@@ -150,7 +152,7 @@ export default function ModelSelect({ provider, models, value, onChange }: Props
                 {model.id === value && <Check size={13} />}
               </li>
             ))}
-            {filtered.length === 0 && <li className="model-select-empty">Aucun modèle</li>}
+            {filtered.length === 0 && <li className="model-select-empty">{t('model.none')}</li>}
           </ul>
         </div>
       )}

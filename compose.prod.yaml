@@ -2,6 +2,21 @@
 #   docker compose -f compose.yaml -f compose.prod.yaml up -d
 # Prérequis : certificats TLS dans infra/tls (non versionnés), DNS, secrets
 # injectés par le gestionnaire de secrets (pas de .env en clair sur le serveur).
+# Seul nginx (web) est exposé ; API, base et Keycloak restent sur le réseau
+# interne (Keycloak est publié via son propre reverse proxy).
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
 services:
   db:
     # Aucune exposition réseau hors du réseau Docker.
@@ -30,6 +45,7 @@ services:
     command: start --import-realm
     ports: !override
       - "127.0.0.1:8443:8443"
+    extra_hosts: !reset []
     environment:
       KC_HOSTNAME: ${KC_HOSTNAME:?Define KC_HOSTNAME (ex. https://auth.example.com)}
       KC_HOSTNAME_STRICT: "true"
@@ -42,5 +58,75 @@ services:
       KC_METRICS_ENABLED: "true"
       SNOWFALL_KC_SSL_REQUIRED: all
       SNOWFALL_APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
+      # Keycloak joint l'API directement sur le réseau interne.
+      SNOWFALL_BACKCHANNEL_LOGOUT_URL: http://api:3001/auth/backchannel-logout
+      SNOWFALL_SMTP_HOST: ${SMTP_HOST:?Define SMTP_HOST}
+      SNOWFALL_SMTP_PORT: ${SMTP_PORT:-587}
+      SNOWFALL_SMTP_FROM: ${SMTP_FROM:?Define SMTP_FROM}
+      SNOWFALL_SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SNOWFALL_SMTP_SSL: ${SMTP_SSL:-false}
+      SNOWFALL_SMTP_AUTH: "true"
+      SNOWFALL_SMTP_USER: ${SMTP_USER:?Define SMTP_USER}
+      SNOWFALL_SMTP_PASSWORD: ${SMTP_PASSWORD:?Define SMTP_PASSWORD}
     volumes:
       - ./infra/tls/keycloak:/opt/keycloak/conf/tls:ro
+
+  # Mailpit sert au développement uniquement.
+  mailpit:
+    profiles: ["dev"]
+
+  migrate:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: migrate }
+    restart: "no"
+    profiles: ["migrate"]
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_MIGRATION_URL: ${DATABASE_MIGRATION_URL:?Define DATABASE_MIGRATION_URL}
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL}
+    tmpfs: ["/tmp", "/home/node/.npm"]
+
+  api:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/api/Dockerfile, target: runtime }
+    depends_on:
+      db: { condition: service_healthy }
+    tmpfs: ["/tmp"]
+    environment:
+      NODE_ENV: production
+      APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
+      # nginx est le seul proxy de confiance (réseau interne).
+      TRUST_PROXY: 172.30.0.0/24
+      DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL (sslmode=verify-full)}
+      OIDC_ISSUER: ${OIDC_ISSUER:?Define OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-snowfall-bff}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?Define OIDC_CLIENT_SECRET}
+      OIDC_EXTRA_SCOPES: ${OIDC_EXTRA_SCOPES:-organization}
+      SNOWFALL_MASTER_KEY: ${SNOWFALL_MASTER_KEY:?Define SNOWFALL_MASTER_KEY}
+      KMS_PROVIDER: ${KMS_PROVIDER:-vault}
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+      REDIS_URL: ${REDIS_URL:-}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:?Define LLM_DEFAULT_MODEL}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      AUDIT_STDOUT: "true"
+      SIEM_WEBHOOK_URL: ${SIEM_WEBHOOK_URL:-}
+      SIEM_WEBHOOK_TOKEN: ${SIEM_WEBHOOK_TOKEN:-}
+      SIEM_FORMAT: ${SIEM_FORMAT:-json}
+
+  web:
+    <<: *hardened
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    depends_on: [api]
+    ports:
+      - "443:8443"
+      - "80:8080"
+    # nginx (non root) n'écrit que son cache et son PID.
+    tmpfs: ["/var/cache/nginx:uid=101,gid=101", "/tmp"]
+    volumes:
+      - ./infra/tls/web:/etc/nginx/tls:ro

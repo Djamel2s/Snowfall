@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ModelRefusalError, type ChatModel } from "../graph/chat-graph.js";
+import { conversationTurns } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
 
@@ -19,15 +20,26 @@ export function createAnthropicModel(model: string, settings: ProviderSettings):
   return {
     id: `anthropic:${model}`,
 
-    async *stream({ history, message, instructions }, signal) {
+    async *stream(request, signal) {
+      const messages: Anthropic.MessageParam[] = conversationTurns(request).map((turn) => ({
+        role: turn.role,
+        content: turn.images?.length
+          ? [
+              // Images avant le texte, comme le recommande la documentation.
+              ...turn.images.map((image) => ({
+                type: "image" as const,
+                source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
+              })),
+              { type: "text" as const, text: turn.content },
+            ]
+          : turn.content,
+      }));
+
       const params = {
         model,
         max_tokens: settings.maxOutputTokens,
-        system: buildSystemPrompt(instructions),
-        messages: [
-          ...history.map((turn) => ({ role: turn.role, content: turn.content })),
-          { role: "user" as const, content: message },
-        ],
+        system: buildSystemPrompt(request.instructions),
+        messages,
         ...(SUPPORTS_EFFORT.test(model) ? { output_config: { effort: "medium" as const } } : {}),
       };
       const options = signal ? { signal } : {};

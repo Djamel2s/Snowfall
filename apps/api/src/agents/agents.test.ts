@@ -9,6 +9,7 @@ import type { ModelRegistry } from "../llm/registry.js";
 import type { ModelSelection } from "../llm/types.js";
 import { defaultAvatar, isSafeImageDataUrl, readAvatar } from "./profile.js";
 import type { Agent, AgentInput, AgentStore } from "./store.js";
+import { createFakeConversationStore } from "../testing/fakes.js";
 
 const ORIGIN = "http://localhost:5173";
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -56,6 +57,7 @@ function fakeRegistry(calls: { selection?: ModelSelection; instructions?: string
       { id: "local", available: false, models: [] },
     ],
     isAllowed: async ({ provider, model }) => provider === "mistral" && model === "mistral-small-latest",
+    providerFor: (selection) => selection?.provider ?? "echo",
     runner: (selection): ChatRunner => async (input) => {
       calls.push({
         ...(selection ? { selection } : {}),
@@ -67,30 +69,7 @@ function fakeRegistry(calls: { selection?: ModelSelection; instructions?: string
 }
 
 function fakeConversations(): ConversationStore {
-  const items = new Map<string, { agentId: string | null }>();
-  return {
-    list: async () => [],
-    create: async (_owner, _title, agentId) => {
-      const id = crypto.randomUUID();
-      items.set(id, { agentId: agentId ?? null });
-      const now = new Date().toISOString();
-      return { id, title: "Nouvelle conversation", agentId: agentId ?? null, createdAt: now, updatedAt: now };
-    },
-    get: async (_owner, id) => {
-      const item = items.get(id);
-      const now = new Date().toISOString();
-      return item ? { id, title: "t", agentId: item.agentId, createdAt: now, updatedAt: now } : null;
-    },
-    getMessages: async (_owner, id) => (items.has(id) ? [] : null),
-    delete: async () => true,
-    appendExchange: async () => {
-      const now = new Date().toISOString();
-      return {
-        userMessage: { id: "u", role: "user", content: "x", createdAt: now },
-        assistantMessage: { id: "a", role: "assistant", content: "ok", createdAt: now },
-      };
-    },
-  };
+  return createFakeConversationStore();
 }
 
 function setup(options: { user?: AuthenticatedUser; agents?: AgentStore; calls?: Parameters<typeof fakeRegistry>[0] } = {}) {
