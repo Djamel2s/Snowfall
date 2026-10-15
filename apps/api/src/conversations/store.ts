@@ -7,6 +7,20 @@ import type { ModelSelection } from "../llm/types.js";
 
 export type MessageRole = "user" | "assistant";
 
+/** Source de la base de connaissances citée par une réponse. */
+export type MessageSource = {
+  n: number;
+  sourceId: string;
+  name: string;
+  url: string | null;
+  base: "agent" | "project";
+  section?: string | null;
+  page?: number | null;
+};
+
+/** Bases de connaissances consultées par la conversation. */
+export type KnowledgeToggles = { agent: boolean; project: boolean };
+
 /** Qui répond : un agent, un modèle choisi, ou (les deux à null) le modèle par défaut. */
 export type ConversationSelection = { agentId: string | null; model: ModelSelection | null };
 
@@ -23,6 +37,7 @@ export type ConversationSummary = {
   agentId: string | null;
   /** Modèle choisi pour une conversation sans agent. */
   model: ModelSelection | null;
+  knowledge: KnowledgeToggles;
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -34,6 +49,7 @@ export type StoredMessage = {
   content: string;
   createdAt: string;
   attachments?: AttachmentMeta[];
+  sources?: MessageSource[];
 };
 
 export type SearchHit = {
@@ -48,6 +64,8 @@ export type ExchangeOptions = {
   attachmentIds?: string[];
   /** Modification : ce message utilisateur et tout ce qui suit sont remplacés. */
   replaceFromMessageId?: string;
+  /** Sources citées par la réponse. */
+  sources?: MessageSource[];
 };
 
 export interface ConversationStore {
@@ -64,7 +82,12 @@ export interface ConversationStore {
   update(
     owner: ConversationOwner,
     conversationId: string,
-    changes: { title?: string; projectId?: string | null; selection?: ConversationSelection },
+    changes: {
+      title?: string;
+      projectId?: string | null;
+      selection?: ConversationSelection;
+      knowledge?: Partial<KnowledgeToggles>;
+    },
   ): Promise<ConversationSummary | null>;
   search(owner: ConversationOwner, query: string): Promise<SearchHit[]>;
   getMessages(
@@ -85,6 +108,7 @@ export interface ConversationStore {
     conversationId: string,
     previousAssistantId: string,
     content: string,
+    sources?: MessageSource[],
   ): Promise<StoredMessage | null>;
 }
 
@@ -102,12 +126,18 @@ export function messageAad(
   return `message:${owner.organizationId}:${owner.userId}:${conversationId}:${messageId}:${role}`;
 }
 
+export function messageSourcesAad(owner: ConversationOwner, conversationId: string, messageId: string) {
+  return `message-sources:${owner.organizationId}:${owner.userId}:${conversationId}:${messageId}`;
+}
+
 type ConversationRow = {
   id: string;
   title: string | null;
   agentId: string | null;
   modelProvider: ModelSelection["provider"] | null;
   modelId: string | null;
+  useAgentKnowledge: boolean;
+  useProjectKnowledge: boolean;
   projectId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -115,15 +145,22 @@ type ConversationRow = {
 
 const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId", project_id AS "projectId",
   model_provider AS "modelProvider", model_id AS "modelId",
+  use_agent_knowledge AS "useAgentKnowledge", use_project_knowledge AS "useProjectKnowledge",
   created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 const modelOf = (row: ConversationRow): ModelSelection | null =>
   row.modelProvider && row.modelId ? { provider: row.modelProvider, model: row.modelId } : null;
 
+const knowledgeOf = (row: ConversationRow): KnowledgeToggles => ({
+  agent: row.useAgentKnowledge,
+  project: row.useProjectKnowledge,
+});
+
 type MessageRow = {
   id: string;
   role: MessageRole;
   content: string;
+  sources?: string | null;
   createdAt: string;
 };
 
@@ -159,6 +196,7 @@ export class PostgresConversationStore implements ConversationStore {
       id: row.id,
       agentId: row.agentId,
       model: modelOf(row),
+      knowledge: knowledgeOf(row),
       projectId: row.projectId,
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
@@ -179,8 +217,9 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
     row: MessageRow,
   ): Promise<StoredMessage> {
-    return {
-      ...row,
+    const { sources, ...rest } = row;
+    const message: StoredMessage = {
+      ...rest,
       content: await this.keyring.decrypt(
         client,
         owner.organizationId,
@@ -188,6 +227,12 @@ export class PostgresConversationStore implements ConversationStore {
         messageAad(owner, conversationId, row.id, row.role),
       ),
     };
+    if (sources) {
+      message.sources = JSON.parse(
+        await this.keyring.decrypt(client, owner.organizationId, sources, messageSourcesAad(owner, conversationId, row.id)),
+      ) as MessageSource[];
+    }
+    return message;
   }
 
   private async summaries(client: PoolClient, owner: ConversationOwner) {
@@ -277,6 +322,7 @@ export class PostgresConversationStore implements ConversationStore {
         id: row.id,
         agentId: row.agentId,
         model: modelOf(row),
+        knowledge: knowledgeOf(row),
         projectId: row.projectId,
         title: title ?? DEFAULT_CONVERSATION_TITLE,
         createdAt: row.createdAt,
@@ -288,7 +334,12 @@ export class PostgresConversationStore implements ConversationStore {
   async update(
     owner: ConversationOwner,
     conversationId: string,
-    changes: { title?: string; projectId?: string | null; selection?: ConversationSelection },
+    changes: {
+      title?: string;
+      projectId?: string | null;
+      selection?: ConversationSelection;
+      knowledge?: Partial<KnowledgeToggles>;
+    },
   ) {
     const { selection } = changes;
     if (selection?.agentId && selection.model) throw new Error("INVALID_SELECTION");
@@ -340,6 +391,14 @@ export class PostgresConversationStore implements ConversationStore {
           `model_provider = $${values.length - 1}`,
           `model_id = $${values.length}`,
         );
+      }
+      if (changes.knowledge?.agent !== undefined) {
+        values.push(changes.knowledge.agent);
+        sets.push(`use_agent_knowledge = $${values.length}`);
+      }
+      if (changes.knowledge?.project !== undefined) {
+        values.push(changes.knowledge.project);
+        sets.push(`use_project_knowledge = $${values.length}`);
       }
       if (sets.length === 0) return null;
 
@@ -416,7 +475,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!exists.rowCount) return null;
 
       const result = await client.query<MessageRow>(
-        `SELECT id, role, content, created_at AS "createdAt"
+        `SELECT id, role, content, sources, created_at AS "createdAt"
          FROM messages
          WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
          ORDER BY created_at ASC, id ASC`,
@@ -467,6 +526,7 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
     role: MessageRole,
     content: string,
+    sources?: MessageSource[],
   ) {
     const id = randomUUID();
     const encrypted = await this.keyring.encrypt(
@@ -475,14 +535,19 @@ export class PostgresConversationStore implements ConversationStore {
       content,
       messageAad(owner, conversationId, id, role),
     );
-    const result = await client.query<MessageRow>(
+    const encryptedSources = sources?.length
+      ? await this.keyring.encrypt(client, owner.organizationId, JSON.stringify(sources), messageSourcesAad(owner, conversationId, id))
+      : null;
+    const result = await client.query<{ id: string; role: MessageRole; createdAt: string }>(
       `INSERT INTO messages
-         (id, conversation_id, user_id, organization_id, role, content, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, clock_timestamp())
+         (id, conversation_id, user_id, organization_id, role, content, sources, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp())
        RETURNING id, role, created_at AS "createdAt"`,
-      [id, conversationId, owner.userId, owner.organizationId, role, encrypted],
+      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources],
     );
-    return { ...result.rows[0]!, content } as StoredMessage;
+    const message: StoredMessage = { ...result.rows[0]!, content };
+    if (sources?.length) message.sources = sources;
+    return message;
   }
 
   async appendExchange(
@@ -518,7 +583,7 @@ export class PostgresConversationStore implements ConversationStore {
       }
 
       const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent);
-      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent);
+      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources);
 
       if (options.attachmentIds?.length) {
         const linked = await client.query<AttachmentMeta & { name: string }>(
@@ -557,6 +622,7 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
     previousAssistantId: string,
     content: string,
+    sources?: MessageSource[],
   ) {
     return withTenant(this.pool, owner, async (client) => {
       const conversation = await client.query(
@@ -580,7 +646,7 @@ export class PostgresConversationStore implements ConversationStore {
         "DELETE FROM messages WHERE id = $1 AND user_id = $2 AND organization_id = $3 AND role = 'assistant'",
         [previousAssistantId, owner.userId, owner.organizationId],
       );
-      const message = await this.insertMessage(client, owner, conversationId, "assistant", content);
+      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources);
       await client.query(
         `UPDATE conversations SET updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,

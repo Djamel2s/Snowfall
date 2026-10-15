@@ -36,6 +36,10 @@ const privileges: Record<string, string[]> = {
   attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   user_preferences: ["SELECT", "INSERT", "UPDATE"],
   organization_invitations: ["SELECT", "INSERT", "DELETE"],
+  knowledge_bases: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  knowledge_sources: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  knowledge_chunks: ["SELECT", "INSERT", "DELETE"],
+  // knowledge_jobs : aucun droit, lue seulement via snowfall_pending_knowledge().
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
@@ -45,6 +49,7 @@ const functions = [
   "snowfall_set_member_role(uuid, text)",
   "snowfall_remove_member(uuid)",
   "snowfall_set_organization_sso(text, text)",
+  "snowfall_pending_knowledge()",
 ];
 
 async function main() {

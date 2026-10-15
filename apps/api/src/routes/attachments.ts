@@ -4,7 +4,9 @@ import { ATTACHMENT_MAX_BYTES } from "../db/schema.js";
 import { detectFile, sanitizeFileName } from "../attachments/detect.js";
 import { ExtractionError, extractText } from "../attachments/extract.js";
 import type { AttachmentStore } from "../attachments/store.js";
+import type { MalwareScanner } from "../security/antivirus.js";
 import type { RouteKit } from "./kit.js";
+import { scanUpload } from "./scan.js";
 
 const conversationParams = z.object({ id: z.uuid() });
 const attachmentParams = z.object({ id: z.uuid() });
@@ -18,14 +20,7 @@ function decodeName(header: unknown) {
   }
 }
 
-export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, store: AttachmentStore) {
-  // Fichier envoyé tel quel (pas de multipart) : taille bornée dès la lecture.
-  api.addContentTypeParser(
-    "application/octet-stream",
-    { parseAs: "buffer", bodyLimit: ATTACHMENT_MAX_BYTES },
-    (_request, body, done) => done(null, body),
-  );
-
+export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, store: AttachmentStore, scanner?: MalwareScanner) {
   const checkUploadLimit = api.createRateLimit({
     max: 30,
     timeWindow: "1 minute",
@@ -64,6 +59,9 @@ export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, st
         });
         return reply.code(415).send({ error: "Unsupported file" });
       }
+
+      // Antivirus avant toute lecture du contenu.
+      if (!(await scanUpload(kit, scanner, request, reply, user, bytes, { type: "conversation", id: params.data.id }))) return reply;
 
       let text: string | null = null;
       if (file.kind === "document") {

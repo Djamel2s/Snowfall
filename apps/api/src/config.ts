@@ -44,6 +44,33 @@ const envSchema = z.object({
   SIEM_WEBHOOK_URL: z.union([z.url(), z.literal("")]).optional(),
   SIEM_WEBHOOK_TOKEN: z.string().optional(),
   SIEM_FORMAT: z.enum(["json", "splunk-hec"]).default("json"),
+  // Bases de connaissances : modèle d'embeddings par fournisseur. Le local
+  // (Ollama, vLLM…) n'est proposé que si LOCAL_EMBEDDING_MODEL est défini.
+  EMBEDDING_MODEL_MISTRAL: z.string().regex(/^[\w.:\/-]{1,120}$/).default("mistral-embed"),
+  EMBEDDING_MODEL_OPENAI: z.string().regex(/^[\w.:\/-]{1,120}$/).default("text-embedding-3-small"),
+  EMBEDDING_MODEL_GOOGLE: z.string().regex(/^[\w.:\/-]{1,120}$/).default("gemini-embedding-001"),
+  LOCAL_EMBEDDING_MODEL: z.union([z.string().regex(/^[\w.:\/-]{1,120}$/), z.literal("")]).optional(),
+  // Import de pages web (à couper si la plateforme n'a pas d'accès sortant contrôlé).
+  KNOWLEDGE_LINKS: z.enum(["on", "off"]).default("on"),
+  // Reclassement des passages (cross-encoder servi par vLLM, Infinity ou TEI).
+  RERANK_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
+  RERANK_MODEL: z.string().regex(/^[\w.:\/-]{1,120}$/).default("BAAI/bge-reranker-v2-m3"),
+  RERANK_API_KEY: z.string().optional(),
+  RERANK_API: z.enum(["cohere", "tei"]).default("cohere"),
+  // "local" : service hébergé par la plateforme (utilisable pour les bases
+  // confidentielles) ; "external" : jamais pour une base confidentielle.
+  RERANK_SCOPE: z.enum(["local", "external"]).default("local"),
+  RERANK_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.02),
+  RERANK_TIMEOUT_MS: z.coerce.number().int().min(500).max(60_000).default(8_000),
+  // Antivirus des fichiers reçus (ClamAV). Par défaut : actif en production
+  // (refus si le service est injoignable), désactivé en développement.
+  ANTIVIRUS: z.enum(["clamav", "off"]).optional(),
+  CLAMAV_HOST: z.string().regex(/^[\w.-]{1,253}$/).default("clamav"),
+  CLAMAV_PORT: z.coerce.number().int().min(1).max(65_535).default(3310),
+  ANTIVIRUS_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(60_000),
+  // Proxy de sortie (Squid) pour l'import de liens ; les SDK des fournisseurs
+  // passent par HTTPS_PROXY (NODE_USE_ENV_PROXY=1).
+  EGRESS_PROXY_URL: z.union([z.url(), z.literal("")]).optional(),
 });
 
 export type AppConfig = {
@@ -74,6 +101,15 @@ export type AppConfig = {
   audit: {
     stdout: boolean;
     siem: { url: string; token: string | undefined; format: "json" | "splunk-hec" } | undefined;
+  };
+  antivirus: { host: string; port: number; timeoutMs: number } | undefined;
+  egressProxy: string | undefined;
+  knowledge: {
+    embeddingModels: { mistral: string; openai: string; google: string; local: string | undefined };
+    links: boolean;
+    rerank:
+      | { baseUrl: string; model: string; apiKey: string | undefined; api: "cohere" | "tei"; local: boolean; minScore: number; timeoutMs: number }
+      | undefined;
   };
 };
 
@@ -199,6 +235,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       stdout: e.AUDIT_STDOUT === "true",
       siem: e.SIEM_WEBHOOK_URL
         ? { url: e.SIEM_WEBHOOK_URL, token: e.SIEM_WEBHOOK_TOKEN || undefined, format: e.SIEM_FORMAT }
+        : undefined,
+    },
+    antivirus:
+      (e.ANTIVIRUS ?? (production ? "clamav" : "off")) === "clamav"
+        ? { host: e.CLAMAV_HOST, port: e.CLAMAV_PORT, timeoutMs: e.ANTIVIRUS_TIMEOUT_MS }
+        : undefined,
+    egressProxy: e.EGRESS_PROXY_URL || undefined,
+    knowledge: {
+      embeddingModels: {
+        mistral: e.EMBEDDING_MODEL_MISTRAL,
+        openai: e.EMBEDDING_MODEL_OPENAI,
+        google: e.EMBEDDING_MODEL_GOOGLE,
+        local: e.LOCAL_EMBEDDING_MODEL || undefined,
+      },
+      links: e.KNOWLEDGE_LINKS === "on",
+      rerank: e.RERANK_BASE_URL
+        ? {
+            baseUrl: e.RERANK_BASE_URL,
+            model: e.RERANK_MODEL,
+            apiKey: e.RERANK_API_KEY || undefined,
+            api: e.RERANK_API,
+            local: e.RERANK_SCOPE === "local",
+            minScore: e.RERANK_MIN_SCORE,
+            timeoutMs: e.RERANK_TIMEOUT_MS,
+          }
         : undefined,
     },
   };

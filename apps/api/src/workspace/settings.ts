@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { withTenant, type TenantContext } from "../db/tenant.js";
+import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
 
 export type OrganizationSettings = {
@@ -7,12 +8,21 @@ export type OrganizationSettings = {
   /** Plafond mensuel de tokens (entrée + sortie) ; null = illimité. */
   monthlyTokenLimit: number | null;
   providerTokenLimits: Partial<Record<ProviderId, number>>;
+  /** Embeddings des bases de connaissances ; null = mots-clés seulement (rien ne sort). */
+  embeddingProvider: EmbeddingProvider | null;
+  /** Import de pages web dans les bases de connaissances. */
+  linksEnabled: boolean;
+  /** Domaines autorisés pour les liens ; vide = tout domaine public. */
+  linkDomains: string[];
 };
 
 export const defaultSettings: OrganizationSettings = {
   allowedProviders: [...providerIds],
   monthlyTokenLimit: null,
   providerTokenLimits: {},
+  embeddingProvider: null,
+  linksEnabled: true,
+  linkDomains: [],
 };
 
 export type UsageTotals = { inputTokens: number; outputTokens: number };
@@ -67,6 +77,9 @@ type SettingsRow = {
   allowed_providers: string[];
   monthly_token_limit: string | null;
   provider_token_limits: Record<string, unknown>;
+  embedding_provider: string | null;
+  links_enabled: boolean;
+  link_domains: string[];
 };
 
 function fromRow(row: SettingsRow | undefined): OrganizationSettings {
@@ -80,6 +93,9 @@ function fromRow(row: SettingsRow | undefined): OrganizationSettings {
     allowedProviders: providerIds.filter((id) => row.allowed_providers.includes(id)),
     monthlyTokenLimit: row.monthly_token_limit === null ? null : Number(row.monthly_token_limit),
     providerTokenLimits: limits,
+    embeddingProvider: embeddingProviders.find((id) => id === row.embedding_provider) ?? null,
+    linksEnabled: row.links_enabled,
+    linkDomains: row.link_domains,
   };
 }
 
@@ -93,7 +109,8 @@ export class PostgresSettingsStore implements SettingsStore {
 
   private async read(client: PoolClient, tenant: TenantContext) {
     const result = await client.query<SettingsRow>(
-      `SELECT allowed_providers, monthly_token_limit, provider_token_limits
+      `SELECT allowed_providers, monthly_token_limit, provider_token_limits,
+              embedding_provider, links_enabled, link_domains
        FROM organization_settings WHERE organization_id = $1`,
       [tenant.organizationId],
     );
@@ -108,12 +125,16 @@ export class PostgresSettingsStore implements SettingsStore {
     return withTenant(this.pool, tenant, async (client) => {
       await client.query(
         `INSERT INTO organization_settings
-           (organization_id, allowed_providers, monthly_token_limit, provider_token_limits, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, now())
+           (organization_id, allowed_providers, monthly_token_limit, provider_token_limits,
+            embedding_provider, links_enabled, link_domains, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
          ON CONFLICT (organization_id) DO UPDATE SET
            allowed_providers = EXCLUDED.allowed_providers,
            monthly_token_limit = EXCLUDED.monthly_token_limit,
            provider_token_limits = EXCLUDED.provider_token_limits,
+           embedding_provider = EXCLUDED.embedding_provider,
+           links_enabled = EXCLUDED.links_enabled,
+           link_domains = EXCLUDED.link_domains,
            updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
         [
@@ -121,6 +142,9 @@ export class PostgresSettingsStore implements SettingsStore {
           settings.allowedProviders,
           settings.monthlyTokenLimit,
           settings.providerTokenLimits,
+          settings.embeddingProvider,
+          settings.linksEnabled,
+          settings.linkDomains,
           tenant.userId,
         ],
       );

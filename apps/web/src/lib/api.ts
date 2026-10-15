@@ -11,12 +11,52 @@ export type AttachmentMeta = {
   createdAt: string
 }
 
+/** Source de la base de connaissances citée par une réponse ([n]). */
+export type MessageSource = {
+  n: number
+  sourceId: string
+  name: string
+  url: string | null
+  base: 'agent' | 'project'
+  /** Section (« Partie > Sous-partie ») et page du passage cité. */
+  section?: string | null
+  page?: number | null
+}
+
 export type Message = {
   id: string
   role: 'user' | 'assistant'
   content: string
   createdAt: string
   attachments?: AttachmentMeta[]
+  sources?: MessageSource[]
+}
+
+export type KnowledgeOwnerKind = 'agents' | 'projects'
+
+export type KnowledgeSource = {
+  id: string
+  kind: 'file' | 'link'
+  status: 'pending' | 'processing' | 'ready' | 'error'
+  errorCode: string | null
+  name: string
+  url: string | null
+  mediaType: string | null
+  size: number
+  chunkCount: number
+  embeddingModel: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type KnowledgeBaseView = {
+  id: string | null
+  confidential: boolean
+  canManage: boolean
+  /** Modèle d'embeddings de l'organisation pour cette base ; null = mots-clés. */
+  embeddingModel: string | null
+  linksEnabled: boolean
+  sources: KnowledgeSource[]
 }
 
 export type ConversationSummary = {
@@ -25,6 +65,8 @@ export type ConversationSummary = {
   agentId: string | null
   /** Modèle choisi pour une conversation sans agent (null : modèle par défaut). */
   model: ModelSelection | null
+  /** Bases de connaissances consultées (agent, projet). */
+  knowledge?: { agent: boolean; project: boolean }
   projectId: string | null
   createdAt: string
   updatedAt: string
@@ -103,16 +145,24 @@ export type Usage = {
   limits: { monthly: number | null; providers: Partial<Record<ProviderId, number>> }
 }
 
+export type EmbeddingProvider = 'mistral' | 'openai' | 'google' | 'local'
+
 export type OrganizationSettings = {
   allowedProviders: ProviderId[]
   monthlyTokenLimit: number | null
   providerTokenLimits: Partial<Record<ProviderId, number>>
+  /** Embeddings des bases de connaissances ; null = mots-clés seulement. */
+  embeddingProvider: EmbeddingProvider | null
+  linksEnabled: boolean
+  linkDomains: string[]
 }
 
 export type Organization = {
   organization: { id: string; name: string; sso?: { alias: string | null; defaultRole: 'member' | 'reader' } }
   settings: OrganizationSettings
   configuredProviders: ProviderId[]
+  /** Fournisseurs configurés pour les embeddings sur la plateforme. */
+  embeddingProviders?: EmbeddingProvider[]
 }
 
 export type Member = { userId: string; email: string; role: Role; joinedAt: string; monthlyTokens: number }
@@ -129,9 +179,13 @@ export class ApiError extends Error {
 
 async function errorMessage(response: Response) {
   const body = (await response.json().catch(() => ({}))) as { error?: string; reason?: string }
+  const knowledge = body.reason ? knowledgeError(body.reason) : null
+  if (knowledge) return knowledge
   if (body.reason === 'provider_quota_exceeded') return t('error.providerQuota')
   if (body.reason === 'quota_exceeded') return t('error.quota')
   if (body.error === 'Provider not allowed') return t('error.providerNotAllowed')
+  if (body.error === 'Malware detected') return t('error.malware')
+  if (body.error === 'Scanner unavailable') return t('error.scanner')
   if (body.error === 'Unsupported file') return t('error.unsupportedFile')
   if (body.error === 'Unreadable document') return t('error.unreadableFile')
   if (body.error === 'Too many attachments') return t('error.tooManyFiles')
@@ -148,6 +202,36 @@ async function errorMessage(response: Response) {
       return t('error.tooMany')
     default:
       return t('error.server', { status: response.status })
+  }
+}
+
+/** Raisons renvoyées par les routes de connaissances, traduites pour l'utilisateur. */
+export function knowledgeError(reason: string): string | null {
+  switch (reason) {
+    case 'confidential_requires_local':
+      return t('knowledge.error.confidentialLocal')
+    case 'agent_requires_local':
+      return t('knowledge.error.agentLocal')
+    case 'links_disabled':
+      return t('knowledge.error.linksDisabled')
+    case 'domain_not_allowed':
+      return t('knowledge.error.domain')
+    case 'blocked_address':
+    case 'invalid_url':
+      return t('knowledge.error.invalidLink')
+    case 'audio_video':
+      return t('knowledge.error.audioVideo')
+    case 'image':
+      return t('knowledge.error.image')
+    case 'unsupported':
+      return t('knowledge.error.unsupported')
+    case 'too_large':
+      return t('error.fileTooLarge')
+    case 'too_many_sources':
+    case 'too_many_chunks':
+      return t('knowledge.error.full')
+    default:
+      return null
   }
 }
 
@@ -262,7 +346,13 @@ export const api = {
 
   updateConversation: async (
     id: string,
-    changes: { title?: string; projectId?: string | null; agentId?: string | null; model?: ModelSelection | null },
+    changes: {
+      title?: string
+      projectId?: string | null
+      agentId?: string | null
+      model?: ModelSelection | null
+      knowledge?: { agent?: boolean; project?: boolean }
+    },
   ) =>
     (await request<{ conversation: ConversationSummary }>(`/conversations/${id}`, json('PATCH', changes))).conversation,
 
@@ -294,6 +384,25 @@ export const api = {
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: 'DELETE' }),
 
   attachmentBlob: async (id: string) => (await send(`/attachments/${id}/content`)).blob(),
+
+  getKnowledge: async (kind: KnowledgeOwnerKind, id: string) =>
+    (await request<{ knowledge: KnowledgeBaseView }>(`/${kind}/${id}/knowledge`)).knowledge,
+  setKnowledgeConfidential: (kind: KnowledgeOwnerKind, id: string, confidential: boolean) =>
+    request<{ knowledge: { id: string; confidential: boolean } }>(`/${kind}/${id}/knowledge`, json('PATCH', { confidential })),
+  addKnowledgeFile: async (kind: KnowledgeOwnerKind, id: string, file: Blob, name: string) =>
+    (
+      await request<{ source: KnowledgeSource }>(`/${kind}/${id}/knowledge/files`, {
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) },
+      })
+    ).source,
+  addKnowledgeLink: async (kind: KnowledgeOwnerKind, id: string, url: string) =>
+    (await request<{ source: KnowledgeSource }>(`/${kind}/${id}/knowledge/links`, json('POST', { url }))).source,
+  deleteKnowledgeSource: (id: string) => request<void>(`/knowledge/sources/${id}`, { method: 'DELETE' }),
+  reindexKnowledgeSource: async (id: string) =>
+    (await request<{ source: KnowledgeSource }>(`/knowledge/sources/${id}/reindex`, { method: 'POST' })).source,
+  knowledgeSourceBlob: async (id: string) => (await send(`/knowledge/sources/${id}/content`)).blob(),
 
   listModels: async () => (await modelCatalog()).providers,
 

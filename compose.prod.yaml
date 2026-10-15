@@ -4,6 +4,10 @@
 # injectés par le gestionnaire de secrets (pas de .env en clair sur le serveur).
 # Seul nginx (web) est exposé ; API, base et Keycloak restent sur le réseau
 # interne (Keycloak est publié via son propre reverse proxy).
+#
+# Réseaux : « backend » est interne (aucune route vers Internet). L'API, la
+# base, ClamAV n'y sont que là ; leur seule sortie est le proxy « egress »
+# (Squid), qui n'autorise que les domaines listés dans infra/egress.
 
 x-hardened: &hardened
   read_only: true
@@ -16,11 +20,17 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
 
 services:
   db:
-    # Aucune exposition réseau hors du réseau Docker.
+    # Aucune exposition réseau hors du réseau Docker, aucun accès à Internet.
     ports: !reset []
+    networks: [backend]
     command:
       - postgres
       - -c
@@ -42,6 +52,8 @@ services:
 
   keycloak:
     # Mode production : HTTPS obligatoire, hostname strict, pas de H2.
+    # Réseau public (fédération d'identité, SMTP) et interne (base, API).
+    networks: [default, backend]
     command: start --import-realm
     ports: !override
       - "127.0.0.1:8443:8443"
@@ -80,6 +92,7 @@ services:
     build: { context: ., dockerfile: apps/api/Dockerfile, target: migrate }
     restart: "no"
     profiles: ["migrate"]
+    networks: [backend]
     depends_on:
       db: { condition: service_healthy }
     environment:
@@ -92,12 +105,30 @@ services:
     build: { context: ., dockerfile: apps/api/Dockerfile, target: runtime }
     depends_on:
       db: { condition: service_healthy }
+      clamav: { condition: service_healthy }
+      egress: { condition: service_started }
+    # Réseau interne seulement : Internet uniquement via le proxy de sortie.
+    networks: [backend]
     tmpfs: ["/tmp"]
     environment:
       NODE_ENV: production
       APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
-      # nginx est le seul proxy de confiance (réseau interne).
-      TRUST_PROXY: 172.30.0.0/24
+      # nginx est le seul proxy de confiance (adresse fixe sur le réseau interne).
+      TRUST_PROXY: 172.31.0.10
+      # Sorties : fournisseurs d'IA et OIDC par HTTPS_PROXY (pris en charge
+      # nativement par Node), import de liens par EGRESS_PROXY_URL.
+      NODE_USE_ENV_PROXY: "1"
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,db,keycloak,clamav,vault,egress
+      EGRESS_PROXY_URL: http://egress:3128
+      # Antivirus obligatoire : un fichier non analysable est refusé.
+      ANTIVIRUS: clamav
+      CLAMAV_HOST: clamav
+      KNOWLEDGE_LINKS: ${KNOWLEDGE_LINKS:-on}
+      LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-}
+      RERANK_BASE_URL: ${RERANK_BASE_URL:-}
+      RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL (sslmode=verify-full)}
       OIDC_ISSUER: ${OIDC_ISSUER:?Define OIDC_ISSUER}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-snowfall-bff}
@@ -119,10 +150,61 @@ services:
       SIEM_WEBHOOK_TOKEN: ${SIEM_WEBHOOK_TOKEN:-}
       SIEM_FORMAT: ${SIEM_FORMAT:-json}
 
+  # Antivirus : réseau interne, signatures mises à jour via le proxy de sortie.
+  clamav:
+    <<: *hardened
+    image: clamav/clamav:1.5.4_base@sha256:96b28b83eb72fb497c2400a94229844226e5fe4da9061fad1988092d9fcd88f3
+    entrypoint: ["/init-unprivileged"]
+    user: "100:101"
+    # Toujours actif en production (le profil « antivirus » sert au dev),
+    # jamais publié sur l'hôte.
+    profiles: !reset []
+    ports: !reset []
+    networks: [backend]
+    depends_on: [egress]
+    environment:
+      FRESHCLAM_CHECKS: "12"
+    tmpfs: ["/tmp:uid=100,gid=101", "/var/log/clamav:uid=100,gid=101"]
+    volumes:
+      - snowfall_clamav_db:/var/lib/clamav
+      - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./infra/clamav/freshclam.prod.conf:/etc/clamav/freshclam.conf:ro
+    deploy:
+      resources:
+        limits: { memory: 3g }
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10m
+      retries: 3
+
+  # Proxy de sortie : seule voie vers Internet du réseau interne. Liste des
+  # domaines autorisés dans infra/egress/*.txt ; journal sur la sortie standard.
+  egress:
+    <<: *hardened
+    image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    user: "13:13"
+    networks:
+      default: {}
+      backend: { ipv4_address: 172.31.0.5 }
+    tmpfs:
+      - /run/squid:uid=13,gid=13
+      - /var/spool/squid:uid=13,gid=13
+      - /var/log/squid:uid=13,gid=13
+      - /tmp:uid=13,gid=13
+    volumes:
+      - ./infra/egress/squid.conf:/etc/squid/squid.conf:ro
+      - ./infra/egress/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+      - ./infra/egress/knowledge-domains.txt:/etc/squid/knowledge-domains.txt:ro
+
   web:
     <<: *hardened
     build: { context: ., dockerfile: apps/web/Dockerfile }
     depends_on: [api]
+    networks:
+      default: {}
+      backend: { ipv4_address: 172.31.0.10 }
     ports:
       - "443:8443"
       - "80:8080"
@@ -130,3 +212,6 @@ services:
     tmpfs: ["/var/cache/nginx:uid=101,gid=101", "/tmp"]
     volumes:
       - ./infra/tls/web:/etc/nginx/tls:ro
+
+volumes:
+  snowfall_clamav_db:

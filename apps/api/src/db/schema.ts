@@ -24,6 +24,15 @@ import { sql } from "drizzle-orm";
 const currentOrganization = sql`nullif(current_setting('app.organization_id', true), '')::uuid`;
 const currentUser = sql`nullif(current_setting('app.user_id', true), '')::uuid`;
 
+/**
+ * Bases de connaissances : celles d'un agent sont visibles de toute
+ * l'organisation (user_id NULL), celles d'un projet de son seul propriétaire.
+ */
+function knowledgePolicy(name: string, organizationId: AnyPgColumn, userId: AnyPgColumn) {
+  const condition = sql`${organizationId} = ${currentOrganization} AND (${userId} IS NULL OR ${userId} = ${currentUser})`;
+  return pgPolicy(name, { as: "permissive", for: "all", to: "public", using: condition, withCheck: condition });
+}
+
 function tenantPolicy(
   name: string,
   organizationId: AnyPgColumn,
@@ -260,6 +269,9 @@ export const conversations = pgTable.withRLS(
     // Modèle choisi pour une conversation sans agent ; NULL = modèle par défaut.
     modelProvider: text("model_provider"),
     modelId: text("model_id"),
+    // Bases de connaissances consultées : celle de l'agent, celle du projet.
+    useAgentKnowledge: boolean("use_agent_knowledge").notNull().default(true),
+    useProjectKnowledge: boolean("use_project_knowledge").notNull().default(true),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -308,6 +320,8 @@ export const messages = pgTable.withRLS(
     userId: uuid("user_id").notNull(),
     role: text("role").notNull(),
     content: text("content").notNull(),
+    // Sources citées par une réponse (base de connaissances), JSON chiffré.
+    sources: text("sources"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -354,6 +368,12 @@ export const organizationSettings = pgTable.withRLS(
     monthlyTokenLimit: bigint("monthly_token_limit", { mode: "number" }),
     // Plafonds mensuels par fournisseur : { "openai": 2000000, ... }.
     providerTokenLimits: jsonb("provider_token_limits").notNull().default({}),
+    // Fournisseur qui calcule les embeddings des bases de connaissances.
+    // NULL = recherche par mots-clés seulement (rien n'est envoyé à un tiers).
+    embeddingProvider: text("embedding_provider"),
+    // Import de pages web dans les bases ; liste vide = tout domaine public.
+    linksEnabled: boolean("links_enabled").notNull().default(true),
+    linkDomains: text("link_domains").array().notNull().default(sql`ARRAY[]::text[]`),
     updatedBy: uuid("updated_by"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -372,6 +392,11 @@ export const organizationSettings = pgTable.withRLS(
       "organization_settings_provider_limits_check",
       sql`jsonb_typeof(${table.providerTokenLimits}) = 'object'`,
     ),
+    check(
+      "organization_settings_embedding_check",
+      sql`${table.embeddingProvider} IS NULL OR ${table.embeddingProvider} IN ('mistral', 'openai', 'google', 'local')`,
+    ),
+    check("organization_settings_link_domains_check", sql`cardinality(${table.linkDomains}) <= 200`),
     tenantPolicy("organization_settings_tenant", table.organizationId),
   ],
 );
@@ -539,5 +564,121 @@ export const organizationInvitations = pgTable.withRLS(
       sql`length(${table.email}) BETWEEN 3 AND 254 AND ${table.email} ~ '^[^@[:space:]]+@[^@[:space:]]+$'`,
     ),
     tenantPolicy("organization_invitations_tenant", table.organizationId),
+  ],
+);
+
+// ---- Bases de connaissances ------------------------------------------------
+// Une base par agent (partagée dans l'organisation) ou par projet (privée à
+// son propriétaire). Noms, URL, contenus, passages et vecteurs sont chiffrés
+// avec la clé de l'organisation : la recherche se fait en mémoire après
+// déchiffrement, jamais dans la base.
+
+export const KNOWLEDGE_FILE_MAX_BYTES = 25 * 1024 * 1024;
+
+export const knowledgeBases = pgTable.withRLS(
+  "knowledge_bases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    agentId: uuid("agent_id"),
+    projectId: uuid("project_id"),
+    // Propriétaire d'une base de projet ; NULL pour une base d'agent.
+    userId: uuid("user_id"),
+    // Confidentiel : embeddings et réponses uniquement par un modèle local.
+    confidential: boolean("confidential").notNull().default(false),
+    // Incrémentée à chaque changement : invalide l'index en mémoire.
+    revision: integer("revision").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("knowledge_bases_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("knowledge_bases_agent_idx").on(table.agentId),
+    uniqueIndex("knowledge_bases_project_idx").on(table.projectId),
+    foreignKey({
+      name: "knowledge_bases_agent_fk",
+      columns: [table.agentId, table.organizationId],
+      foreignColumns: [agents.id, agents.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "knowledge_bases_project_fk",
+      columns: [table.projectId, table.organizationId, table.userId],
+      foreignColumns: [projects.id, projects.organizationId, projects.userId],
+    }).onDelete("cascade"),
+    check(
+      "knowledge_bases_owner_check",
+      sql`(${table.agentId} IS NOT NULL AND ${table.projectId} IS NULL AND ${table.userId} IS NULL)
+        OR (${table.agentId} IS NULL AND ${table.projectId} IS NOT NULL AND ${table.userId} IS NOT NULL)`,
+    ),
+    knowledgePolicy("knowledge_bases_tenant", table.organizationId, table.userId),
+  ],
+);
+
+export const knowledgeSources = pgTable.withRLS(
+  "knowledge_sources",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    baseId: uuid("base_id").notNull(),
+    // Recopié de la base par trigger (jamais fourni par l'application).
+    userId: uuid("user_id"),
+    createdBy: uuid("created_by").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull().default("pending"),
+    errorCode: text("error_code"),
+    mediaType: text("media_type"),
+    sizeBytes: integer("size_bytes").notNull(),
+    name: text("name").notNull(),
+    url: text("url"),
+    content: text("content").notNull(),
+    embeddingModel: text("embedding_model"),
+    chunkCount: integer("chunk_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("knowledge_sources_base_idx").on(table.baseId, table.createdAt),
+    index("knowledge_sources_status_idx").on(table.status),
+    unique("knowledge_sources_id_org_unique").on(table.id, table.organizationId),
+    foreignKey({
+      name: "knowledge_sources_base_fk",
+      columns: [table.baseId, table.organizationId],
+      foreignColumns: [knowledgeBases.id, knowledgeBases.organizationId],
+    }).onDelete("cascade"),
+    check("knowledge_sources_kind_check", sql`${table.kind} IN ('file', 'link')`),
+    check("knowledge_sources_status_check", sql`${table.status} IN ('pending', 'processing', 'ready', 'error')`),
+    check("knowledge_sources_error_check", sql`${table.errorCode} IS NULL OR ${table.errorCode} ~ '^[a-z_]{1,40}$'`),
+    check("knowledge_sources_media_check", sql`${table.mediaType} IS NULL OR length(${table.mediaType}) BETWEEN 3 AND 120`),
+    check("knowledge_sources_size_check", sql.raw(`size_bytes BETWEEN 0 AND ${KNOWLEDGE_FILE_MAX_BYTES}`)),
+    check("knowledge_sources_model_check", sql`${table.embeddingModel} IS NULL OR length(${table.embeddingModel}) BETWEEN 3 AND 160`),
+    check("knowledge_sources_url_check", sql`(${table.kind} = 'link') = (${table.url} IS NOT NULL)`),
+    knowledgePolicy("knowledge_sources_tenant", table.organizationId, table.userId),
+  ],
+);
+
+export const knowledgeChunks = pgTable.withRLS(
+  "knowledge_chunks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    baseId: uuid("base_id").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    // Recopié de la source par trigger.
+    userId: uuid("user_id"),
+    ordinal: integer("ordinal").notNull(),
+    content: text("content").notNull(),
+    // Vecteur float32 chiffré ; NULL si la base est en mots-clés seulement.
+    embedding: text("embedding"),
+  },
+  (table) => [
+    index("knowledge_chunks_base_idx").on(table.baseId),
+    index("knowledge_chunks_source_idx").on(table.sourceId, table.ordinal),
+    foreignKey({
+      name: "knowledge_chunks_source_fk",
+      columns: [table.sourceId, table.organizationId],
+      foreignColumns: [knowledgeSources.id, knowledgeSources.organizationId],
+    }).onDelete("cascade"),
+    check("knowledge_chunks_ordinal_check", sql`${table.ordinal} >= 0`),
+    knowledgePolicy("knowledge_chunks_tenant", table.organizationId, table.userId),
   ],
 );

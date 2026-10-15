@@ -65,5 +65,34 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: "false"
       MP_MAX_MESSAGES: "500"
 
+  # Antivirus des fichiers reçus. En développement, à lancer à la demande :
+  #   docker compose --profile antivirus up -d clamav
+  # puis ANTIVIRUS=clamav et CLAMAV_HOST=localhost dans .env.
+  # Premier démarrage : téléchargement des signatures (~200 Mo, 1 à 2 min).
+  clamav:
+    image: clamav/clamav:1.5.4_base@sha256:96b28b83eb72fb497c2400a94229844226e5fe4da9061fad1988092d9fcd88f3
+    container_name: snowfall-clamav
+    profiles: ["antivirus"]
+    restart: unless-stopped
+    entrypoint: ["/init-unprivileged"]
+    user: "100:101"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:uid=100,gid=101", "/var/log/clamav:uid=100,gid=101"]
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - snowfall_clamav_db:/var/lib/clamav
+      - ./infra/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./infra/clamav/freshclam.conf:/etc/clamav/freshclam.conf:ro
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5m
+      retries: 3
+
 volumes:
   snowfall_postgres_data:
+  snowfall_clamav_db:

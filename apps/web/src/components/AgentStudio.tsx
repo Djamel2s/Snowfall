@@ -15,6 +15,7 @@ import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
+import KnowledgePanel from './KnowledgePanel'
 
 type Props = {
   agent: Agent | null
@@ -236,6 +237,12 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
         rows={5}
         onChange={(event) => setInstructions(event.target.value)}
       />
+
+      {agent ? (
+        <KnowledgePanel kind="agents" ownerId={agent.id} />
+      ) : (
+        <p className="knowledge-empty">{t('knowledge.saveFirst')}</p>
+      )}
 
       {error && <p className="studio-error" role="alert">{error}</p>}
 

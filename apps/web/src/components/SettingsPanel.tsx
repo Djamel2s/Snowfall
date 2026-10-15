@@ -64,6 +64,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
   const [armed, setArmed] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const [error, setError] = useState('')
+  // Domaines autorisés en cours d'édition (null : valeur enregistrée).
+  const [domainsText, setDomainsText] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -312,6 +314,68 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
             >
               <Check size={14} />
               {saved === 'settings' ? t('settings.saved') : t('common.save')}
+            </button>
+          </section>
+
+          <section className="settings-card" aria-label={t('settings.knowledge')}>
+            <h3>{t('settings.knowledge')}</h3>
+            <label className="settings-field">
+              <span>{t('settings.embeddings')}</span>
+              <select
+                value={draft.embeddingProvider ?? ''}
+                onChange={(event) =>
+                  setDraft({ ...draft, embeddingProvider: (event.target.value || null) as OrganizationSettings['embeddingProvider'] })
+                }
+              >
+                <option value="">{t('settings.embeddingsNone')}</option>
+                {(organization?.embeddingProviders ?? [])
+                  .filter((id) => draft.allowedProviders.includes(id))
+                  .map((id) => (
+                    <option key={id} value={id}>
+                      {providerMeta[id].label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <p className="settings-hint">{t('settings.embeddingsHint')}</p>
+            <label className="settings-row settings-switch">
+              <span>{t('settings.links')}</span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={draft.linksEnabled}
+                onChange={(event) => setDraft({ ...draft, linksEnabled: event.target.checked })}
+              />
+            </label>
+            {draft.linksEnabled && (
+              <label className="settings-field">
+                <span>{t('settings.linkDomains')}</span>
+                <textarea
+                  rows={3}
+                  spellCheck={false}
+                  placeholder="docs.exemple.com"
+                  value={domainsText ?? draft.linkDomains.join('\n')}
+                  onChange={(event) => setDomainsText(event.target.value)}
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              className="settings-save"
+              onClick={() =>
+                void run('knowledge', async () => {
+                  const linkDomains =
+                    domainsText === null
+                      ? draft.linkDomains
+                      : [...new Set(domainsText.split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))]
+                  const saved = await api.saveOrganizationSettings({ ...draft, linkDomains })
+                  setDraft(saved)
+                  setDomainsText(null)
+                })
+              }
+            >
+              <Check size={14} />
+              {saved === 'knowledge' ? t('settings.saved') : t('common.save')}
             </button>
           </section>
 

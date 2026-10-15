@@ -4,6 +4,7 @@ import {
   api,
   type Agent,
   type AttachmentMeta,
+  type KnowledgeOwnerKind,
   type Message,
   type ModelSelection,
   type Preferences,
@@ -16,12 +17,13 @@ import { toAttachmentImage } from './lib/image'
 import './App.css'
 import './agents.css'
 import './workspace.css'
-import { ArrowUp, Check, Copy, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
+import { ArrowUp, BookOpen, Check, Copy, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
 import Sidebar, { type SidebarPanel } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
 import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
+import MessageSources from './components/MessageSources'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -37,6 +39,8 @@ type Conversation = {
   title: string
   agentId: string | null
   model: ModelSelection | null
+  /** Bases de connaissances consultées (agent, projet). */
+  knowledge: { agent: boolean; project: boolean }
   projectId: string | null
   messages: Message[]
   updatedAt: number
@@ -85,6 +89,7 @@ const toConversation = (item: {
   title: string
   agentId: string | null
   model?: ModelSelection | null
+  knowledge?: { agent: boolean; project: boolean }
   projectId: string | null
   updatedAt: string
 }): Conversation => ({
@@ -92,6 +97,7 @@ const toConversation = (item: {
   title: item.title,
   agentId: item.agentId,
   model: item.model ?? null,
+  knowledge: item.knowledge ?? { agent: true, project: true },
   projectId: item.projectId,
   messages: [],
   updatedAt: new Date(item.updatedAt).getTime(),
@@ -133,6 +139,8 @@ function App() {
   // Mention « @… » en cours dans le message : position du « @ » et texte tapé.
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
   const pickerRef = useRef<PickerControl>(null)
+  // Sources prêtes par base (« agents:<id> », « projects:<id> ») : affiche les bascules.
+  const [knowledgeCounts, setKnowledgeCounts] = useState<Record<string, number>>({})
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -144,6 +152,8 @@ function App() {
   const activeConversation = conversations.find((conversation) => conversation.id === activeId)
   const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
   const activeAgent = responder.kind === 'agent' ? responder.agent : null
+  const agentKnowledge = activeAgent ? (knowledgeCounts[`agents:${activeAgent.id}`] ?? 0) : 0
+  const projectKnowledge = activeConversation?.projectId ? (knowledgeCounts[`projects:${activeConversation.projectId}`] ?? 0) : 0
 
   const conversationIsEmpty = !activeConversation || activeConversation.messages.length === 0
   // Pièces jointes en attente de la conversation affichée uniquement.
@@ -262,6 +272,43 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
+
+  // Bases de connaissances de la conversation affichée (agent et projet).
+  const activeAgentId = activeAgent?.id ?? null
+  const activeProject = activeConversation?.projectId ?? null
+  useEffect(() => {
+    let cancelled = false
+    const owners: [KnowledgeOwnerKind, string][] = []
+    if (activeAgentId) owners.push(['agents', activeAgentId])
+    if (activeProject) owners.push(['projects', activeProject])
+    for (const [kind, id] of owners) {
+      api
+        .getKnowledge(kind, id)
+        .then((view) => {
+          if (cancelled) return
+          const ready = view.sources.filter((source) => source.status === 'ready').length
+          setKnowledgeCounts((current) => ({ ...current, [`${kind}:${id}`]: ready }))
+        })
+        .catch(() => undefined)
+    }
+    return () => {
+      cancelled = true
+    }
+    // Rechargé aussi à la fermeture du studio (documents ajoutés à l'agent).
+  }, [activeAgentId, activeProject, studioAgent, sidebarPanel])
+
+  async function toggleKnowledge(key: 'agent' | 'project') {
+    const conversation = activeConversation
+    if (!conversation) return
+    const next = { ...conversation.knowledge, [key]: !conversation.knowledge[key] }
+    updateConversation(conversation.id, (current) => ({ ...current, knowledge: next }))
+    try {
+      await api.updateConversation(conversation.id, { knowledge: { [key]: next[key] } })
+    } catch (cause) {
+      updateConversation(conversation.id, (current) => ({ ...current, knowledge: conversation.knowledge }))
+      fail(cause, 'error.send')
+    }
+  }
 
   // Recherche dans le contenu des messages (côté serveur, chiffré au repos).
   useEffect(() => {
@@ -902,7 +949,10 @@ function App() {
                           </div>
                         </form>
                       ) : message.role === 'assistant' ? (
-                        <Markdown source={message.content} />
+                        <>
+                          <Markdown source={message.content} />
+                          {message.sources?.length ? <MessageSources sources={message.sources} /> : null}
+                        </>
                       ) : (
                         message.content && <p>{message.content}</p>
                       )}
@@ -1028,6 +1078,36 @@ function App() {
                       onRemove={() => removePendingFile(file)}
                     />
                   ))}
+                </div>
+              )}
+              {(agentKnowledge > 0 || projectKnowledge > 0) && activeConversation && (
+                <div className="composer-knowledge">
+                  {agentKnowledge > 0 && (
+                    <button
+                      type="button"
+                      className={`knowledge-toggle ${activeConversation.knowledge.agent ? 'on' : ''}`}
+                      aria-pressed={activeConversation.knowledge.agent}
+                      disabled={!canWrite || sending}
+                      onClick={() => void toggleKnowledge('agent')}
+                    >
+                      <BookOpen size={12} />
+                      {t('knowledge.toggleAgent')}
+                      <small>{agentKnowledge}</small>
+                    </button>
+                  )}
+                  {projectKnowledge > 0 && (
+                    <button
+                      type="button"
+                      className={`knowledge-toggle ${activeConversation.knowledge.project ? 'on' : ''}`}
+                      aria-pressed={activeConversation.knowledge.project}
+                      disabled={!canWrite || sending}
+                      onClick={() => void toggleKnowledge('project')}
+                    >
+                      <BookOpen size={12} />
+                      {t('knowledge.toggleProject')}
+                      <small>{projectKnowledge}</small>
+                    </button>
+                  )}
                 </div>
               )}
               <div className="composer-toolbar">

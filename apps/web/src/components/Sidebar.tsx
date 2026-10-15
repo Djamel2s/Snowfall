@@ -24,6 +24,7 @@ import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AgentStudio from './AgentStudio'
 import SettingsPanel from './SettingsPanel'
+import KnowledgePanel from './KnowledgePanel'
 
 export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'settings'
 
@@ -507,6 +508,7 @@ export default function Sidebar(props: SidebarProps) {
                               {!historyLoading && filteredConversations.length === 0 && (
                                 <p className="empty-search child">{t('sidebar.emptyProject')}</p>
                               )}
+                              <KnowledgePanel kind="projects" ownerId={project.id} />
                             </div>
                           )}
                         </div>

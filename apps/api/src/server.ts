@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import dotenv from "dotenv";
@@ -76,6 +76,13 @@ import {
 import { createRouteKit } from "./routes/kit.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
+import { registerKnowledgeRoutes } from "./routes/knowledge.js";
+import { EmbeddingRegistry, type EmbeddingConfig, type EmbeddingProvider } from "./knowledge/embeddings.js";
+import { citationsOf, KnowledgeService, renderKnowledge, type ActiveBase, type Passage } from "./knowledge/service.js";
+import { PostgresKnowledgeStore } from "./knowledge/store.js";
+import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./knowledge/rewrite.js";
+import { HttpReranker } from "./knowledge/rerank.js";
+import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -133,6 +140,14 @@ export type AppDependencies = {
   preferences?: PreferencesStore;
   projects?: ProjectStore;
   attachments?: AttachmentStore;
+  /** Bases de connaissances (agents et projets). */
+  knowledge?: KnowledgeService;
+  /** Fournisseurs configurés pour les embeddings. */
+  embeddingProviders?: () => EmbeddingProvider[];
+  /** Antivirus des fichiers reçus (pièces jointes, bases de connaissances). */
+  scanner?: MalwareScanner;
+  /** Reformulation des questions de suivi pour la recherche (sinon : repli simple). */
+  rewriteQuery?: QueryRewriter;
   /** Remplace le routage par modèle (tests). */
   runChat?: ChatRunner;
 };
@@ -233,6 +248,8 @@ export function createAppServer(deps: AppDependencies) {
     projectId: z.uuid().nullable().optional(),
     agentId: z.uuid().nullable().optional(),
     model: modelSelectionSchema.nullable().optional(),
+    // Bases de connaissances consultées (agent, projet), modifiables à tout moment.
+    knowledge: z.object({ agent: z.boolean().optional(), project: z.boolean().optional() }).strict().optional(),
   }).strict()
     .refine((body) => Object.values(body).some((value) => value !== undefined))
     .refine((body) => !(body.agentId && body.model));
@@ -440,6 +457,9 @@ export function createAppServer(deps: AppDependencies) {
       { parseAs: "string", bodyLimit: 16_384 },
       (_request, body, done) => done(null, Object.fromEntries(new URLSearchParams(String(body)))),
     );
+    // Fichiers envoyés tels quels (pas de multipart). Taille bornée dès la
+    // lecture par la limite de chaque route (1 Mo par défaut).
+    api.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
     // Rapports de violation CSP envoyés par les navigateurs.
     api.addContentTypeParser(
       ["application/csp-report", "application/reports+json"],
@@ -590,7 +610,7 @@ export function createAppServer(deps: AppDependencies) {
       const body = updateConversationSchema.safeParse(request.body);
       if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
 
-      const { title, projectId, agentId, model } = body.data;
+      const { title, projectId, agentId, model, knowledge: knowledgeToggles } = body.data;
       const reselect = agentId !== undefined || model !== undefined;
       if (model && !(await isModelPermitted(user, model))) {
         return reply.code(400).send({ error: "Invalid request" });
@@ -604,6 +624,14 @@ export function createAppServer(deps: AppDependencies) {
           ...(title !== undefined ? { title } : {}),
           ...(projectId !== undefined ? { projectId } : {}),
           ...(reselect ? { selection: { agentId: agentId ?? null, model: model ?? null } } : {}),
+          ...(knowledgeToggles
+            ? {
+                knowledge: {
+                  ...(knowledgeToggles.agent !== undefined ? { agent: knowledgeToggles.agent } : {}),
+                  ...(knowledgeToggles.project !== undefined ? { project: knowledgeToggles.project } : {}),
+                },
+              }
+            : {}),
         });
         if (!conversation) return conversationNotFound(request, reply, user, params.data.id);
 
@@ -614,6 +642,9 @@ export function createAppServer(deps: AppDependencies) {
           details: {
             renamed: title !== undefined,
             moved: projectId !== undefined,
+            ...(knowledgeToggles
+              ? { agentKnowledge: conversation.knowledge.agent, projectKnowledge: conversation.knowledge.project }
+              : {}),
             ...(reselect
               ? {
                   agentId: conversation.agentId ?? "",
@@ -654,9 +685,13 @@ export function createAppServer(deps: AppDependencies) {
       projects: deps.projects,
       configuredProviders: async () =>
         (await models.catalog()).filter((provider) => provider.available).map((provider) => provider.id),
+      ...(deps.embeddingProviders ? { embeddingProviders: deps.embeddingProviders } : {}),
     });
 
-    if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments);
+    if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments, deps.scanner);
+    if (deps.knowledge) {
+      registerKnowledgeRoutes(api, kit, { knowledge: deps.knowledge, agents, canManageAgent, scanner: deps.scanner });
+    }
 
     api.get("/conversations/:id/messages", async (request, reply) => {
       const user = kit.principal(request);
@@ -723,6 +758,91 @@ export function createAppServer(deps: AppDependencies) {
       return { conversation, history, agent, selection: selectionFor(conversation, agent) };
     }
 
+    /** Bases de connaissances actives : celle de l'agent et/ou celle du projet. */
+    async function activeBases(user: AuthenticatedUser, conversation: ConversationSummary, agent: Agent | null) {
+      if (!deps.knowledge) return [];
+      const bases: ActiveBase[] = [];
+      if (agent && conversation.knowledge.agent) {
+        const base = await deps.knowledge.store.findBase(user, { kind: "agent", agentId: agent.id });
+        if (base) bases.push({ ...base, label: "agent" });
+      }
+      if (conversation.projectId && conversation.knowledge.project) {
+        const base = await deps.knowledge.store.findBase(user, { kind: "project", projectId: conversation.projectId });
+        if (base) bases.push({ ...base, label: "project" });
+      }
+      return bases;
+    }
+
+    /**
+     * Passages pertinents pour la question. Une base confidentielle n'est
+     * jamais transmise à un modèle hors de la plateforme : la génération est
+     * refusée (réponse envoyée ici) plutôt que de faire sortir ses extraits.
+     */
+    async function retrieveKnowledge(
+      request: FastifyRequest,
+      reply: FastifyReply,
+      user: AuthenticatedUser,
+      loaded: { conversation: ConversationSummary; agent: Agent | null; selection: ModelSelection | undefined },
+      provider: ProviderId | "echo",
+      query: { message: string; history: StoredMessage[] },
+    ): Promise<Passage[] | null> {
+      const bases = await activeBases(user, loaded.conversation, loaded.agent);
+      if (bases.length === 0) return [];
+      if (bases.some((base) => base.confidential) && provider !== "local" && provider !== "echo") {
+        await kit.record(request, user, {
+          eventType: "knowledge.confidential_denied",
+          outcome: "denied",
+          targetType: "conversation",
+          targetId: loaded.conversation.id,
+          details: { provider },
+        });
+        await reply.code(409).send({ error: "Local model required", reason: "confidential_requires_local" });
+        return null;
+      }
+      if (!query.message.trim()) return [];
+      try {
+        const turns: ChatTurn[] = query.history.slice(-HISTORY_TURNS).map((turn) => ({ role: turn.role, content: turn.content }));
+        const standalone = turns.length ? await standaloneQuery(request, user, loaded.selection, provider, turns, query.message) : null;
+        return await deps.knowledge!.retrieve(user, bases, { text: query.message, standalone });
+      } catch (error) {
+        // Base momentanément indisponible : la réponse se fait sans elle.
+        request.log.error({ err: error }, "Recherche dans la base de connaissances impossible");
+        return [];
+      }
+    }
+
+    /**
+     * Question de suivi rendue autonome pour la recherche, par le modèle de la
+     * conversation (consommation comptée) ; repli simple en cas d'échec.
+     */
+    async function standaloneQuery(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      selection: ModelSelection | undefined,
+      provider: ProviderId | "echo",
+      history: ChatTurn[],
+      message: string,
+    ) {
+      if (deps.rewriteQuery) {
+        try {
+          const rewritten = await deps.rewriteQuery({ selection, history, message });
+          if (rewritten) {
+            if (rewritten.usage) {
+              await deps.settings?.record(user, provider, rewritten.usage).catch(() => undefined);
+            }
+            return rewritten.query;
+          }
+        } catch (error) {
+          request.log.warn({ err: error }, "Reformulation de la question impossible, repli simple");
+        }
+      }
+      return heuristicStandalone(history, message);
+    }
+
+    /** Les passages précèdent la question, balisés comme des données. */
+    const withKnowledge = (input: { history: ChatTurn[]; message: string; images: ModelImage[] }, passages: Passage[]) =>
+      passages.length ? { ...input, message: `${renderKnowledge(passages)}\n\n${input.message}` } : input;
+
     api.post("/conversations/:id/messages", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
@@ -761,6 +881,9 @@ export function createAppServer(deps: AppDependencies) {
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
+      const passages = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior });
+      if (!passages) return reply;
+
       const context = prior.slice(-HISTORY_TURNS);
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
 
@@ -772,13 +895,14 @@ export function createAppServer(deps: AppDependencies) {
         agent,
         selection,
         provider: admitted.provider,
-        input: buildModelInput(context, { content, attachmentIds }, files),
+        input: withKnowledge(buildModelInput(context, { content, attachmentIds }, files), passages),
         eventType: "message.create",
-        details: { attachments: attachmentIds.length, edited: Boolean(editMessageId) },
+        details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: passages.length },
         persist: async (answer) => {
           const exchange = await conversationStore.appendExchange(user, params.data.id, content, answer, {
             attachmentIds,
             ...(editMessageId ? { replaceFromMessageId: editMessageId } : {}),
+            ...(passages.length ? { sources: citationsOf(passages) } : {}),
           });
           return exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null;
         },
@@ -809,6 +933,12 @@ export function createAppServer(deps: AppDependencies) {
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
+      const passages = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, {
+        message: question.content,
+        history: history.slice(0, -2),
+      });
+      if (!passages) return reply;
+
       const context = history.slice(0, -2).slice(-HISTORY_TURNS);
       const attachmentIds = question.attachments?.map((file) => file.id) ?? [];
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
@@ -821,11 +951,17 @@ export function createAppServer(deps: AppDependencies) {
         agent,
         selection,
         provider: admitted.provider,
-        input: buildModelInput(context, { content: question.content, attachmentIds }, files),
+        input: withKnowledge(buildModelInput(context, { content: question.content, attachmentIds }, files), passages),
         eventType: "message.regenerate",
-        details: { attachments: attachmentIds.length },
+        details: { attachments: attachmentIds.length, passages: passages.length },
         persist: async (answer) => {
-          const assistantMessage = await conversationStore.replaceLastAssistant(user, params.data.id, last.id, answer);
+          const assistantMessage = await conversationStore.replaceLastAssistant(
+            user,
+            params.data.id,
+            last.id,
+            answer,
+            passages.length ? citationsOf(passages) : undefined,
+          );
           return assistantMessage ? { assistantMessage } : null;
         },
       });
@@ -892,6 +1028,12 @@ export function createAppServer(deps: AppDependencies) {
 
       const input = await parseAgentInput(request, user);
       if (!input) return reply.code(400).send({ error: "Invalid request" });
+
+      // Base confidentielle : l'agent ne peut pas passer à un modèle hors plateforme.
+      if (input.provider !== "local" && deps.knowledge) {
+        const base = await deps.knowledge.store.findBase(user, { kind: "agent", agentId: params.data.id });
+        if (base?.confidential) return reply.code(409).send({ error: "Local model required", reason: "agent_requires_local" });
+      }
 
       const agent = await store.update(user, params.data.id, input);
       if (!agent) return reply.code(404).send({ error: "Not found" });
@@ -1170,10 +1312,40 @@ export function createProductionServer() {
   });
   const keyring = new OrganizationKeyring(createKeyEncryption(config.kms, masterKey));
 
+  // Embeddings : par fournisseur configuré ; l'organisation choisit lequel.
+  const embeddingConfig: EmbeddingConfig = {};
+  if (providers.mistral) embeddingConfig.mistral = { settings: providers.mistral, model: config.knowledge.embeddingModels.mistral };
+  if (providers.openai) embeddingConfig.openai = { settings: providers.openai, model: config.knowledge.embeddingModels.openai };
+  if (providers.google) embeddingConfig.google = { settings: providers.google, model: config.knowledge.embeddingModels.google };
+  if (providers.local && config.knowledge.embeddingModels.local) {
+    embeddingConfig.local = { settings: providers.local, model: config.knowledge.embeddingModels.local };
+  }
+  const embeddings = new EmbeddingRegistry(embeddingConfig);
+  const scanner = config.antivirus ? new ClamdScanner(config.antivirus) : undefined;
+  const settingsStore = new PostgresSettingsStore(pool);
+  // Le logger n'existe qu'après création de l'application : branché par référence.
+  const knowledgeLog: { current: FastifyBaseLogger | null } = { current: null };
+  const knowledge = new KnowledgeService({
+    store: new PostgresKnowledgeStore(pool, keyring),
+    embeddings,
+    settings: settingsStore,
+    audit,
+    log: () => knowledgeLog.current!,
+    linksEnabled: config.knowledge.links,
+    reranker: config.knowledge.rerank ? new HttpReranker(config.knowledge.rerank) : null,
+    scanner,
+    fetchProxy: config.egressProxy,
+    rerankMinScore: config.knowledge.rerank?.minScore ?? 0,
+  });
+
   const app = createAppServer({
     models,
     agents: new PostgresAgentStore(pool, keyring),
-    settings: new PostgresSettingsStore(pool),
+    settings: settingsStore,
+    knowledge,
+    embeddingProviders: () => embeddings.available(),
+    rewriteQuery: createQueryRewriter((selection) => models.runner(selection)),
+    ...(scanner ? { scanner } : {}),
     members: new PostgresMemberStore(pool),
     preferences: new PostgresPreferencesStore(pool),
     projects: new PostgresProjectStore(pool, keyring),
@@ -1205,6 +1377,7 @@ export function createProductionServer() {
   if (config.audit.stdout) sinks.push(new LoggerAuditSink(app.log));
   if (config.audit.siem) sinks.push(new HttpAuditForwarder(config.audit.siem, app.log));
   auditRef.current = new FanoutAuditLog(new PostgresAuditLog(pool, app.log), sinks);
+  knowledgeLog.current = app.log;
 
   // Échec franc au démarrage si des migrations manquent, plutôt que des 500 plus tard.
   app.addHook("onReady", async () => {
@@ -1214,6 +1387,8 @@ export function createProductionServer() {
         `Base de données non migrée (${drift.join(", ")}). Lance "npm run db:migrate" dans apps/api.`,
       );
     }
+    // Imports interrompus par le dernier arrêt : repris en tâche de fond.
+    knowledge.recover().catch((error: unknown) => app.log.error({ err: error }, "Reprise des imports impossible"));
   });
 
   app.log.info(
@@ -1224,6 +1399,10 @@ export function createProductionServer() {
         : "echo",
       kms: config.kms.provider,
       siem: Boolean(config.audit.siem),
+      embeddings: embeddings.available(),
+      knowledgeLinks: config.knowledge.links,
+      rerank: config.knowledge.rerank?.model ?? "off",
+      antivirus: config.antivirus ? `clamav://${config.antivirus.host}:${config.antivirus.port}` : "off",
     },
     "Fournisseurs LLM configurés",
   );

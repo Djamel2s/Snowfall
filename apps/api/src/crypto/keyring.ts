@@ -69,6 +69,31 @@ export class OrganizationKeyring {
     return open(key, match[2]!, aad);
   }
 
+  /**
+   * Chiffrement en série (passages d'un document) : la clé active n'est lue
+   * qu'une fois, chaque valeur garde son IV aléatoire et son AAD.
+   */
+  async sealer(client: PoolClient, organizationId: string) {
+    const { version, key } = await this.activeKey(client, organizationId);
+    return (plaintext: string | Buffer, aad: string) => `${version}:${seal(key, plaintext, aad)}`;
+  }
+
+  /** Déchiffrement en série : les versions de clé rencontrées sont mises en cache. */
+  async opener(client: PoolClient, organizationId: string) {
+    const keys = new Map<number, Buffer>();
+    return async (stored: string, aad: string) => {
+      const match = FIELD_PATTERN.exec(stored);
+      if (!match) throw new Error("UNENCRYPTED_VALUE");
+      const version = Number(match[1]);
+      let key = keys.get(version);
+      if (!key) {
+        key = await this.keyVersion(client, organizationId, version);
+        keys.set(version, key);
+      }
+      return open(key, match[2]!, aad);
+    };
+  }
+
   private context(organizationId: string, version: number) {
     return organizationKeyContext(organizationId, version);
   }

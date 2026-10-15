@@ -97,3 +97,51 @@ Keycloak appelle `POST /auth/backchannel-logout` de l'API (réseau interne en
 production : `http://api:3001`, en développement `host.docker.internal:3001`).
 Une session fermée côté Keycloak (administrateur, désactivation du compte,
 déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
+
+## 9. Bases de connaissances
+
+- **Migrations** : `npm run db:migrate` (tables `knowledge_*`, triggers, file
+  d'imports). Le démarrage refuse une base non migrée.
+- **Embeddings** : par défaut aucun (recherche par mots-clés, rien ne sort).
+  Un admin choisit le fournisseur dans *Réglages → Bases de connaissances*,
+  parmi ceux configurés (`*_API_KEY`) et autorisés. Pour des embeddings
+  locaux : `LOCAL_LLM_BASE_URL` + `LOCAL_EMBEDDING_MODEL` (ex. `bge-m3` avec
+  Ollama : `ollama pull bge-m3`).
+- **Changement de modèle d'embeddings** : les sources existantes restent
+  trouvables par mots-clés ; « Réindexer » une source recalcule ses vecteurs.
+- **Bases confidentielles** : exigent un modèle local pour répondre (et pour
+  les embeddings) ; un refus est tracé `knowledge.confidential_denied`.
+- **Liens** : en production, faire sortir l'API par un proxy filtrant, ou
+  couper l'import avec `KNOWLEDGE_LINKS=off`. Les refus SSRF sont tracés
+  `knowledge.link_denied`.
+- **Reprise** : un import interrompu (redémarrage) reprend automatiquement au
+  démarrage suivant.
+- **Qualité de la recherche** : `npm test` exécute le jeu d'évaluation
+  (`retrieval.eval.test.ts`) et échoue si le rappel baisse. Pour un
+  reclassement, servir par exemple `BAAI/bge-reranker-v2-m3` avec vLLM
+  (`vllm serve BAAI/bge-reranker-v2-m3 --task score`) ou Text Embeddings
+  Inference, puis renseigner `RERANK_BASE_URL` (et `RERANK_API=tei` pour TEI).
+
+## 10. Antivirus (ClamAV)
+
+- **Production** : service `clamav` de `compose.prod.yaml`, toujours actif. Le
+  premier démarrage télécharge les signatures (quelques minutes) ; l'API attend
+  qu'il soit sain. Si ClamAV tombe, les dépôts de fichiers sont refusés (503) :
+  c'est voulu.
+- **Développement** : `docker compose --profile antivirus up -d clamav`, puis
+  `ANTIVIRUS=clamav` et `CLAMAV_HOST=localhost` dans `.env`.
+- **Test** : déposer le fichier de test EICAR (texte standard, inoffensif) ; le
+  refus apparaît dans l'audit sous `security.malware_detected`.
+- **Mémoire** : ClamAV utilise ~1,5 Go avec les signatures (limite 3 Go).
+
+## 11. Proxy de sortie (Squid)
+
+- Seule sortie Internet de l'API et de ClamAV (réseau `backend` interne).
+- **Domaines autorisés** : `infra/egress/allowed-domains.txt` (ajouter le nom
+  public de Keycloak de `OIDC_ISSUER`, le SIEM et Vault s'ils sont externes) ;
+  sites pour l'import de liens : `infra/egress/knowledge-domains.txt`, ou tout
+  le web public en décommentant `http_access allow backend` dans `squid.conf`.
+  Les destinations internes restent refusées dans tous les cas.
+- Appliquer une modification : `docker compose -f compose.yaml -f compose.prod.yaml restart egress`.
+- **Diagnostic** : `docker compose logs egress` (une ligne par connexion,
+  `TCP_DENIED/403` pour un refus).

@@ -1,6 +1,9 @@
 // Implémentations en mémoire pour les tests de routes (aucune base requise).
 import type { AttachmentMeta } from "../attachments/store.js";
 import type { SessionStore } from "../auth/session-store.js";
+import type { TenantContext } from "../db/tenant.js";
+import type { ChunkInput, KnowledgeBase, KnowledgeOwner, KnowledgeSource, KnowledgeStore } from "../knowledge/store.js";
+import { contextHeader } from "../knowledge/search.js";
 import {
   normalizeForSearch,
   type ConversationOwner,
@@ -51,6 +54,7 @@ export function createFakeConversationStore(): ConversationStore & {
         title,
         agentId: agentId ?? null,
         model: model ?? null,
+        knowledge: { agent: true, project: true },
         projectId: projectId ?? null,
         createdAt: at,
         updatedAt: at,
@@ -71,6 +75,7 @@ export function createFakeConversationStore(): ConversationStore & {
         conversation.agentId = changes.selection.agentId;
         conversation.model = changes.selection.model;
       }
+      if (changes.knowledge) conversation.knowledge = { ...conversation.knowledge, ...changes.knowledge };
       if (changes.title !== undefined) conversation.title = changes.title;
       if (changes.projectId !== undefined) conversation.projectId = changes.projectId;
       return summary(conversation);
@@ -109,16 +114,18 @@ export function createFakeConversationStore(): ConversationStore & {
       const attached = (options.attachmentIds ?? []).map((fileId) => files.get(fileId)).filter((file) => !!file);
       if (attached.length) userMessage.attachments = attached.map((file) => ({ ...file, messageId: userMessage.id }));
       const assistantMessage = message("assistant", assistantContent);
+      if (options.sources?.length) assistantMessage.sources = options.sources;
       list.push(userMessage, assistantMessage);
       conversations.get(id)!.updatedAt = now();
       return { userMessage, assistantMessage };
     },
 
-    replaceLastAssistant: async (owner, id, previousAssistantId, content) => {
+    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources) => {
       if (!owns(owner, id)) return null;
       const list = messages.get(id)!;
       if (list.at(-1)?.id !== previousAssistantId) return null;
       const replacement = message("assistant", content);
+      if (sources?.length) replacement.sources = sources;
       list.splice(-1, 1, replacement);
       return replacement;
     },
@@ -133,5 +140,161 @@ export function emptySessionStore(): SessionStore {
     revoke: async () => null,
     revokeIdpSession: async () => [],
     purgeExpired: async () => 0,
+  };
+}
+
+/** Base de connaissances en mémoire (mêmes règles de visibilité que la RLS). */
+export function createFakeKnowledgeStore(): KnowledgeStore {
+  type Base = KnowledgeBase & { organizationId: string; agentId: string | null; projectId: string | null; userId: string | null };
+  type Source = KnowledgeSource & { organizationId: string; bytes: Buffer; createdBy: string };
+  const bases = new Map<string, Base>();
+  const sources = new Map<string, Source>();
+  const chunks = new Map<string, ChunkInput[] & { model?: string | null }>();
+  const now = () => new Date().toISOString();
+
+  const visible = (tenant: TenantContext, base: Base | undefined): base is Base =>
+    !!base && base.organizationId === tenant.organizationId && (base.userId === null || base.userId === tenant.userId);
+  const baseOf = (tenant: TenantContext, id: string) => {
+    const base = bases.get(id);
+    return visible(tenant, base) ? base : null;
+  };
+  const sourceOf = (tenant: TenantContext, id: string) => {
+    const source = sources.get(id);
+    return source && baseOf(tenant, source.baseId) ? source : null;
+  };
+  const publicBase = (base: Base): KnowledgeBase => ({ id: base.id, owner: base.owner, confidential: base.confidential, revision: base.revision });
+  const publicSource = ({ organizationId: _o, bytes: _b, createdBy: _c, ...source }: Source): KnowledgeSource => ({ ...source });
+  const bump = (baseId: string) => {
+    const base = bases.get(baseId);
+    if (base) base.revision++;
+  };
+  const find = (tenant: TenantContext, owner: KnowledgeOwner) =>
+    [...bases.values()].find(
+      (base) =>
+        visible(tenant, base) &&
+        (owner.kind === "agent" ? base.agentId === owner.agentId : base.projectId === owner.projectId && base.userId === tenant.userId),
+    ) ?? null;
+
+  return {
+    findBase: async (tenant, owner) => {
+      const base = find(tenant, owner);
+      return base ? publicBase(base) : null;
+    },
+    ensureBase: async (tenant, owner) => {
+      const existing = find(tenant, owner);
+      if (existing) return publicBase(existing);
+      // Projet d'un autre membre : invisible, comme sous RLS.
+      const foreign = owner.kind === "project" && [...bases.values()].some((base) => base.projectId === owner.projectId);
+      if (foreign) throw new Error("PROJECT_NOT_FOUND");
+      const base: Base = {
+        id: crypto.randomUUID(),
+        owner: owner.kind,
+        confidential: false,
+        revision: 0,
+        organizationId: tenant.organizationId,
+        agentId: owner.kind === "agent" ? owner.agentId : null,
+        projectId: owner.kind === "project" ? owner.projectId : null,
+        userId: owner.kind === "project" ? tenant.userId : null,
+      };
+      bases.set(base.id, base);
+      return publicBase(base);
+    },
+    setConfidential: async (tenant, baseId, confidential) => {
+      const base = baseOf(tenant, baseId);
+      if (!base) return null;
+      base.confidential = confidential;
+      base.revision++;
+      return publicBase(base);
+    },
+    listSources: async (tenant, baseId) =>
+      [...sources.values()].filter((source) => source.baseId === baseId && sourceOf(tenant, source.id)).map(publicSource),
+    addSource: async (tenant, baseId, input) => {
+      if (!baseOf(tenant, baseId)) throw new Error("KNOWLEDGE_BASE_NOT_FOUND");
+      const source: Source = {
+        id: crypto.randomUUID(),
+        baseId,
+        kind: input.kind,
+        status: "pending",
+        errorCode: null,
+        name: input.name,
+        url: input.url ?? null,
+        mediaType: input.mediaType,
+        size: input.bytes.length,
+        chunkCount: 0,
+        embeddingModel: null,
+        createdAt: now(),
+        updatedAt: now(),
+        organizationId: tenant.organizationId,
+        bytes: input.bytes,
+        createdBy: tenant.userId,
+      };
+      sources.set(source.id, source);
+      bump(baseId);
+      return publicSource(source);
+    },
+    getSource: async (tenant, sourceId) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source) return null;
+      const base = bases.get(source.baseId)!;
+      return { ...publicSource(source), base: publicBase(base), agentId: base.agentId };
+    },
+    sourceContent: async (tenant, sourceId) => {
+      const source = sourceOf(tenant, sourceId);
+      return source ? { name: source.name, url: source.url, mediaType: source.mediaType, bytes: source.bytes } : null;
+    },
+    updateFetched: async (tenant, sourceId, input) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source) return;
+      Object.assign(source, { name: input.name, mediaType: input.mediaType, bytes: input.bytes, size: input.bytes.length });
+    },
+    setStatus: async (tenant, sourceId, status, errorCode = null) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source) return;
+      Object.assign(source, { status, errorCode, updatedAt: now() });
+      bump(source.baseId);
+    },
+    replaceChunks: async (tenant, sourceId, items, embeddingModel) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source) return false;
+      chunks.set(sourceId, items);
+      Object.assign(source, { status: "ready", errorCode: null, chunkCount: items.length, embeddingModel });
+      bump(source.baseId);
+      return true;
+    },
+    deleteSource: async (tenant, sourceId) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source) return false;
+      sources.delete(sourceId);
+      chunks.delete(sourceId);
+      bump(source.baseId);
+      return true;
+    },
+    baseRevision: async (tenant, baseId) => baseOf(tenant, baseId)?.revision ?? null,
+    load: async (tenant, baseId) => {
+      const base = baseOf(tenant, baseId);
+      if (!base) return null;
+      const ready = [...sources.values()].filter((source) => source.baseId === baseId && source.status === "ready");
+      return {
+        base: publicBase(base),
+        sources: new Map(ready.map((source) => [source.id, { name: source.name, url: source.url }])),
+        chunks: ready.flatMap((source) =>
+          (chunks.get(source.id) ?? []).map((chunk, ordinal) => ({
+            id: `${source.id}:${ordinal}`,
+            sourceId: source.id,
+            ordinal,
+            text: chunk.text,
+            heading: chunk.heading ?? null,
+            page: chunk.page ?? null,
+            context: contextHeader(source.name, chunk.heading),
+            vector: chunk.vector,
+            model: source.embeddingModel,
+          })),
+        ),
+      };
+    },
+    pending: async () =>
+      [...sources.values()]
+        .filter((source) => source.status === "pending" || source.status === "processing")
+        .map((source) => ({ sourceId: source.id, organizationId: source.organizationId, createdBy: source.createdBy })),
   };
 }

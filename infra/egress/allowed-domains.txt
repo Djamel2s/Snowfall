@@ -1,0 +1,15 @@
+# Domaines joignables par la plateforme (un par ligne ; « .exemple.com »
+# couvre aussi les sous-domaines). Tout le reste est refusé.
+
+# Fournisseurs d'IA (retirer ceux qui ne sont pas utilisés).
+api.mistral.ai
+api.openai.com
+api.anthropic.com
+generativelanguage.googleapis.com
+
+# Signatures antivirus (freshclam).
+.clamav.net
+
+# À compléter pour votre déploiement :
+# - le nom public de Keycloak (OIDC_ISSUER), ex. auth.exemple.com
+# - le SIEM (SIEM_WEBHOOK_URL) et Vault s'ils sont hors du réseau interne

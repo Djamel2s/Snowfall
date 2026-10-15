@@ -268,6 +268,7 @@ describe("API HTTP : conversations", () => {
       outputTokens: 2,
       attachments: 0,
       edited: false,
+      passages: 0,
       partial: false,
     });
   });

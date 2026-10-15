@@ -66,10 +66,16 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
         allowedProviders: ["mistral", "anthropic"],
         monthlyTokenLimit: 10_000,
         providerTokenLimits: { anthropic: 2_000 },
+        embeddingProvider: "mistral",
+        linksEnabled: false,
+        linkDomains: ["docs.example.com"],
       });
       const saved = await settings.get(tenant(memberA));
       assert.deepEqual(saved.allowedProviders, ["mistral", "anthropic"]);
       assert.deepEqual(saved.providerTokenLimits, { anthropic: 2_000 });
+      assert.equal(saved.embeddingProvider, "mistral");
+      assert.equal(saved.linksEnabled, false);
+      assert.deepEqual(saved.linkDomains, ["docs.example.com"]);
       assert.equal((await settings.get(tenant(memberB, orgB))).monthlyTokenLimit, null);
     });
 

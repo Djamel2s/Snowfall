@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { organizationRoles } from "../auth/auth.js";
+import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
 import type { ProjectStore } from "../projects/store.js";
 import { MemberRuleError, type MemberStore } from "../workspace/members.js";
@@ -15,6 +16,8 @@ export type WorkspaceDependencies = {
   projects?: ProjectStore | undefined;
   /** Fournisseurs configurés sur la plateforme (clé d'API présente). */
   configuredProviders: () => Promise<ProviderId[]>;
+  /** Fournisseurs configurés pour les embeddings. */
+  embeddingProviders?: () => EmbeddingProvider[];
 };
 
 const uuidParams = z.object({ id: z.uuid() });
@@ -27,6 +30,16 @@ const settingsSchema = z.object({
   allowedProviders: z.array(z.enum(providerIds)).max(providerIds.length),
   monthlyTokenLimit: tokenLimit.nullable(),
   providerTokenLimits: z.partialRecord(z.enum(providerIds), tokenLimit),
+  // Champs facultatifs : absents, la valeur enregistrée est conservée.
+  embeddingProvider: z.enum(embeddingProviders).nullable().optional(),
+  linksEnabled: z.boolean().optional(),
+  linkDomains: z
+    .array(
+      z.string().trim().toLowerCase().max(253)
+        .regex(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/),
+    )
+    .max(200)
+    .optional(),
 }).strict();
 
 const preferencesSchema = z.object({
@@ -98,6 +111,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         },
         settings: current,
         configuredProviders: configured,
+        embeddingProviders: deps.embeddingProviders?.() ?? [],
       };
     });
 
@@ -109,10 +123,23 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       const body = settingsSchema.safeParse(request.body);
       if (!body.success) return reply.code(400).send({ error: "Invalid request" });
 
+      const current = await settings.get(user);
+      const embeddingProvider = body.data.embeddingProvider === undefined ? current.embeddingProvider : body.data.embeddingProvider;
+      // Embeddings : uniquement par un fournisseur configuré et autorisé.
+      if (
+        embeddingProvider &&
+        (!(deps.embeddingProviders?.() ?? []).includes(embeddingProvider) ||
+          !body.data.allowedProviders.includes(embeddingProvider))
+      ) {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
       const saved = await settings.update(user, {
         allowedProviders: [...new Set(body.data.allowedProviders)],
         monthlyTokenLimit: body.data.monthlyTokenLimit,
         providerTokenLimits: body.data.providerTokenLimits,
+        embeddingProvider,
+        linksEnabled: body.data.linksEnabled ?? current.linksEnabled,
+        linkDomains: body.data.linkDomains ? [...new Set(body.data.linkDomains)] : current.linkDomains,
       });
       await kit.record(request, user, {
         eventType: "organization.settings_update",
@@ -121,6 +148,9 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         details: {
           allowedProviders: saved.allowedProviders.join(","),
           monthlyTokenLimit: saved.monthlyTokenLimit ?? 0,
+          embeddingProvider: saved.embeddingProvider ?? "",
+          linksEnabled: saved.linksEnabled,
+          linkDomains: saved.linkDomains.length,
         },
       });
       return { settings: saved };

@@ -1,0 +1,6 @@
+# Sites autorisés pour l'import de liens dans les bases de connaissances (un
+# par ligne ; « .exemple.com » couvre les sous-domaines). Pour ouvrir tout le
+# web public, voir la règle « http_access allow backend » dans squid.conf.
+# Exemples :
+# .cnil.fr
+# .legifrance.gouv.fr
