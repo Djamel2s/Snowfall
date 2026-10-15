@@ -534,25 +534,54 @@
   animation: welcome-agent-in .6s cubic-bezier(.2, .8, .2, 1) both;
 }
 
-.welcome-agent-stage {
+.composer { position: relative; }
+
+.composer-peek {
   position: absolute;
-  top: 50%;
-  right: calc(100% + 26px);
-  display: grid;
-  place-items: center;
-  transform: translateY(-50%);
+  bottom: 100%;
+  left: 0px;
+  width: 150px;
+  pointer-events: none;
 }
 
-/* Halo derrière l'alien, qui respire doucement. */
-.welcome-agent-halo {
+.composer-peek-window {
+  height: 110px;
+  overflow: hidden;
+  animation: composer-peek-in .7s cubic-bezier(.2, .9, .25, 1.15) .15s both;
+}
+
+.composer-peek-window .agent-avatar {
+  display: block;
+  animation: composer-peek-bob 4.5s ease-in-out 1s infinite;
+}
+
+.composer-peek-halo {
   position: absolute;
   z-index: -1;
-  width: 150%;
-  height: 150%;
+  top: -40px;
+  left: 40%;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(142, 201, 255, .26) 0%, rgba(120, 160, 255, .1) 42%, transparent 70%);
-  filter: blur(6px);
-  animation: studio-halo 5s ease-in-out infinite;
+  background: radial-gradient(ellipse, rgba(142, 201, 255, .24) 0%, rgba(120, 160, 255, .08) 45%, transparent 70%);
+  filter: blur(50px);
+  transform: translateX(-50%);
+}
+
+.composer-peek .alien-head { animation: alien-tilt 6s ease-in-out infinite; }
+.composer-peek .alien-eyes { animation: alien-blink 4.2s infinite; }
+.composer-peek .alien-ufo { animation: alien-ufo 3s ease-in-out infinite; }
+
+@keyframes composer-peek-in {
+  from { opacity: 0; transform: translateY(46px); }
+}
+
+@keyframes composer-peek-bob {
+  50% { transform: translateY(4px); }
+}
+
+@media (max-width: 640px) {
+  .composer-peek { left: 0px; width: 110px; }
 }
 
 .welcome-agent-text {
@@ -565,11 +594,6 @@
 
 @keyframes welcome-agent-in {
   from { opacity: 0; transform: translateY(10px); }
-}
-
-@media (max-width: 640px) {
-  /* Écran étroit : l'alien repasse au-dessus du texte. */
-  .welcome-agent-stage { position: static; transform: none; }
 }
 
 .welcome-agent-model {
@@ -708,7 +732,12 @@
   .studio-stage .agent-avatar,
   .welcome-agent .agent-avatar,
   .welcome-agent-hero,
-  .welcome-agent-halo,
+  .composer-peek-window,
+  .composer-peek-window .agent-avatar,
+  .composer-peek-halo,
+  .composer-peek .alien-head,
+  .composer-peek .alien-eyes,
+  .composer-peek .alien-ufo,
   .alien-head,
   .alien-eyes,
   .alien-ufo { animation: none; }

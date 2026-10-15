@@ -471,6 +471,12 @@
   -webkit-text-fill-color: transparent;
 }
 
+.welcome h1 > .welcome-brand {
+  background: linear-gradient(100deg, #7fa9dd 0%, #a7c9f5 50%, #5f7393 100%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
 .welcome-description {
   max-width: 405px;
   margin: 17px 0 30px;

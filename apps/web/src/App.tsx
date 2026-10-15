@@ -740,13 +740,8 @@ function App() {
               <section className="welcome welcome-agent">
                 <div className="welcome-agent-hero">
                   <div className="welcome-agent-text">
-                    {/* Accroché à gauche du texte : n'entre pas dans le centrage. */}
-                    <div className="welcome-agent-stage">
-                      <span className="welcome-agent-halo" aria-hidden="true" />
-                      <AgentAvatar avatar={activeAgent.avatar} size={132} mood="hello" />
-                    </div>
                     <h1>
-                      Snowfall
+                      <span className="welcome-brand">Snowfall</span>
                       <br />
                       <span>{activeAgent.name}</span>
                     </h1>
@@ -760,7 +755,7 @@ function App() {
             ) : conversationIsEmpty ? (
               <section className="welcome">
                 <h1>
-                  Snowfall
+                  <span className="welcome-brand">Snowfall</span>
                   <br />
                   <span>{t('chat.workspace')}</span>
                 </h1>
@@ -909,6 +904,14 @@ function App() {
             )}
 
             <div className="composer">
+              {conversationIsEmpty && activeAgent && !historyLoading && !messagesLoading && (
+                <div className="composer-peek" aria-hidden="true">
+                  <span className="composer-peek-halo" />
+                  <div className="composer-peek-window">
+                    <AgentAvatar avatar={activeAgent.avatar} size={120} mood="hello" />
+                  </div>
+                </div>
+              )}
               {activeFiles.length > 0 && (
                 <div className="composer-attachments">
                   {activeFiles.map((file) => (
