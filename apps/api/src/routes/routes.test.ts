@@ -313,20 +313,28 @@ describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer
         return { content: "jamais", model: "fake" };
       },
     });
-    t.after(() => app.close());
+    t.after(async () => {
+      app.server.closeAllConnections();
+      await app.close();
+    });
     const conversation = await store.create(member);
     const address = await app.listen({ port: 0, host: "127.0.0.1" });
 
-    const controller = new AbortController();
     const response = await fetch(`${address}/conversations/${conversation.id}/messages`, {
       method: "POST",
       headers: { origin: ORIGIN, "content-type": "application/json" },
       body: JSON.stringify({ content: "Explique" }),
-      signal: controller.signal,
     });
     const reader = response.body!.getReader();
     await reader.read();
-    controller.abort();
+    // Fermer la connexion ne suffit plus (exécution durable) : « arrêter » est explicite.
+    const cancelled = await fetch(`${address}/conversations/${conversation.id}/run/cancel`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(cancelled.status, 202);
+    await reader.cancel();
 
     for (let attempt = 0; attempt < 50 && recorded.length === 0; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 20));

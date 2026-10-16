@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import { withTenant, type TenantContext } from "../db/tenant.js";
 import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
+import { defaultOrganizationTools, knownTools, type ToolId } from "../agent/catalog.js";
 
 export type OrganizationSettings = {
   allowedProviders: ProviderId[];
@@ -14,6 +15,8 @@ export type OrganizationSettings = {
   linksEnabled: boolean;
   /** Domaines autorisés pour les liens ; vide = tout domaine public. */
   linkDomains: string[];
+  /** Outils d'agent disponibles dans l'organisation. */
+  tools: ToolId[];
 };
 
 export const defaultSettings: OrganizationSettings = {
@@ -23,6 +26,7 @@ export const defaultSettings: OrganizationSettings = {
   embeddingProvider: null,
   linksEnabled: true,
   linkDomains: [],
+  tools: defaultOrganizationTools,
 };
 
 export type UsageTotals = { inputTokens: number; outputTokens: number };
@@ -80,6 +84,7 @@ type SettingsRow = {
   embedding_provider: string | null;
   links_enabled: boolean;
   link_domains: string[];
+  enabled_tools: string[];
 };
 
 function fromRow(row: SettingsRow | undefined): OrganizationSettings {
@@ -96,6 +101,7 @@ function fromRow(row: SettingsRow | undefined): OrganizationSettings {
     embeddingProvider: embeddingProviders.find((id) => id === row.embedding_provider) ?? null,
     linksEnabled: row.links_enabled,
     linkDomains: row.link_domains,
+    tools: knownTools(row.enabled_tools),
   };
 }
 
@@ -110,7 +116,7 @@ export class PostgresSettingsStore implements SettingsStore {
   private async read(client: PoolClient, tenant: TenantContext) {
     const result = await client.query<SettingsRow>(
       `SELECT allowed_providers, monthly_token_limit, provider_token_limits,
-              embedding_provider, links_enabled, link_domains
+              embedding_provider, links_enabled, link_domains, enabled_tools
        FROM organization_settings WHERE organization_id = $1`,
       [tenant.organizationId],
     );
@@ -126,8 +132,8 @@ export class PostgresSettingsStore implements SettingsStore {
       await client.query(
         `INSERT INTO organization_settings
            (organization_id, allowed_providers, monthly_token_limit, provider_token_limits,
-            embedding_provider, links_enabled, link_domains, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+            embedding_provider, links_enabled, link_domains, enabled_tools, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
          ON CONFLICT (organization_id) DO UPDATE SET
            allowed_providers = EXCLUDED.allowed_providers,
            monthly_token_limit = EXCLUDED.monthly_token_limit,
@@ -135,6 +141,7 @@ export class PostgresSettingsStore implements SettingsStore {
            embedding_provider = EXCLUDED.embedding_provider,
            links_enabled = EXCLUDED.links_enabled,
            link_domains = EXCLUDED.link_domains,
+           enabled_tools = EXCLUDED.enabled_tools,
            updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
         [
@@ -145,6 +152,7 @@ export class PostgresSettingsStore implements SettingsStore {
           settings.embeddingProvider,
           settings.linksEnabled,
           settings.linkDomains,
+          settings.tools,
           tenant.userId,
         ],
       );

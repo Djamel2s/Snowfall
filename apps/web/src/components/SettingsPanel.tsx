@@ -4,6 +4,8 @@ import { getSession } from '../auth/session'
 import {
   api,
   providerIds,
+  toolAccess,
+  toolIds,
   type Invitation,
   type Member,
   type Organization,
@@ -160,7 +162,9 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
 
       <section className="settings-card" aria-label={t('settings.profile')}>
         <div className="settings-profile">
-          <div className="user-avatar">{(name || '?').slice(0, 1).toUpperCase()}</div>
+          <div className="user-avatar">
+            <img src="/logo.png" alt="" className="user-avatar-logo" />
+          </div>
           <div>
             <strong>{name}</strong>
             {session.profile.email && <span>{session.profile.email}</span>}
@@ -376,6 +380,41 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
             >
               <Check size={14} />
               {saved === 'knowledge' ? t('settings.saved') : t('common.save')}
+            </button>
+          </section>
+
+          <section className="settings-card" aria-label={t('settings.tools')}>
+            <h3>{t('settings.tools')}</h3>
+            {toolIds.map((id) => (
+              <label key={id} className="settings-row settings-switch">
+                <span>
+                  {t(`tool.${id}`)}
+                  {toolAccess[id] === 'write' && <small className="settings-hint"> · {t('tool.approvalRequired')}</small>}
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={draft.tools.includes(id)}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      tools: event.target.checked ? toolIds.filter((tool) => tool === id || draft.tools.includes(tool)) : draft.tools.filter((tool) => tool !== id),
+                    })
+                  }
+                />
+              </label>
+            ))}
+            <button
+              type="button"
+              className="settings-save"
+              onClick={() =>
+                void run('tools', async () => {
+                  setDraft(await api.saveOrganizationSettings(draft))
+                })
+              }
+            >
+              <Check size={14} />
+              {saved === 'tools' ? t('settings.saved') : t('common.save')}
             </button>
           </section>
 

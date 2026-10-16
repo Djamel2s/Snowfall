@@ -638,7 +638,9 @@ export default function Sidebar(props: SidebarProps) {
 
           <footer className="sidebar-bottom">
             <div className="account-row">
-              <div className="user-avatar">{username.slice(0, 1).toUpperCase() || '?'}</div>
+              <div className="user-avatar">
+                <img src="/logo.png" alt="" className="user-avatar-logo" />
+              </div>
 
               <div className="account-info">
                 <strong>{username}</strong>

@@ -1,0 +1,2 @@
+ALTER TABLE "organization_settings" ADD COLUMN "enabled_tools" text[] DEFAULT ARRAY['search_knowledge', 'save_to_knowledge']::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "organization_settings" ADD CONSTRAINT "organization_settings_tools_check" CHECK (cardinality("enabled_tools") <= 50);

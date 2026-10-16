@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
+import { defaultAgentTools } from "../agent/catalog.js";
 import type { Agent, AgentInput, AgentStore } from "../agents/store.js";
 import type { AuditEvent } from "../audit/audit.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
@@ -29,14 +30,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input };
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools };
       agents.set(id, agent);
       return agent;
     },

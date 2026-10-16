@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronLeft, Sparkles, Trash2 } from 'lucide-react'
+import { Camera, Check, ChevronLeft, PenLine, Search, ShieldCheck, Sparkles, Trash2 } from 'lucide-react'
 import {
   api,
+  toolAccess,
+  toolIds,
+  type ToolId,
   type Agent,
   type AgentAvatarData,
   type AlienAvatar,
@@ -40,6 +43,9 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
   )
   const [provider, setProvider] = useState<ProviderId | null>(agent?.provider ?? null)
   const [model, setModel] = useState(agent?.model ?? '')
+  const [tools, setTools] = useState<ToolId[]>(agent?.tools ?? ['search_knowledge'])
+  // Outils activés par l'organisation : l'auteur choisit parmi eux.
+  const [organizationTools, setOrganizationTools] = useState<readonly ToolId[]>(toolIds)
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState(notice ?? '')
@@ -68,6 +74,18 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
       cancelled = true
     }
   }, [agent, t])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getOrganization()
+      .then((organization) => !cancelled && setOrganizationTools(organization.settings.tools))
+      // Réglages illisibles : on montre tout, le serveur filtre à l'enregistrement.
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
@@ -99,7 +117,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
     setError('')
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)) },
         agent?.id,
       )
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
@@ -249,6 +267,29 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
         rows={5}
         onChange={(event) => setInstructions(event.target.value)}
       />
+
+      {organizationTools.length > 0 && (
+        <div className="studio-tools" role="group" aria-label={t('studio.tools')}>
+          {organizationTools.map((id) => {
+            const Icon = id === 'search_knowledge' ? Search : PenLine
+            const write = toolAccess[id] === 'write'
+            return (
+              <button
+                key={id}
+                type="button"
+                className="studio-tool"
+                aria-pressed={tools.includes(id)}
+                title={write ? t('tool.approvalRequired') : t(`tool.${id}`)}
+                onClick={() => setTools(tools.includes(id) ? tools.filter((tool) => tool !== id) : [...tools, id])}
+              >
+                <Icon size={13} />
+                {t(`tool.${id}`)}
+                {write && <ShieldCheck size={12} className="studio-tool-guard" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {agent ? (
         <KnowledgePanel kind="agents" ownerId={agent.id} />

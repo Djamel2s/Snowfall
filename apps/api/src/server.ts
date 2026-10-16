@@ -1,4 +1,6 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import { randomUUID } from "node:crypto";
+import { MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import dotenv from "dotenv";
@@ -15,6 +17,7 @@ import {
   type ChatRunner,
   type ChatTurn,
   type ModelImage,
+  type PendingApproval,
 } from "./graph/chat-graph.js";
 import {
   ProviderRegistry,
@@ -61,6 +64,7 @@ import {
   PostgresConversationStore,
   type ConversationStore,
   type ConversationSummary,
+  type MessageSource,
   type StoredMessage,
 } from "./conversations/store.js";
 import { buildModelInput, estimateTokens } from "./attachments/prompt.js";
@@ -84,6 +88,19 @@ import { PostgresKnowledgeStore } from "./knowledge/store.js";
 import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./knowledge/rewrite.js";
 import { HttpReranker } from "./knowledge/rerank.js";
 import { CitationRegistry, knowledgeTool } from "./agent/knowledge-tool.js";
+import { knowledgeWriteTool } from "./agent/knowledge-write-tool.js";
+import { EncryptedCheckpointSaver } from "./agent/checkpointer.js";
+import {
+  MemoryRunStore,
+  PostgresRunStore,
+  RunEvents,
+  type RunEvent,
+  type RunProgress,
+  type RunRecord,
+  type RunRequest,
+  type RunStore,
+} from "./agent/runs.js";
+import { defaultOrganizationTools, permittedTools, type ToolId } from "./agent/catalog.js";
 import type { AgentTool } from "./agent/tools.js";
 import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
 import { countingAuditLog, createMetrics, startMetricsServer, type Metrics } from "./observability/metrics.js";
@@ -156,11 +173,30 @@ export type AppDependencies = {
   rewriteQuery?: QueryRewriter;
   /** Boucle d'agent : aller-retour modèle ↔ outils au maximum par réponse. */
   agentMaxSteps?: number;
+  /** Runs d'agent (exécution durable). Absent : en mémoire (développement, tests). */
+  runs?: RunStore;
+  /** Points de reprise du graphe, par propriétaire. Absent : en mémoire. */
+  checkpointer?: (tenant: { organizationId: string; userId: string }) => BaseCheckpointSaver;
+  /** Durées des runs (tests : quelques millisecondes pour simuler une panne). */
+  runTiming?: Partial<typeof RUN_TIMING>;
   /** Remplace le routage par modèle (tests). */
   runChat?: ChatRunner;
 };
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+const RUN_TIMING = {
+  /** Bail d'exécution : renouvelé toutes les 10 s, repris par une autre instance après 30 s. */
+  leaseMs: 30_000,
+  renewMs: 10_000,
+  /** Recherche des runs orphelins. */
+  recoveryMs: 30_000,
+  /** Validation sans réponse au-delà : refusée. */
+  approvalTtlSeconds: 24 * 60 * 60,
+};
+
+/** Échec attendu d'un run (conversation supprimée, modèle retiré…) : message transmis tel quel. */
+class RunFailure extends Error {}
 const HISTORY_TURNS = 20;
 
 /**
@@ -202,6 +238,21 @@ export function createAppServer(deps: AppDependencies) {
   const conversationStore = deps.conversationStore;
   const models = deps.models ?? new ProviderRegistry({}, { fallback: echoModel });
   const agents = deps.agents;
+  // Exécution durable : runs, points de reprise, diffusion aux connexions de cette instance.
+  const runs = deps.runs ?? new MemoryRunStore();
+  const memoryCheckpoints = new MemorySaver();
+  const checkpointerFor = deps.checkpointer ?? (() => memoryCheckpoints);
+  const runEvents = new RunEvents();
+  /** Identifiant de cette instance (bail des runs qu'elle exécute). */
+  const instance = `api-${randomUUID()}`;
+  const localRuns = new Map<string, { stop: (reason: "cancel" | "lost" | "shutdown") => void }>();
+  /** Flux SSE ouverts sur cette instance (fermés à l'arrêt). */
+  const observers = new Set<() => void>();
+  const timing = { ...RUN_TIMING, ...deps.runTiming };
+  const RUN_LEASE_MS = timing.leaseMs;
+  const RUN_RENEW_MS = timing.renewMs;
+  const RUN_RECOVERY_MS = timing.recoveryMs;
+  const RUN_APPROVAL_TTL_S = timing.approvalTtlSeconds;
   const runnerFor = (selection?: ModelSelection) =>
     deps.runChat ?? models.runner(selection);
 
@@ -370,133 +421,6 @@ export function createAppServer(deps: AppDependencies) {
     return deps.attachments.forModel(user, conversationId, ids);
   }
 
-  /**
-   * Génération diffusée en Server-Sent Events : "token" à chaque fragment,
-   * puis "done" (messages enregistrés) ou "error". Si le client arrête la
-   * génération, la réponse partielle est enregistrée et comptée.
-   */
-  function streamGeneration(options: {
-    request: FastifyRequest;
-    reply: FastifyReply;
-    user: AuthenticatedUser;
-    conversationId: string;
-    agent: Agent | null;
-    selection: ModelSelection | undefined;
-    provider: ProviderId | "echo";
-    input: { history: ChatTurn[]; message: string; images: ModelImage[] };
-    /** Outils proposés au modèle (boucle d'agent). */
-    tools?: AgentTool[];
-    eventType: string;
-    details: Record<string, string | number | boolean>;
-    persist: (content: string) => Promise<Record<string, unknown> | null>;
-  }) {
-    const { request, reply, user, agent, input } = options;
-    const runChat = runnerFor(options.selection);
-
-    const stream = new PassThrough();
-    const send = (event: "token" | "step" | "done" | "error", data: unknown) => {
-      stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
-
-    const generation = new AbortController();
-    reply.raw.on("close", () => {
-      if (!reply.raw.writableFinished) generation.abort();
-    });
-
-    const inputChars =
-      input.message.length + input.history.reduce((total, turn) => total + turn.content.length, 0);
-    let partial = "";
-    const started = performance.now();
-    const observe = (outcome: "success" | "aborted" | "refused" | "rate_limited" | "error") =>
-      deps.metrics?.generation.observe({ provider: options.provider, outcome }, (performance.now() - started) / 1000);
-
-    const finish = async (content: string, usage: UsageTotals | undefined, model: string, partialAnswer: boolean, steps = 0) => {
-      const payload = await options.persist(content);
-      if (!payload) return null;
-
-      // Le fournisseur ne compte pas toujours (arrêt, echo) : estimation prudente.
-      const counted = usage ?? { inputTokens: estimateTokens("x".repeat(inputChars)), outputTokens: estimateTokens(content) };
-      deps.metrics?.tokens.inc({ provider: options.provider, direction: "input" }, counted.inputTokens);
-      deps.metrics?.tokens.inc({ provider: options.provider, direction: "output" }, counted.outputTokens);
-      await deps.settings?.record(user, options.provider, counted).catch((error: unknown) => {
-        request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
-      });
-      await kit.record(request, user, {
-        eventType: options.eventType,
-        targetType: "conversation",
-        targetId: options.conversationId,
-        details: {
-          ...options.details,
-          agentId: agent?.id ?? "",
-          model,
-          inputTokens: counted.inputTokens,
-          outputTokens: counted.outputTokens,
-          partial: partialAnswer,
-          steps,
-        },
-      });
-      return payload;
-    };
-
-    void (async () => {
-      try {
-        const result = await runChat(
-          {
-            message: input.message,
-            history: input.history,
-            images: input.images,
-            instructions: agent?.instructions,
-            ...(options.tools?.length ? { tools: options.tools, maxSteps: deps.agentMaxSteps } : {}),
-          },
-          {
-            signal: generation.signal,
-            onToken: (text) => {
-              partial += text;
-              send("token", { text });
-            },
-            // Étapes visibles : « Recherche dans la base : … ».
-            onTool: (event) => send("step", event),
-          },
-        );
-
-        observe("success");
-        const payload = await finish(result.content, result.usage, result.model, false, result.steps ?? 0);
-        if (!payload) {
-          send("error", { error: "Not found" });
-          return;
-        }
-        send("done", payload);
-      } catch (error) {
-        if (generation.signal.aborted) {
-          observe("aborted");
-          request.log.info("Génération interrompue par le client");
-          if (partial.trim()) {
-            await finish(partial, undefined, options.provider, true).catch((cause: unknown) => {
-              request.log.error({ err: cause }, "Échec d'enregistrement de la réponse partielle");
-            });
-          }
-        } else {
-          observe(error instanceof ModelRefusalError ? "refused" : isRateLimit(error) ? "rate_limited" : "error");
-          request.log.error({ err: error }, "Échec du graphe de chat");
-          send("error", {
-            error: error instanceof ModelRefusalError
-              ? "Refused"
-              : isRateLimit(error)
-                ? "Provider rate limited"
-              : error instanceof ProviderUnavailableError
-                ? "Provider unavailable"
-                : "Assistant unavailable",
-          });
-        }
-      } finally {
-        stream.end();
-      }
-    })();
-
-    reply.header("Content-Type", "text/event-stream; charset=utf-8");
-    reply.header("X-Accel-Buffering", "no");
-    return reply.send(stream);
-  }
 
   app.register(async (api) => {
     // Corps "application/x-www-form-urlencoded" : utilisé par Keycloak pour
@@ -834,6 +758,7 @@ export function createAppServer(deps: AppDependencies) {
       loaded: { conversation: ConversationSummary; agent: Agent | null; selection: ModelSelection | undefined },
       provider: ProviderId | "echo",
       query: { message: string; history: StoredMessage[] },
+      permitted: Set<ToolId>,
     ): Promise<KnowledgePlan | null> {
       const bases = await activeBases(user, loaded.conversation, loaded.agent);
       if (bases.length === 0) return { mode: "none" };
@@ -850,7 +775,8 @@ export function createAppServer(deps: AppDependencies) {
       }
       // RAG agentique : le modèle sait appeler des outils, il cherche lui-même
       // (quand il le juge utile, avec ses propres requêtes, plusieurs fois si besoin).
-      if (models.supportsTools?.(loaded.selection)) {
+      // Outil désactivé par l'organisation ou l'agent : injection d'office, comme avant.
+      if (models.supportsTools?.(loaded.selection) && permitted.has("search_knowledge")) {
         const citations = new CitationRegistry();
         return { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge!, user, bases, citations)] };
       }
@@ -865,6 +791,424 @@ export function createAppServer(deps: AppDependencies) {
         return { mode: "none" };
       }
     }
+
+    /** Outils permis pour cette réponse : organisation ∩ agent (voir agent/catalog.ts). */
+    async function permittedFor(user: AuthenticatedUser, agent: Agent | null) {
+      const organization = deps.settings ? (await deps.settings.get(user)).tools : defaultOrganizationTools;
+      return permittedTools(organization, agent?.tools ?? null);
+    }
+
+    /**
+     * Outils confiés au modèle : recherche (si le plan l'a retenue), puis
+     * écritures. Écrire dans la base de l'agent suppose de pouvoir modifier
+     * l'agent : un simple utilisateur de l'agent ne peut pas l'enrichir.
+     */
+    function agentTools(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      agent: Agent | null,
+      selection: ModelSelection | undefined,
+      plan: KnowledgePlan,
+      permitted: Set<ToolId>,
+    ): AgentTool[] {
+      if (!models.supportsTools?.(selection)) return [];
+      const tools: AgentTool[] = plan.mode === "agent" ? [...plan.tools] : [];
+      if (permitted.has("save_to_knowledge") && deps.knowledge && agent && canManageAgent(user, agent)) {
+        tools.push(
+          knowledgeWriteTool({
+            service: deps.knowledge,
+            tenant: user,
+            agentId: agent.id,
+            scanner: deps.scanner,
+            audit: (event) =>
+              kit.record(request, user, { eventType: "knowledge.source_create", targetType: "knowledge_source", ...event }),
+          }),
+        );
+      }
+      return tools;
+    }
+
+    // ---- Exécution durable (runs) --------------------------------------------
+    //
+    // Une réponse est un run enregistré en base : la connexion HTTP ne fait que
+    // l'OBSERVER (événements SSE). Fermer l'onglet ne l'arrête pas ; seul
+    // « arrêter » (POST …/run/cancel) le fait. Après chaque étape, l'état du
+    // graphe est enregistré (chiffré) : une validation met le run en pause et
+    // libère le serveur ; un redémarrage ou une panne laisse expirer le bail,
+    // et une instance reprend le run là où il s'était arrêté.
+
+    /** Repli de la connaissance pour un run repris : outils recréés, droits revérifiés. */
+    async function resumePlan(
+      user: AuthenticatedUser,
+      conversation: ConversationSummary,
+      agent: Agent | null,
+      selection: ModelSelection | undefined,
+      provider: ProviderId | "echo",
+      turns: ChatTurn[],
+      permitted: Set<ToolId>,
+    ): Promise<KnowledgePlan> {
+      const bases = await activeBases(user, conversation, agent);
+      if (bases.some((base) => base.confidential) && provider !== "local" && provider !== "echo") throw new RunFailure("Local model required");
+      if (bases.length && models.supportsTools?.(selection) && permitted.has("search_knowledge")) {
+        // Même numérotation des sources qu'avant la pause.
+        const citations = new CitationRegistry().seed(turns);
+        return { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge!, user, bases, citations)] };
+      }
+      return { mode: "none" };
+    }
+
+    /** Enregistre la réponse, compte la consommation, trace. */
+    async function completeRun(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      run: RunRecord,
+      answer: string,
+      sources: MessageSource[],
+      outcome: { usage?: UsageTotals | undefined; model: string; partial: boolean; steps: number },
+    ) {
+      const { request: input } = run;
+      const payload =
+        input.kind === "message"
+          ? await conversationStore
+              .appendExchange(user, run.conversationId, input.content, answer, {
+                attachmentIds: input.attachmentIds,
+                ...(input.editMessageId ? { replaceFromMessageId: input.editMessageId } : {}),
+                ...(sources.length ? { sources } : {}),
+              })
+              .then((exchange) => (exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null))
+          : await conversationStore
+              .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined)
+              .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null));
+      if (!payload) return null;
+
+      // Le fournisseur ne compte pas toujours (arrêt, echo) : estimation prudente.
+      const counted = outcome.usage ?? { inputTokens: estimateTokens(input.content), outputTokens: estimateTokens(answer) };
+      deps.metrics?.tokens.inc({ provider: input.provider, direction: "input" }, counted.inputTokens);
+      deps.metrics?.tokens.inc({ provider: input.provider, direction: "output" }, counted.outputTokens);
+      await deps.settings?.record(user, input.provider, counted).catch((error: unknown) => {
+        request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
+      });
+      await kit.record(request, user, {
+        eventType: input.kind === "message" ? "message.create" : "message.regenerate",
+        targetType: "conversation",
+        targetId: run.conversationId,
+        details: {
+          ...input.details,
+          agentId: input.agentId ?? "",
+          model: outcome.model,
+          inputTokens: counted.inputTokens,
+          outputTokens: counted.outputTokens,
+          partial: outcome.partial,
+          steps: outcome.steps,
+        },
+      });
+      return payload;
+    }
+
+    /** Arrêt demandé : la réponse partielle est gardée (comme avant), le run effacé. */
+    async function cancelRun(request: FastifyRequest, user: AuthenticatedUser, run: RunRecord, text: string, plan?: KnowledgePlan) {
+      for (const pending of run.progress.pending) {
+        await kit.record(request, user, {
+          eventType: "tool.approval",
+          outcome: "denied",
+          targetType: "conversation",
+          targetId: run.conversationId,
+          details: { tool: pending.name, decision: "cancelled", agentId: run.request.agentId ?? "" },
+        });
+      }
+      const payload = text.trim()
+        ? await completeRun(request, user, run, text, plan ? knowledgeSources(plan, text) : (run.request.sources ?? []), {
+            model: run.request.provider,
+            partial: true,
+            steps: run.progress.steps.length,
+          })
+        : null;
+      await runs.finish(user, run.id);
+      await checkpointerFor(user).deleteThread(run.id);
+      runEvents.emit(run.id, payload ? { type: "done", payload } : { type: "error", error: "Cancelled" });
+    }
+
+    /**
+     * Exécute (ou reprend) un run. start : premier passage, avec l'entrée du
+     * modèle ; resume : décisions de validation ; continue : reprise après panne.
+     */
+    async function executeRun(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      run: RunRecord,
+      mode: { start?: { input: { history: ChatTurn[]; message: string; images: ModelImage[] }; plan: KnowledgePlan }; resume?: Record<string, boolean>; continue?: boolean },
+    ) {
+      const controller = new AbortController();
+      let stopReason: "cancel" | "lost" | "shutdown" | null = null;
+      const stop = (reason: NonNullable<typeof stopReason>) => {
+        stopReason ??= reason;
+        controller.abort();
+      };
+      localRuns.set(run.id, { stop });
+      const emit = (event: RunEvent) => runEvents.emit(run.id, event);
+      const progress: RunProgress = { ...structuredClone(run.progress), pending: [] };
+      const provider = run.request.provider;
+      const started = performance.now();
+      const observe = (outcome: "success" | "aborted" | "refused" | "rate_limited" | "error" | "paused") =>
+        deps.metrics?.generation.observe({ provider, outcome }, (performance.now() - started) / 1000);
+
+      // Bail : prolongé régulièrement (avec l'avancement, pour une reconnexion).
+      // Perdu (autre instance) ou arrêt demandé ailleurs : on s'arrête.
+      const lease = setInterval(() => {
+        runs
+          .renew(user, run.id, instance, RUN_LEASE_MS, progress)
+          .then((state) => {
+            if (!state.held) stop("lost");
+            else if (state.cancelRequested) stop("cancel");
+          })
+          .catch((error: unknown) => request.log.error({ err: error }, "Renouvellement du bail impossible"));
+      }, RUN_RENEW_MS);
+      lease.unref();
+
+      let plan: KnowledgePlan = mode.start?.plan ?? { mode: "none" };
+      const saver = checkpointerFor(user);
+      try {
+        const conversation = await conversationStore.get(user, run.conversationId);
+        if (!conversation) throw new RunFailure("Not found");
+        const agent = run.request.agentId && agents ? await agents.get(user, run.request.agentId) : null;
+        const selection = run.request.selection;
+        // Reprise : le modèle doit toujours être autorisé (l'admin a pu changer d'avis).
+        if (!mode.start && selection && !(await isModelPermitted(user, selection))) throw new RunFailure("Provider unavailable");
+        const permitted = await permittedFor(user, agent);
+
+        let input = mode.start?.input ?? { history: [], message: "", images: [] };
+        if (!mode.start) {
+          const values = (await saver.getTuple({ configurable: { thread_id: run.id } }))?.checkpoint.channel_values as
+            | { turns?: ChatTurn[]; response?: string }
+            | undefined;
+          if (!values) throw new RunFailure("Not found");
+          // Texte déjà produit avant la pause ou la panne (l'étape en cours sera rejouée).
+          progress.text = values.response ?? "";
+          plan = await resumePlan(user, conversation, agent, selection, provider, values.turns ?? [], permitted);
+          input = { history: [], message: "", images: [] };
+        }
+        const tools = agentTools(request, user, agent, selection, plan, permitted);
+
+        const result = await runnerFor(selection)(
+          {
+            message: input.message,
+            history: input.history,
+            images: input.images,
+            instructions: agent?.instructions,
+            ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}),
+          },
+          {
+            signal: controller.signal,
+            onToken: (text) => {
+              progress.text += text;
+              emit({ type: "token", text });
+            },
+            onTool: (event) => {
+              const index = progress.steps.findIndex((step) => step.id === event.id);
+              if (index === -1) progress.steps.push(event);
+              else progress.steps[index] = event;
+              emit({ type: "step", step: event });
+            },
+            durable: {
+              checkpointer: saver,
+              threadId: run.id,
+              ...(mode.resume ? { resume: mode.resume } : {}),
+              ...(mode.continue ? { continue: true } : {}),
+            },
+          },
+        );
+
+        if (result.pending?.length) {
+          // Pause : état enregistré, serveur libéré ; la décision reprendra le run.
+          progress.text = result.content;
+          progress.pending = result.pending;
+          await runs.pause(user, run.id, instance, progress);
+          observe("paused");
+          for (const approval of result.pending) emit({ type: "approval", approval });
+          emit({ type: "paused" });
+          return;
+        }
+
+        observe("success");
+        const sources = plan.mode === "agent" || plan.mode === "inline" ? knowledgeSources(plan, result.content) : (run.request.sources ?? []);
+        const payload = await completeRun(request, user, run, result.content, sources, {
+          usage: result.usage,
+          model: result.model,
+          partial: false,
+          steps: result.steps ?? 0,
+        });
+        await runs.finish(user, run.id);
+        await saver.deleteThread(run.id);
+        emit(payload ? { type: "done", payload } : { type: "error", error: "Not found" });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          observe("aborted");
+          // Arrêt demandé : réponse partielle gardée. Bail perdu ou arrêt du
+          // serveur : rien n'est effacé, une instance reprendra le run.
+          if (stopReason === "cancel") {
+            await cancelRun(request, user, run, progress.text, plan).catch((cause: unknown) => {
+              request.log.error({ err: cause }, "Échec d'enregistrement de la réponse partielle");
+            });
+          }
+          return;
+        }
+        observe(error instanceof ModelRefusalError ? "refused" : isRateLimit(error) ? "rate_limited" : "error");
+        request.log.error({ err: error }, "Échec du run d'agent");
+        await runs.finish(user, run.id).catch(() => undefined);
+        await saver.deleteThread(run.id).catch(() => undefined);
+        emit({
+          type: "error",
+          error:
+            error instanceof RunFailure
+              ? error.message
+              : error instanceof ModelRefusalError
+                ? "Refused"
+                : isRateLimit(error)
+                  ? "Provider rate limited"
+                  : error instanceof ProviderUnavailableError
+                    ? "Provider unavailable"
+                    : "Assistant unavailable",
+        });
+      } finally {
+        clearInterval(lease);
+        localRuns.delete(run.id);
+      }
+    }
+
+    /**
+     * Flux SSE d'un run : "token", "step", "approval", puis "done", "error" ou
+     * "paused" (attente de validation). La fermeture de la connexion
+     * n'interrompt PAS le run.
+     */
+    function observeRun(
+      reply: FastifyReply,
+      runId: string,
+      start: (local: { emit: (event: RunEvent) => void }) => void,
+      snapshot?: RunProgress & { status: string },
+    ) {
+      const stream = new PassThrough();
+      const send = (event: string, data: unknown) => stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      const heartbeat = setInterval(() => stream.write(": ping\n\n"), 15_000);
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        unsubscribe();
+        stream.end();
+      };
+      const sendSnapshot = (progress: RunProgress, status: string) =>
+        send("snapshot", { status, text: progress.text, steps: progress.steps, approvals: progress.pending.map(approvalView) });
+      const handle = (event: RunEvent) => {
+        if (closed) return;
+        if (event.type === "token") send("token", { text: event.text });
+        else if (event.type === "step") send("step", event.step);
+        else if (event.type === "approval") send("approval", approvalView(event.approval));
+        else if (event.type === "snapshot") sendSnapshot(event.progress, "running");
+        else {
+          send(event.type, event.type === "done" ? event.payload : event.type === "error" ? { error: event.error } : {});
+          close();
+        }
+      };
+      const unsubscribe = runEvents.subscribe(runId, handle);
+      reply.raw.on("close", close);
+      observers.add(close);
+      stream.on("close", () => observers.delete(close));
+      if (snapshot) sendSnapshot(snapshot, snapshot.status);
+      start({ emit: handle });
+      reply.header("Content-Type", "text/event-stream; charset=utf-8");
+      reply.header("X-Accel-Buffering", "no");
+      return reply.send(stream);
+    }
+
+    /** Ce que l'interface reçoit d'une demande de validation. */
+    const approvalView = (approval: PendingApproval) => ({
+      id: approval.id,
+      stepId: approval.callId,
+      tool: approval.name,
+      title: approval.preview.title,
+      detail: approval.preview.detail ?? "",
+    });
+
+    /** Lance un nouveau run et en diffuse les événements. */
+    async function startRun(options: {
+      request: FastifyRequest;
+      reply: FastifyReply;
+      user: AuthenticatedUser;
+      conversationId: string;
+      run: RunRequest;
+      input: { history: ChatTurn[]; message: string; images: ModelImage[] };
+      plan: KnowledgePlan;
+    }) {
+      const { request, reply, user } = options;
+      const run = await runs.create(user, options.conversationId, options.run, instance, RUN_LEASE_MS);
+      if (!run) return reply.code(409).send({ error: "Run in progress" });
+      return observeRun(reply, run.id, () => {
+        void executeRun(request, user, run, { start: { input: options.input, plan: options.plan } });
+      });
+    }
+
+    /** Rôle actuel du propriétaire d'un run repris en arrière-plan (null : plus membre). */
+    async function currentRole(tenant: { organizationId: string; userId: string }, fallback: string) {
+      if (!deps.members) return fallback as AuthenticatedUser["role"];
+      const member = (await deps.members.list(tenant)).find((item) => item.userId === tenant.userId);
+      return member?.role ?? null;
+    }
+
+    /**
+     * Reprise des runs orphelins (instance tombée, redémarrage) et refus des
+     * validations restées sans réponse trop longtemps.
+     */
+    async function recoverRuns() {
+      const system = { ip: "system", id: "agent-run-recovery", log: app.log } as unknown as FastifyRequest;
+      for (const stale of await runs.stale(RUN_APPROVAL_TTL_S)) {
+        const tenant = { organizationId: stale.organizationId, userId: stale.userId };
+        try {
+          const claimed = await runs.claim({ ...tenant }, stale.runId, instance, RUN_LEASE_MS);
+          if (!claimed) continue;
+          const role = await currentRole(tenant, claimed.request.role);
+          const user: AuthenticatedUser = { ...tenant, role: role ?? "reader" };
+          if (!role) {
+            // Plus membre de l'organisation : rien n'est repris ni enregistré.
+            await runs.finish(user, claimed.id);
+            await checkpointerFor(user).deleteThread(claimed.id);
+            continue;
+          }
+          if (stale.status === "waiting") {
+            for (const pending of claimed.progress.pending) {
+              await kit.record(system, user, {
+                eventType: "tool.approval",
+                outcome: "denied",
+                targetType: "conversation",
+                targetId: claimed.conversationId,
+                details: { tool: pending.name, decision: "expired", agentId: claimed.request.agentId ?? "" },
+              });
+            }
+            void executeRun(system, user, claimed, { resume: Object.fromEntries(claimed.progress.pending.map((pending) => [pending.id, false])) });
+          } else {
+            void executeRun(system, user, claimed, { continue: true });
+          }
+        } catch (error) {
+          app.log.error({ err: error, run: stale.runId }, "Reprise du run impossible");
+        }
+      }
+    }
+
+    api.addHook("onReady", async () => {
+      recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
+    });
+    const recovery = setInterval(() => {
+      recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
+    }, RUN_RECOVERY_MS);
+    recovery.unref();
+    // Arrêt du serveur : les runs locaux s'interrompent sans rien effacer ; leur
+    // bail expire et ils seront repris (ici au redémarrage, ou par une autre instance).
+    api.addHook("preClose", async () => {
+      clearInterval(recovery);
+      for (const local of localRuns.values()) local.stop("shutdown");
+      // Flux observés fermés : le client se reconnecte (à une autre instance, ou après le redémarrage).
+      for (const close of [...observers]) close();
+    });
 
     /** Paramètres de génération selon le mode de connaissance retenu. */
     const knowledgeInput = (plan: KnowledgePlan, input: { history: ChatTurn[]; message: string; images: ModelImage[] }) =>
@@ -941,39 +1285,183 @@ export function createAppServer(deps: AppDependencies) {
         }
       }
 
+      // Une réponse déjà en cours (ou en attente de validation) : refus avant tout coût.
+      if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
-      const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior });
+      const permitted = await permittedFor(user, agent);
+      const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior }, permitted);
       if (!plan) return reply;
 
       const context = prior.slice(-HISTORY_TURNS);
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
 
-      return streamGeneration({
+      return startRun({
         request,
         reply,
         user,
         conversationId: params.data.id,
-        agent,
-        selection,
-        provider: admitted.provider,
         input: knowledgeInput(plan, buildModelInput(context, { content, attachmentIds }, files)),
-        ...(plan.mode === "agent" ? { tools: plan.tools } : {}),
-        eventType: "message.create",
-        details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: knowledgeDetail(plan) },
-        persist: async (answer) => {
-          const sources = knowledgeSources(plan, answer);
-          const exchange = await conversationStore.appendExchange(user, params.data.id, content, answer, {
-            attachmentIds,
-            ...(editMessageId ? { replaceFromMessageId: editMessageId } : {}),
-            ...(sources.length ? { sources } : {}),
-          });
-          return exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null;
+        plan,
+        run: {
+          kind: "message",
+          content,
+          attachmentIds,
+          editMessageId,
+          agentId: agent?.id ?? null,
+          selection,
+          provider: admitted.provider,
+          role: user.role,
+          ...(plan.mode === "inline" ? { sources: citationsOf(plan.passages) } : {}),
+          details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: knowledgeDetail(plan) },
         },
       });
     });
 
+    // ---- Routes des runs ------------------------------------------------------
+
+    const runParams = z.object({ id: conversationIdSchema });
+    // Identifiant de demande : celui de l'interruption LangGraph (empreinte hexadécimale).
+    const approvalParams = z.object({ id: conversationIdSchema, approvalId: z.string().regex(/^[a-f0-9]{16,64}$/) });
+    const approvalBody = z.object({ approved: z.boolean() }).strict();
+
+    /**
+     * Réponse à une demande de validation. Le run en pause est repris ici, quelle
+     * que soit l'instance qui l'avait lancé, et la suite est diffusée en SSE.
+     */
+    api.post("/conversations/:id/approvals/:approvalId", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+      const params = approvalParams.safeParse(request.params);
+      const body = approvalBody.safeParse(request.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+
+      // RLS : seul le propriétaire de la conversation voit son run.
+      const run = await runs.active(user, params.data.id);
+      const pending = run?.status === "waiting" ? run.progress.pending.find((item) => item.id === params.data.approvalId) : undefined;
+      if (!run || !pending) {
+        // Inconnue, déjà tranchée, expirée, ou demande d'un autre utilisateur : même réponse, tracée.
+        await kit.record(request, user, {
+          eventType: "tool.approval",
+          outcome: "denied",
+          targetType: "conversation",
+          targetId: params.data.id,
+          details: { reason: "unknown_request" },
+        });
+        return reply.code(404).send({ error: "Not found" });
+      }
+      const claimed = await runs.claim(user, run.id, instance, RUN_LEASE_MS);
+      if (!claimed) return reply.code(409).send({ error: "Run in progress" });
+
+      await kit.record(request, user, {
+        eventType: "tool.approval",
+        outcome: body.data.approved ? "success" : "denied",
+        targetType: "conversation",
+        targetId: params.data.id,
+        details: { tool: pending.name, decision: body.data.approved ? "approved" : "denied", agentId: claimed.request.agentId ?? "" },
+      });
+      return observeRun(reply, run.id, () => {
+        void executeRun(request, user, claimed, { resume: { [pending.id]: body.data.approved } });
+      });
+    });
+
+    /** Arrêter la réponse : le run est interrompu où qu'il s'exécute ; le partiel est gardé. */
+    api.post("/conversations/:id/run/cancel", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+      const params = runParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const run = await runs.active(user, params.data.id);
+      if (!run) return reply.code(404).send({ error: "Not found" });
+      const local = localRuns.get(run.id);
+      if (local) {
+        local.stop("cancel");
+      } else if (run.status === "waiting") {
+        const claimed = await runs.claim(user, run.id, instance, RUN_LEASE_MS);
+        if (claimed) await cancelRun(request, user, claimed, claimed.progress.text);
+      } else {
+        // Exécuté par une autre instance : elle le verra au prochain renouvellement du bail.
+        await runs.requestCancel(user, run.id);
+      }
+      return reply.code(202).send();
+    });
+
+    /** Réponse en cours (reconnexion, autre onglet) : question, texte partiel, étapes, validations. */
+    api.get("/conversations/:id/run", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = runParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      const run = await runs.active(user, params.data.id);
+      return {
+        run: run
+          ? {
+              id: run.id,
+              status: run.status,
+              kind: run.request.kind,
+              question: run.request.content,
+              text: run.progress.text,
+              steps: run.progress.steps,
+              approvals: run.progress.pending.map(approvalView),
+            }
+          : null,
+      };
+    });
+
+    /**
+     * Reprendre le fil d'une réponse en cours : avancement enregistré, puis la
+     * suite en direct. Run orphelin (bail expiré) : repris ici même.
+     */
+    api.get("/conversations/:id/run/events", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = runParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      const run = await runs.active(user, params.data.id);
+      if (!run) return reply.code(404).send({ error: "Not found" });
+      const snapshot = { ...run.progress, status: run.status };
+
+      if (run.status === "waiting") {
+        return observeRun(reply, run.id, ({ emit }) => emit({ type: "paused" }), snapshot);
+      }
+      if (localRuns.has(run.id)) return observeRun(reply, run.id, () => undefined, snapshot);
+
+      const orphan = !run.leaseUntil || run.leaseUntil.getTime() < Date.now();
+      const claimed = orphan ? await runs.claim(user, run.id, instance, RUN_LEASE_MS) : null;
+      if (claimed) {
+        return observeRun(reply, run.id, () => void executeRun(request, user, claimed, { continue: true }), snapshot);
+      }
+      // Exécuté par une autre instance : avancement relu en base chaque seconde.
+      return observeRun(
+        reply,
+        run.id,
+        ({ emit }) => {
+          const poll = setInterval(() => {
+            runs
+              .get(user, run.id)
+              .then((current) => {
+                if (!current) {
+                  clearInterval(poll);
+                  emit({ type: "done", payload: { refresh: true } });
+                } else if (current.status === "waiting") {
+                  clearInterval(poll);
+                  emit({ type: "paused" });
+                } else {
+                  emit({ type: "snapshot", progress: current.progress });
+                }
+              })
+              .catch(() => clearInterval(poll));
+          }, 1_000);
+          poll.unref();
+          reply.raw.on("close", () => clearInterval(poll));
+        },
+        snapshot,
+      );
+    });
     api.post("/conversations/:id/regenerate", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
@@ -995,41 +1483,44 @@ export function createAppServer(deps: AppDependencies) {
         return reply.code(400).send({ error: "Invalid request" });
       }
 
+      if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
-      const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, {
-        message: question.content,
-        history: history.slice(0, -2),
-      });
+      const permitted = await permittedFor(user, agent);
+      const plan = await retrieveKnowledge(
+        request,
+        reply,
+        user,
+        loaded,
+        admitted.provider,
+        { message: question.content, history: history.slice(0, -2) },
+        permitted,
+      );
       if (!plan) return reply;
 
       const context = history.slice(0, -2).slice(-HISTORY_TURNS);
       const attachmentIds = question.attachments?.map((file) => file.id) ?? [];
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
 
-      return streamGeneration({
+      return startRun({
         request,
         reply,
         user,
         conversationId: params.data.id,
-        agent,
-        selection,
-        provider: admitted.provider,
         input: knowledgeInput(plan, buildModelInput(context, { content: question.content, attachmentIds }, files)),
-        ...(plan.mode === "agent" ? { tools: plan.tools } : {}),
-        eventType: "message.regenerate",
-        details: { attachments: attachmentIds.length, passages: knowledgeDetail(plan) },
-        persist: async (answer) => {
-          const sources = knowledgeSources(plan, answer);
-          const assistantMessage = await conversationStore.replaceLastAssistant(
-            user,
-            params.data.id,
-            last.id,
-            answer,
-            sources.length ? sources : undefined,
-          );
-          return assistantMessage ? { assistantMessage } : null;
+        plan,
+        run: {
+          kind: "regenerate",
+          content: question.content,
+          attachmentIds,
+          previousAssistantId: last.id,
+          agentId: agent?.id ?? null,
+          selection,
+          provider: admitted.provider,
+          role: user.role,
+          ...(plan.mode === "inline" ? { sources: citationsOf(plan.passages) } : {}),
+          details: { attachments: attachmentIds.length, passages: knowledgeDetail(plan) },
         },
       });
     });
@@ -1043,11 +1534,14 @@ export function createAppServer(deps: AppDependencies) {
       if (!parsed.success) return null;
       // Liste blanche : fournisseur configuré, autorisé par l'organisation,
       // et modèle publié par lui.
-      const [allowed, permitted] = await Promise.all([
+      const [allowed, permitted, organizationTools] = await Promise.all([
         models.isAllowed({ provider: parsed.data.provider, model: parsed.data.model }),
         allowedProviders(user),
+        deps.settings ? deps.settings.get(user).then((current) => current.tools) : defaultOrganizationTools,
       ]);
-      return allowed && permitted.includes(parsed.data.provider) ? parsed.data : null;
+      if (!allowed || !permitted.includes(parsed.data.provider)) return null;
+      // Outils : seulement parmi ceux de l'organisation (revérifié à chaque réponse).
+      return { ...parsed.data, tools: parsed.data.tools.filter((tool) => organizationTools.includes(tool)) };
     }
 
     const view = (user: AuthenticatedUser, agent: Agent) => ({
@@ -1060,7 +1554,7 @@ export function createAppServer(deps: AppDependencies) {
         eventType,
         targetType: "agent",
         targetId: agent.id,
-        ...(agent.provider ? { details: { provider: agent.provider, model: agent.model ?? "" } } : {}),
+        ...(agent.provider ? { details: { provider: agent.provider, model: agent.model ?? "", tools: (agent.tools ?? []).join(",") } } : {}),
       });
 
     api.get("/agents", async (request, reply) => {
@@ -1414,6 +1908,9 @@ export function createProductionServer() {
 
   const app = createAppServer({
     models,
+    // Exécution durable : runs et points de reprise chiffrés en base.
+    runs: new PostgresRunStore(pool, keyring),
+    checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
     settings: settingsStore,
     knowledge,

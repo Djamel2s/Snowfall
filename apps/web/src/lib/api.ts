@@ -111,12 +111,18 @@ export type AlienAvatar = {
 
 export type AgentAvatarData = AlienAvatar | { kind: 'image'; data: string }
 
+/** Outils d'agent ; write = demande ton accord à chaque utilisation. */
+export const toolIds = ['search_knowledge', 'save_to_knowledge'] as const
+export type ToolId = (typeof toolIds)[number]
+export const toolAccess: Record<ToolId, 'read' | 'write'> = { search_knowledge: 'read', save_to_knowledge: 'write' }
+
 export type AgentInput = {
   name: string
   avatar: AgentAvatarData
   instructions: string
   provider: ProviderId
   model: string
+  tools: ToolId[]
 }
 
 export type Agent = AgentInput & {
@@ -155,6 +161,8 @@ export type OrganizationSettings = {
   embeddingProvider: EmbeddingProvider | null
   linksEnabled: boolean
   linkDomains: string[]
+  /** Outils que les agents de l'organisation peuvent utiliser. */
+  tools: ToolId[]
 }
 
 export type Organization = {
@@ -189,6 +197,7 @@ async function errorMessage(response: Response) {
   if (body.error === 'Unsupported file') return t('error.unsupportedFile')
   if (body.error === 'Unreadable document') return t('error.unreadableFile')
   if (body.error === 'Too many attachments') return t('error.tooManyFiles')
+  if (body.error === 'Run in progress') return t('error.runInProgress')
   switch (response.status) {
     case 403:
       return t('error.forbidden')
@@ -264,16 +273,57 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
 
+/** Action d'écriture en attente de ton accord : aperçu construit par le serveur. */
+export type ToolApproval = { id: string; title: string; detail: string }
+
 /** Étape d'un agent pendant la réponse (appel d'outil). */
-export type AgentStep = { id: string; name: string; status: 'running' | 'done' | 'error'; summary?: string }
+export type AgentStep = {
+  id: string
+  name: string
+  /** denied : action refusée (par toi, ou faute de réponse). */
+  status: 'running' | 'done' | 'error' | 'denied'
+  summary?: string
+  approval?: ToolApproval
+}
 
-type StreamOptions = { onToken?: (text: string) => void; onStep?: (step: AgentStep) => void; signal?: AbortSignal }
+type StreamOptions = {
+  onToken?: (text: string) => void
+  onStep?: (step: AgentStep) => void
+  /** Reconnexion : avancement déjà produit (texte, étapes, validations en attente). */
+  onSnapshot?: (snapshot: RunSnapshot) => void
+  signal?: AbortSignal
+}
 
-/** Réponse en Server-Sent Events : onToken reçoit chaque fragment. */
-async function stream<T>(path: string, body: unknown, options: StreamOptions): Promise<T> {
+/** La réponse attend ta validation : elle reprendra après ta décision (même plus tard). */
+export type RunPaused = { paused: true }
+export const isPaused = (value: unknown): value is RunPaused => typeof value === 'object' && value !== null && 'paused' in value
+
+/** Réponse en cours côté serveur (exécution durable). */
+export type RunSnapshot = {
+  status: 'running' | 'waiting'
+  text: string
+  steps: AgentStep[]
+  approvals: (ToolApproval & { stepId: string; tool: string })[]
+}
+
+export type ActiveRun = RunSnapshot & { id: string; kind: 'message' | 'regenerate'; question: string }
+
+/** Demande de validation reçue du serveur, rattachée à son étape. */
+export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown }): AgentStep => ({
+  id: String(payload.stepId),
+  name: String(payload.tool),
+  status: 'running',
+  approval: { id: String(payload.id), title: String(payload.title), detail: String(payload.detail ?? '') },
+})
+
+/**
+ * Réponse en Server-Sent Events : onToken reçoit chaque fragment. Se termine
+ * par le résultat, ou par une pause (validation attendue). body absent : GET
+ * (reprise du fil d'une réponse en cours).
+ */
+async function stream<T>(path: string, body: unknown, options: StreamOptions): Promise<T | RunPaused> {
   const response = await send(path, {
-    method: 'POST',
-    body: JSON.stringify(body ?? {}),
+    ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
     ...(options.signal ? { signal: options.signal } : {}),
   })
   if (!response.body) throw new Error(t('error.emptyResponse'))
@@ -299,6 +349,13 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
 
       if (event === 'step') {
         options.onStep?.(payload as AgentStep)
+      } else if (event === 'approval') {
+        // L'étape en cours attend ta décision.
+        options.onStep?.(approvalStep(payload))
+      } else if (event === 'snapshot') {
+        options.onSnapshot?.(payload as RunSnapshot)
+      } else if (event === 'paused') {
+        return { paused: true }
       } else if (event === 'token') {
         options.onToken?.(payload.text as string)
       } else if (event === 'done') {
@@ -309,7 +366,7 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
             ? t('error.notFound')
             : payload.error === 'Refused'
               ? t('error.refused')
-              : payload.error === 'Provider unavailable'
+              : payload.error === 'Provider unavailable' || payload.error === 'Local model required'
                 ? t('error.providerUnavailable')
                 : payload.error === 'Provider rate limited'
                   ? t('error.providerRateLimited')
@@ -376,6 +433,20 @@ export const api = {
 
   regenerate: (id: string, options: StreamOptions = {}) =>
     stream<{ assistantMessage: Message }>(`/conversations/${id}/regenerate`, {}, options),
+
+  /** Ta réponse à une demande de validation : la réponse reprend, diffusée comme un envoi. */
+  decideApproval: (conversationId: string, approvalId: string, approved: boolean, options: StreamOptions = {}) =>
+    stream<{ userMessage?: Message; assistantMessage?: Message }>(`/conversations/${conversationId}/approvals/${approvalId}`, { approved }, options),
+
+  /** Réponse en cours dans la conversation (reconnexion), ou null. */
+  getRun: async (conversationId: string) => (await request<{ run: ActiveRun | null }>(`/conversations/${conversationId}/run`)).run,
+
+  /** Reprendre le fil d'une réponse en cours (avancement, puis la suite en direct). */
+  watchRun: (conversationId: string, options: StreamOptions = {}) =>
+    stream<{ userMessage?: Message; assistantMessage?: Message; refresh?: boolean }>(`/conversations/${conversationId}/run/events`, undefined, options),
+
+  /** Arrêter la réponse (fermer l'onglet ne l'arrête pas) ; le partiel est gardé. */
+  cancelRun: (conversationId: string) => request<void>(`/conversations/${conversationId}/run/cancel`, json('POST', {})),
 
   deleteConversation: (id: string) => request<void>(`/conversations/${id}`, { method: 'DELETE' }),
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { knownTools, toolIds } from "../agent/catalog.js";
 import { organizationRoles } from "../auth/auth.js";
 import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
@@ -40,6 +41,7 @@ const settingsSchema = z.object({
     )
     .max(200)
     .optional(),
+  tools: z.array(z.enum(toolIds)).max(toolIds.length).optional(),
 }).strict();
 
 const preferencesSchema = z.object({
@@ -140,6 +142,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         embeddingProvider,
         linksEnabled: body.data.linksEnabled ?? current.linksEnabled,
         linkDomains: body.data.linkDomains ? [...new Set(body.data.linkDomains)] : current.linkDomains,
+        tools: body.data.tools ? knownTools(body.data.tools) : current.tools,
       });
       await kit.record(request, user, {
         eventType: "organization.settings_update",
@@ -151,6 +154,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
           embeddingProvider: saved.embeddingProvider ?? "",
           linksEnabled: saved.linksEnabled,
           linkDomains: saved.linkDomains.length,
+          tools: saved.tools.join(","),
         },
       });
       return { settings: saved };

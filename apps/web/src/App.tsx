@@ -5,6 +5,9 @@ import {
   type Agent,
   type AttachmentMeta,
   type AgentStep,
+  type RunSnapshot,
+  approvalStep,
+  isPaused,
   type KnowledgeOwnerKind,
   type Message,
   type ModelSelection,
@@ -119,6 +122,10 @@ function App() {
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
   const onStep = (step: AgentStep) =>
     setAgentSteps((current) => (current.some((item) => item.id === step.id) ? current.map((item) => (item.id === step.id ? { ...item, ...step } : item)) : [...current, step]))
+  // Conversation dont la réponse s'écrit (ou attend une validation).
+  const streamingIdRef = useRef<string | null>(null)
+  // Réponse en pause : elle attend ta décision sur une action (exécution durable).
+  const [paused, setPaused] = useState(false)
   // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
   const [regenerating, setRegenerating] = useState(false)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
@@ -266,6 +273,8 @@ function App() {
         const messages = await api.getMessages(id)
         if (cancelled) return
         updateConversation(id, (conversation) => ({ ...conversation, messages }))
+        // Réponse encore en cours ou en attente de validation : on la retrouve.
+        void resumeRun(id)
       } catch (cause) {
         if (!cancelled) fail(cause, 'error.loadMessages')
       } finally {
@@ -554,22 +563,52 @@ function App() {
 
   // ---- Génération (envoi, modification, régénération, arrêt) ---------------
 
+  /** Fin de réponse : l'interface revient au repos. */
+  function resetStreaming() {
+    setSending(false)
+    setStreamingText('')
+    setAgentSteps([])
+    setRegenerating(false)
+    setPaused(false)
+    streamingIdRef.current = null
+  }
+
+  /** Messages relus depuis le serveur (réponse terminée ailleurs, après une pause…). */
+  async function refreshMessages(conversationId: string) {
+    const messages = await api.getMessages(conversationId)
+    updateConversation(conversationId, (conversation) => ({ ...conversation, messages }))
+  }
+
+  /**
+   * Suit une réponse : envoi, reprise après une validation (resume : texte et
+   * étapes conservés), ou reconnexion. run renvoie « paused » si la réponse
+   * attend une décision : l'interface reste alors sur la réponse en cours.
+   */
   async function stream(
     conversationId: string,
-    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<void>,
+    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<'paused' | void>,
     rollback: () => void,
+    options: { resume?: boolean } = {},
   ) {
     setError('')
     setSending(true)
-    setAgentSteps([])
+    setPaused(false)
+    if (!options.resume) setAgentSteps([])
+    streamingIdRef.current = conversationId
     stoppedRef.current = false
     const controller = new AbortController()
     abortRef.current = controller
+    let keep = false
 
     try {
-      await run(controller.signal, (text) => {
+      const outcome = await run(controller.signal, (text) => {
         if (!controller.signal.aborted) setStreamingText((current) => current + text)
       })
+      if (outcome === 'paused') {
+        keep = true
+        setPaused(true)
+        return
+      }
       // Synchronise l'ordre et les titres depuis le serveur.
       const history = await api.listConversations()
       setConversations((current) =>
@@ -598,17 +637,98 @@ function App() {
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null
-        setSending(false)
-        setStreamingText('')
-        setAgentSteps([])
-        setRegenerating(false)
+        if (!keep) resetStreaming()
       }
     }
   }
 
+  /**
+   * Arrêter : demandé au serveur (fermer l'onglet ne suffit plus, la réponse
+   * continuerait). La réponse partielle est gardée.
+   */
   function stopGeneration() {
     stoppedRef.current = true
+    const conversationId = streamingIdRef.current
+    if (conversationId) api.cancelRun(conversationId).catch(() => undefined)
     abortRef.current?.abort()
+    if (paused && conversationId) {
+      resetStreaming()
+      setTimeout(() => void refreshMessages(conversationId).catch(() => undefined), 600)
+    }
+  }
+
+  /** Ta décision : la réponse reprend dans la même bulle (texte et étapes gardés). */
+  async function decideApproval(approvalId: string, approved: boolean) {
+    const conversationId = streamingIdRef.current
+    if (!conversationId) throw new Error(t('agent.approvalExpired'))
+    setAgentSteps((current) => current.map((step) => (step.approval?.id === approvalId ? { ...step, approval: undefined } : step)))
+    await stream(
+      conversationId,
+      async (signal, onToken) => {
+        const result = await api.decideApproval(conversationId, approvalId, approved, { signal, onToken, onStep })
+        if (isPaused(result)) return 'paused'
+        await refreshMessages(conversationId)
+      },
+      () => void refreshMessages(conversationId).catch(() => undefined),
+      { resume: true },
+    )
+  }
+
+  /** Étapes et validations en attente d'une réponse reprise (reconnexion). */
+  const restoreSteps = (snapshot: RunSnapshot) =>
+    snapshot.approvals.reduce<AgentStep[]>(
+      (steps, approval) => {
+        const pending = approvalStep(approval)
+        return steps.some((step) => step.id === pending.id)
+          ? steps.map((step) => (step.id === pending.id ? { ...step, approval: pending.approval, status: 'running' } : step))
+          : [...steps, pending]
+      },
+      snapshot.steps.map((step) => ({ ...step })),
+    )
+
+  /**
+   * Conversation ouverte avec une réponse en cours (onglet rouvert, autre
+   * appareil) : la question, le texte et les étapes réapparaissent, puis la
+   * suite arrive en direct ; une validation en attente est proposée à nouveau.
+   */
+  async function resumeRun(conversationId: string) {
+    if (streamingIdRef.current) return
+    const run = await api.getRun(conversationId).catch(() => null)
+    if (!run || streamingIdRef.current) return
+    if (run.kind === 'message') {
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [...conversation.messages, { id: `run-${run.id}`, role: 'user', content: run.question, createdAt: new Date().toISOString() }],
+      }))
+    } else {
+      setRegenerating(true)
+    }
+    setStreamingText(run.text)
+    setAgentSteps(restoreSteps(run))
+    if (run.status === 'waiting') {
+      streamingIdRef.current = conversationId
+      setSending(true)
+      setPaused(true)
+      return
+    }
+    await stream(
+      conversationId,
+      async (signal, onToken) => {
+        const result = await api.watchRun(conversationId, {
+          signal,
+          onToken,
+          onStep,
+          onSnapshot: (snapshot) => {
+            setStreamingText(snapshot.text)
+            setAgentSteps(restoreSteps(snapshot))
+          },
+        })
+        if (isPaused(result)) return 'paused'
+        await refreshMessages(conversationId)
+      },
+      () => void refreshMessages(conversationId).catch(() => undefined),
+      { resume: true },
+    )
   }
 
   async function sendMessage() {
@@ -646,6 +766,7 @@ function App() {
           { content: message, attachmentIds: attachments.map((file) => file.id) },
           { signal, onToken, onStep },
         )
+        if (isPaused(result)) return 'paused'
         updateConversation(conversationId, (current) => ({
           ...current,
           messages: [...current.messages.filter((item) => item.id !== optimistic.id), result.userMessage, result.assistantMessage],
@@ -684,6 +805,7 @@ function App() {
           { content: text, attachmentIds, editMessageId: original.id },
           { signal, onToken, onStep },
         )
+        if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...previous.slice(0, index), result.userMessage, result.assistantMessage],
@@ -702,6 +824,7 @@ function App() {
       conversation.id,
       async (signal, onToken) => {
         const result = await api.regenerate(conversation.id, { signal, onToken, onStep })
+        if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...current.messages.slice(0, -1), result.assistantMessage],
@@ -912,13 +1035,15 @@ function App() {
                       className={`message-avatar ${message.role === 'assistant' && activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}
                     >
                       {message.role === 'user' ? (
-                        username.slice(0, 1).toUpperCase()
+                        <img src="/logo.png" alt="" className="message-user-logo" />
                       ) : activeAgent ? (
                         <MessageAgentAvatar avatar={activeAgent.avatar} />
                       ) : responder.kind === 'model' ? (
-                        <ProviderLogo provider={responder.provider} size={16} />
+                        <span className="message-badge">
+                          <ProviderLogo provider={responder.provider} size={16} />
+                        </span>
                       ) : (
-                        <span>✳</span>
+                        <span className="message-badge">✳</span>
                       )}
                     </div>
                     <div className="message-body">
@@ -1023,14 +1148,16 @@ function App() {
                       {activeAgent ? (
                         <MessageAgentAvatar avatar={activeAgent.avatar} mood={agentMood} />
                       ) : responder.kind === 'model' ? (
-                        <ProviderLogo provider={responder.provider} size={16} />
+                        <span className="message-badge">
+                          <ProviderLogo provider={responder.provider} size={16} />
+                        </span>
                       ) : (
-                        '✳'
+                        <span className="message-badge">✳</span>
                       )}
                     </div>
                     <div className="message-body">
                       <div className="message-author">{assistantName}</div>
-                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} />}
+                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={decideApproval} />}
                       {streamingText ? (
                         <Markdown source={streamingText} />
                       ) : (

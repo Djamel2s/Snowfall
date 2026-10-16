@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import type { OrganizationKeyring } from "../crypto/keyring.js";
 import { withTenant, type TenantContext } from "../db/tenant.js";
 import type { ModelSelection, ProviderId } from "../llm/types.js";
+import { defaultAgentTools, knownTools } from "../agent/catalog.js";
 import { readAvatar, type AgentProfile } from "./profile.js";
 
 export type Agent = AgentProfile & ModelSelection & {
@@ -12,7 +13,8 @@ export type Agent = AgentProfile & ModelSelection & {
   updatedAt: string;
 };
 
-export type AgentInput = AgentProfile & ModelSelection;
+/** tools absent : lecture seule (defaultAgentTools). */
+export type AgentInput = Omit<AgentProfile, "tools"> & Partial<Pick<AgentProfile, "tools">> & ModelSelection;
 
 export interface AgentStore {
   list(tenant: TenantContext): Promise<Agent[]>;
@@ -59,6 +61,8 @@ export class PostgresAgentStore implements AgentStore {
     return {
       ...profile,
       avatar: readAvatar(profile.avatar),
+      // Profil enregistré avant le choix des outils, ou outil retiré du catalogue.
+      tools: knownTools(profile.tools ?? defaultAgentTools),
       id: row.id,
       provider: row.provider,
       model: row.model,
@@ -73,6 +77,7 @@ export class PostgresAgentStore implements AgentStore {
       name: input.name,
       avatar: input.avatar,
       instructions: input.instructions,
+      tools: knownTools(input.tools ?? defaultAgentTools),
     };
     return this.keyring.encrypt(
       client,

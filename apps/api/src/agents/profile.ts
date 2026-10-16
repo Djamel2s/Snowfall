@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultAgentTools, toolIds } from "../agent/catalog.js";
 
 export const alienColors = ["pink", "coral", "mint", "lavender", "sky", "lime", "snow", "gold"] as const;
 export const alienEyes = ["classic", "round", "sleepy", "happy", "wink", "sparkle"] as const;
@@ -53,6 +54,8 @@ export const agentProfileSchema = z.object({
   name: z.string().trim().min(1).max(40),
   avatar: avatarSchema,
   instructions: z.string().trim().max(4000).default(""),
+  /** Outils choisis par l'auteur, parmi ceux de l'organisation (vérifié à l'enregistrement). */
+  tools: z.array(z.enum(toolIds)).max(toolIds.length).default(defaultAgentTools),
 }).strict();
 
 export type AgentAvatar = z.infer<typeof avatarSchema>;

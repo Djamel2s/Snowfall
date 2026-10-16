@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { TenantContext } from "../db/tenant.js";
+import type { ChatTurn } from "../graph/chat-graph.js";
 import type { ActiveBase, Citation, KnowledgeService, Passage } from "../knowledge/service.js";
 import { renderKnowledge } from "../knowledge/service.js";
 import { defineTool } from "./tools.js";
@@ -20,6 +21,21 @@ export class CitationRegistry {
       this.passages.set(key, numbered);
       return numbered;
     });
+  }
+
+  /**
+   * Reprise d'un run : renumérote à l'identique à partir des passages gardés
+   * dans la transcription (résultats de search_knowledge).
+   */
+  seed(turns: ChatTurn[]) {
+    for (const turn of turns) {
+      if (turn.role !== "tool" || turn.name !== "search_knowledge" || !Array.isArray(turn.data)) continue;
+      for (const passage of turn.data as Passage[]) {
+        const key = `${passage.sourceId}:${passage.text.slice(0, 200)}`;
+        if (!this.passages.has(key)) this.passages.set(key, passage);
+      }
+    }
+    return this;
   }
 
   /** Sources réellement citées ([n] dans la réponse), sinon toutes celles consultées. */
@@ -73,7 +89,8 @@ export function knowledgeTool(
       if (selected.length === 0) return { content: "Cette base n'est pas disponible dans cette conversation.", summary: query };
       const found = citations.add(await service.retrieve(tenant, selected, { text: query }));
       if (found.length === 0) return { content: "Aucun extrait pertinent trouvé pour cette requête.", summary: query };
-      return { content: renderKnowledge(found), summary: query };
+      // Passages numérotés gardés dans la transcription : sources après une reprise.
+      return { content: renderKnowledge(found), summary: query, data: found };
     },
   });
 }

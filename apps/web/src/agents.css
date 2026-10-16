@@ -900,7 +900,7 @@
 /* Alien en pied à côté de la réponse : du nom jusqu'aux boutons d'action. */
 .message-avatar.message-avatar-alien {
   display: flex;
-  width: 60px;
+  width: var(--message-rail);
   height: auto;
   flex: none;
   justify-content: center;
@@ -926,6 +926,44 @@
 
 @media (max-width: 640px) {
   .message-avatar-alien .agent-avatar { margin-inline: -22px; transform-origin: top center; }
+}
+
+/* Colonne d'avatar commune (toi, l'agent, le modèle) : tous les textes démarrent
+   au même endroit. Sa largeur est celle de l'alien en pied. */
+.messages { --message-rail: 60px; }
+
+.message .message-avatar:not(.message-avatar-alien) {
+  display: flex;
+  width: var(--message-rail);
+  height: auto;
+  flex: none;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-badge {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgba(171, 206, 248, .17);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(140, 184, 238, .18), rgba(255, 255, 255, .045));
+  color: #b9d8ff;
+  font-size: 12px;
+}
+
+.message-user-logo { display: block; width: 30px; height: 30px; object-fit: contain; opacity: .9; }
+
+.user-avatar-logo { display: block; width: 20px; height: 20px; object-fit: contain; }
+
+@media (max-width: 640px) {
+  .messages { --message-rail: 46px; }
+  .message-badge { width: 29px; height: 29px; }
+  .message-user-logo { width: 27px; height: 27px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

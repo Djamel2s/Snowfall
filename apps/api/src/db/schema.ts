@@ -374,6 +374,11 @@ export const organizationSettings = pgTable.withRLS(
     // Import de pages web dans les bases ; liste vide = tout domaine public.
     linksEnabled: boolean("links_enabled").notNull().default(true),
     linkDomains: text("link_domains").array().notNull().default(sql`ARRAY[]::text[]`),
+    // Outils d'agent activés pour l'organisation (identifiants inconnus ignorés à la lecture).
+    enabledTools: text("enabled_tools")
+      .array()
+      .notNull()
+      .default(sql`ARRAY['search_knowledge', 'save_to_knowledge']::text[]`),
     updatedBy: uuid("updated_by"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -397,6 +402,7 @@ export const organizationSettings = pgTable.withRLS(
       sql`${table.embeddingProvider} IS NULL OR ${table.embeddingProvider} IN ('mistral', 'openai', 'google', 'local')`,
     ),
     check("organization_settings_link_domains_check", sql`cardinality(${table.linkDomains}) <= 200`),
+    check("organization_settings_tools_check", sql`cardinality(${table.enabledTools}) <= 50`),
     tenantPolicy("organization_settings_tenant", table.organizationId),
   ],
 );
@@ -680,5 +686,102 @@ export const knowledgeChunks = pgTable.withRLS(
     }).onDelete("cascade"),
     check("knowledge_chunks_ordinal_check", sql`${table.ordinal} >= 0`),
     knowledgePolicy("knowledge_chunks_tenant", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Exécution durable des agents -------------------------------------------
+// Une réponse d'agent est un « run » : il survit à une déconnexion, à une pause
+// de validation et au redémarrage du serveur. Tout contenu est chiffré avec la
+// clé de l'organisation ; seuls les identifiants et l'état sont en clair.
+
+export const agentRuns = pgTable.withRLS(
+  "agent_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    kind: text("kind").notNull(),
+    // running : en cours ou à reprendre ; waiting : attend une validation.
+    status: text("status").notNull().default("running"),
+    // Demande d'origine (message, pièces jointes, modification…), chiffrée.
+    request: text("request").notNull(),
+    // Avancement pour une reconnexion (texte partiel, étapes, validations), chiffré.
+    progress: text("progress"),
+    // Instance qui exécute le run, jusqu'à l'expiration de son bail.
+    leaseOwner: text("lease_owner"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_runs_id_org_user_unique").on(table.id, table.organizationId, table.userId),
+    // Une seule réponse active par conversation.
+    uniqueIndex("agent_runs_active_idx")
+      .on(table.conversationId)
+      .where(sql`${table.status} IN ('running', 'waiting')`),
+    index("agent_runs_lease_idx").on(table.status, table.leaseUntil),
+    foreignKey({
+      name: "agent_runs_conversation_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check("agent_runs_kind_check", sql`${table.kind} IN ('message', 'regenerate')`),
+    check("agent_runs_status_check", sql`${table.status} IN ('running', 'waiting', 'done', 'failed', 'cancelled')`),
+    check("agent_runs_lease_owner_check", sql`${table.leaseOwner} IS NULL OR length(${table.leaseOwner}) BETWEEN 1 AND 80`),
+    tenantPolicy("agent_runs_tenant", table.organizationId, table.userId),
+  ],
+);
+
+// Points de reprise LangGraph (état complet du graphe après chaque étape).
+export const agentCheckpoints = pgTable.withRLS(
+  "agent_checkpoints",
+  {
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    checkpointId: text("checkpoint_id").notNull(),
+    parentId: text("parent_id"),
+    checkpoint: text("checkpoint").notNull(),
+    metadata: text("metadata").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "agent_checkpoints_pk", columns: [table.runId, table.checkpointId] }),
+    foreignKey({
+      name: "agent_checkpoints_run_fk",
+      columns: [table.runId, table.organizationId, table.userId],
+      foreignColumns: [agentRuns.id, agentRuns.organizationId, agentRuns.userId],
+    }).onDelete("cascade"),
+    check("agent_checkpoints_id_check", sql`length(${table.checkpointId}) BETWEEN 1 AND 64`),
+    tenantPolicy("agent_checkpoints_tenant", table.organizationId, table.userId),
+  ],
+);
+
+// Écritures intermédiaires d'une étape (résultat de chaque appel d'outil) :
+// un outil déjà exécuté n'est jamais relancé à la reprise.
+export const agentCheckpointWrites = pgTable.withRLS(
+  "agent_checkpoint_writes",
+  {
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    runId: uuid("run_id").notNull(),
+    checkpointId: text("checkpoint_id").notNull(),
+    taskId: text("task_id").notNull(),
+    idx: integer("idx").notNull(),
+    channel: text("channel").notNull(),
+    value: text("value").notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "agent_checkpoint_writes_pk", columns: [table.runId, table.checkpointId, table.taskId, table.idx] }),
+    foreignKey({
+      name: "agent_checkpoint_writes_run_fk",
+      columns: [table.runId, table.organizationId, table.userId],
+      foreignColumns: [agentRuns.id, agentRuns.organizationId, agentRuns.userId],
+    }).onDelete("cascade"),
+    check("agent_checkpoint_writes_task_check", sql`length(${table.taskId}) BETWEEN 1 AND 64`),
+    check("agent_checkpoint_writes_channel_check", sql`length(${table.channel}) BETWEEN 1 AND 64`),
+    tenantPolicy("agent_checkpoint_writes_tenant", table.organizationId, table.userId),
   ],
 );

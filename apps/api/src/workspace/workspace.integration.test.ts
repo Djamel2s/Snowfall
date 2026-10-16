@@ -69,8 +69,10 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
         embeddingProvider: "mistral",
         linksEnabled: false,
         linkDomains: ["docs.example.com"],
+        tools: ["search_knowledge"],
       });
       const saved = await settings.get(tenant(memberA));
+      assert.deepEqual(saved.tools, ["search_knowledge"]);
       assert.deepEqual(saved.allowedProviders, ["mistral", "anthropic"]);
       assert.deepEqual(saved.providerTokenLimits, { anthropic: 2_000 });
       assert.equal(saved.embeddingProvider, "mistral");

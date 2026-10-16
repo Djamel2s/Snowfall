@@ -1,5 +1,5 @@
-import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import { runTool, toolSpec, type AgentTool, type ToolSpec } from "../agent/tools.js";
+import { Annotation, Command, END, Send, START, StateGraph, interrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
+import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
 
 /** Image jointe, transmise en base64 aux modèles multimodaux. */
 export type ModelImage = { mediaType: "image/png" | "image/jpeg" | "image/webp"; data: string };
@@ -24,7 +24,7 @@ export type ToolCall = {
 export type ChatTurn =
   | { role: "user"; content: string; images?: ModelImage[] }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
-  | { role: "tool"; toolCallId: string; name: string; content: string; isError?: boolean };
+  | { role: "tool"; toolCallId: string; name: string; content: string; isError?: boolean; data?: unknown };
 
 export type TokenUsage = { inputTokens: number; outputTokens: number };
 
@@ -81,20 +81,43 @@ export class ModelRefusalError extends Error {
   }
 }
 
+/** Action d'écriture en attente de validation (pause durable du run). */
+export type PendingApproval = { id: string; callId: string; name: string; preview: ToolPreview };
+
 export type ChatResult = {
   content: string;
   model: string;
   usage?: TokenUsage;
   /** Étapes (appels d'outils) effectuées pour produire la réponse. */
   steps?: number;
+  /** Run en pause : validations attendues (la réponse n'est pas terminée). */
+  pending?: PendingApproval[];
+  /** Transcription complète (résultats d'outils compris), pour les sources. */
+  turns?: ChatTurn[];
 };
 
 /** Événement d'outil diffusé à l'interface pendant l'exécution. */
 export type ToolEvent = {
   id: string;
   name: string;
-  status: "running" | "done" | "error";
+  /** denied : l'utilisateur a refusé (outil d'écriture). */
+  status: "running" | "done" | "error" | "denied";
   summary?: string | undefined;
+};
+
+/**
+ * Exécution durable : l'état du graphe est enregistré après chaque étape
+ * (checkpointer), une validation met le run en pause (interrupt) et resume
+ * le reprend avec les décisions, par identifiant de demande.
+ */
+export type DurableOptions = {
+  checkpointer: BaseCheckpointSaver;
+  /** Identifiant du run (thread LangGraph). */
+  threadId: string;
+  /** Reprise : décision par demande de validation. Absent : nouveau run. */
+  resume?: Record<string, boolean>;
+  /** Reprise après une panne : on repart du dernier point de reprise, sans nouvelle entrée. */
+  continue?: boolean;
 };
 
 export type ChatRunner = (
@@ -108,7 +131,14 @@ export type ChatRunner = (
     /** Nombre maximal d'aller-retour modèle ↔ outils. */
     maxSteps?: number | undefined;
   },
-  options?: { onToken?: (text: string) => void; onTool?: (event: ToolEvent) => void; signal?: AbortSignal },
+  options?: {
+    onToken?: (text: string) => void;
+    onTool?: (event: ToolEvent) => void;
+    /** Validation humaine en mémoire (sans exécution durable). Absente : écritures refusées. */
+    approve?: Approver;
+    durable?: DurableOptions;
+    signal?: AbortSignal;
+  },
 ) => Promise<ChatResult>;
 
 /** Appels d'outils exécutés en parallèle par étape (au-delà, refusés). */
@@ -129,32 +159,49 @@ const sum = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage |
   a || b ? { inputTokens: (a?.inputTokens ?? 0) + (b?.inputTokens ?? 0), outputTokens: (a?.outputTokens ?? 0) + (b?.outputTokens ?? 0) } : undefined;
 
 const AgentState = Annotation.Root({
-  /** Transcription : historique, message, puis réponses et résultats d'outils. */
-  turns: Annotation<ChatTurn[]>,
+  /**
+   * Transcription : historique, message, puis réponses et résultats d'outils.
+   * Chaque nœud ajoute ses tours (les appels d'outils parallèles aussi).
+   */
+  turns: Annotation<ChatTurn[]>({ reducer: (current, added) => current.concat(added), default: () => [] }),
   instructions: Annotation<string | undefined>,
   /** Texte visible produit par le modèle, toutes étapes confondues. */
   response: Annotation<string>,
   usage: Annotation<TokenUsage | undefined>,
-  /** Aller-retour modèle → outils déjà effectués. */
+  /** Aller-retour modèle → outils déjà demandés. */
   steps: Annotation<number>,
 });
+
+type State = typeof AgentState.State;
+
+/** Appels demandés par le dernier tour du modèle (suivi, au plus, de refus immédiats). */
+const lastCalls = (turns: ChatTurn[]) => {
+  const last = [...turns].reverse().find((turn) => turn.role !== "tool");
+  return last?.role === "assistant" ? (last.toolCalls ?? []) : [];
+};
 
 /**
  * Boucle d'agent :
  *
- *   START → model ──(appels d'outils ?)──► tools ──► model … ──► END
+ *   START → model ──(appels d'outils ?)──► tool ×N (en parallèle) ──► model … ──► END
  *
- * Le nœud « model » demande une réponse ; s'il réclame des outils, le nœud
- * « tools » les exécute et ajoute leurs résultats à la transcription, puis on
- * revient au modèle. Au-delà de maxSteps, le modèle est rappelé SANS outils :
- * il doit conclure avec ce qu'il a.
+ * Le nœud « model » demande une réponse ; chaque appel d'outil devient une
+ * tâche « tool » distincte (Send). Avec un checkpointer, le résultat de chaque
+ * tâche est enregistré dès qu'il existe : à la reprise (après une validation
+ * ou une panne), une tâche terminée n'est JAMAIS relancée, seule celle qui
+ * attendait l'est. Au-delà de maxSteps, le modèle est rappelé SANS outils.
  */
-export function buildAgentGraph(model: ChatModel, tools: AgentTool[], maxSteps: number) {
+export function buildAgentGraph(
+  model: ChatModel,
+  tools: AgentTool[],
+  maxSteps: number,
+  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver } = {},
+) {
   const specs = tools.map(toolSpec);
-  const lastCalls = (turns: ChatTurn[]) => {
-    const last = turns.at(-1);
-    return last?.role === "assistant" ? (last.toolCalls ?? []) : [];
-  };
+  // Exécution durable : la validation est une pause du graphe, enregistrée.
+  const approve: Approver | undefined = options.checkpointer
+    ? async ({ callId, name, preview }) => interrupt<Omit<PendingApproval, "id">, boolean>({ callId, name, preview }) === true
+    : options.approve;
 
   return new StateGraph(AgentState)
     .addNode("model", async (state, config) => {
@@ -182,62 +229,112 @@ export function buildAgentGraph(model: ChatModel, tools: AgentTool[], maxSteps: 
       }
 
       const turn: ChatTurn = { role: "assistant", content: text, ...(calls.length ? { toolCalls: calls } : {}) };
+      // Au-delà de la limite par étape : refus immédiat, sans tâche.
+      const refused: ChatTurn[] = calls.slice(MAX_TOOL_CALLS_PER_STEP).map((call) => ({
+        role: "tool",
+        toolCallId: call.id,
+        name: call.name,
+        content: "Trop d'appels simultanés : réessaie avec moins d'outils.",
+        isError: true,
+      }));
       // Le texte d'une étape d'outil (« Je vais chercher… ») est séparé de la suite.
       const response = text ? (state.response ? `${state.response}\n\n${text}` : text) : state.response;
-      return { turns: [...state.turns, turn], response, usage: sum(state.usage, usage) };
+      return {
+        turns: [turn, ...refused],
+        response,
+        usage: sum(state.usage, usage),
+        steps: calls.length ? state.steps + 1 : state.steps,
+      };
     })
-    .addNode("tools", async (state, config) => {
-      const calls = lastCalls(state.turns);
+    .addNode("tool", async (input: { call: ToolCall }, config) => {
+      const { call } = input;
       const signal = config.signal ?? new AbortController().signal;
-      const results = await Promise.all(
-        calls.map(async (call, index): Promise<ChatTurn> => {
-          if (index >= MAX_TOOL_CALLS_PER_STEP) {
-            return { role: "tool", toolCallId: call.id, name: call.name, content: "Trop d'appels simultanés : réessaie avec moins d'outils.", isError: true };
-          }
-          config.writer?.({ tool: { id: call.id, name: call.name, status: "running" } satisfies ToolEvent });
-          const result = await runTool(tools, call, signal);
-          config.writer?.({
-            tool: { id: call.id, name: call.name, status: result.isError ? "error" : "done", summary: result.summary } satisfies ToolEvent,
-          });
-          return { role: "tool", toolCallId: call.id, name: call.name, content: result.content, ...(result.isError ? { isError: true } : {}) };
-        }),
-      );
-      return { turns: [...state.turns, ...results], steps: state.steps + 1 };
+      config.writer?.({ tool: { id: call.id, name: call.name, status: "running" } satisfies ToolEvent });
+      const result = await runTool(tools, call, signal, approve);
+      const status = result.denied ? "denied" : result.isError ? "error" : "done";
+      config.writer?.({ tool: { id: call.id, name: call.name, status, summary: result.summary } satisfies ToolEvent });
+      const turn: ChatTurn = {
+        role: "tool",
+        toolCallId: call.id,
+        name: call.name,
+        content: result.content,
+        ...(result.isError ? { isError: true } : {}),
+        ...(result.data !== undefined ? { data: result.data } : {}),
+      };
+      return { turns: [turn] };
     })
     .addEdge(START, "model")
-    .addConditionalEdges("model", (state) => (lastCalls(state.turns).length > 0 ? "tools" : END), ["tools", END])
-    .addEdge("tools", "model")
-    .compile();
+    .addConditionalEdges(
+      "model",
+      (state: State) => {
+        const calls = lastCalls(state.turns).slice(0, MAX_TOOL_CALLS_PER_STEP);
+        return calls.length ? calls.map((call) => new Send("tool", { call })) : END;
+      },
+      ["tool", END],
+    )
+    .addEdge("tool", "model")
+    .compile(options.checkpointer ? { checkpointer: options.checkpointer } : {});
 }
 
 export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
   return async (input, options = {}) => {
     const tools = model.supportsTools ? (input.tools ?? []) : [];
     const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;
-    const graph = buildAgentGraph(model, tools, maxSteps);
+    const durable = options.durable;
+    const graph = buildAgentGraph(model, tools, maxSteps, {
+      ...(options.approve ? { approve: options.approve } : {}),
+      ...(durable ? { checkpointer: durable.checkpointer } : {}),
+    });
     const turns: ChatTurn[] = [
       ...(input.history ?? []),
       { role: "user", content: input.message, ...(input.images?.length ? { images: input.images } : {}) },
     ];
+    const config = {
+      // Chaque étape compte deux super-étapes (model + outils), plus la conclusion.
+      recursionLimit: 2 * maxSteps + 4,
+      ...(durable ? { configurable: { thread_id: durable.threadId } } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    };
 
     const stream = await graph.stream(
-      { turns, instructions: input.instructions, response: "", usage: undefined, steps: 0 },
-      {
-        streamMode: ["custom", "values"],
-        // Chaque étape compte deux nœuds (model + tools), plus la conclusion.
-        recursionLimit: 2 * maxSteps + 4,
-        ...(options.signal ? { signal: options.signal } : {}),
-      },
+      durable?.resume
+        ? new Command({ resume: durable.resume })
+        : durable?.continue
+          ? null
+          : { turns, instructions: input.instructions, response: "", usage: undefined, steps: 0 },
+      { ...config, streamMode: ["custom", "values"] },
     );
 
-    let final: { response: string; usage?: TokenUsage | undefined; steps: number } | undefined;
+    let final: State | undefined;
     for await (const [mode, chunk] of stream) {
       if (mode === "custom") {
         const event = chunk as { token?: unknown; tool?: ToolEvent };
         if (typeof event.token === "string") options.onToken?.(event.token);
         if (event.tool) options.onTool?.(event.tool);
       } else {
-        final = chunk as typeof final;
+        final = chunk as State;
+      }
+    }
+
+    // Pause : des tâches attendent une validation (état enregistré).
+    if (durable) {
+      const snapshot = await graph.getState(config);
+      final = snapshot.values as State;
+      const waiting = new Set(snapshot.next);
+      const pending = snapshot.tasks
+        .filter((task) => waiting.has(task.name))
+        .flatMap((task) => task.interrupts)
+        .filter((item) => item.id)
+        .map((item) => ({ id: item.id!, ...(item.value as Omit<PendingApproval, "id">) }));
+      if (pending.length) {
+        return {
+          content: final.response,
+          model: model.id,
+          steps: final.steps,
+          pending,
+          turns: final.turns,
+          ...(final.usage ? { usage: final.usage } : {}),
+        };
       }
     }
 
@@ -248,6 +345,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
       content: final!.response,
       model: model.id,
       steps: final!.steps,
+      turns: final!.turns,
       ...(final?.usage ? { usage: final.usage } : {}),
     };
   };

@@ -825,3 +825,117 @@
 @media (hover: none) {
   .knowledge-source-actions { opacity: 1; }
 }
+
+/* ---- Étapes de l'agent et validation humaine ---------------------------- */
+
+.agent-steps {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-step-line {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid rgba(183, 210, 244, .1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .025);
+  color: #8fa0b8;
+  font-size: 11px;
+}
+
+.agent-step-summary { overflow: hidden; color: #6f819c; text-overflow: ellipsis; white-space: nowrap; }
+.agent-step-done .agent-step-line > svg:last-child { color: #8ee6b8; }
+.agent-step-error .agent-step-line > svg:last-child { color: #ffb9bd; }
+.agent-step-denied .agent-step-line { color: #6f819c; text-decoration: line-through; text-decoration-color: rgba(111, 129, 156, .5); }
+
+.approval-card {
+  display: grid;
+  max-width: 560px;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 196, 120, .35);
+  border-radius: 14px;
+  background: rgba(255, 196, 120, .06);
+}
+
+.approval-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #ffd7a1;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.approval-subject { margin: 0; color: #dbe6f5; font-size: 13px; font-weight: 600; }
+
+.approval-detail {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .25);
+  color: #b9c6d8;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.approval-error { margin: 0; color: #ffb9bd; font-size: 11px; }
+
+.approval-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.approval-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(183, 210, 244, .16);
+  border-radius: 999px;
+  background: transparent;
+  color: #b9c6d8;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.approval-actions button:disabled { opacity: .5; cursor: default; }
+.approval-deny:hover:not(:disabled) { border-color: rgba(255, 185, 189, .45); color: #ffb9bd; }
+.approval-approve { border-color: rgba(142, 230, 184, .45) !important; background: rgba(142, 230, 184, .1) !important; color: #b8f2d2 !important; }
+.approval-approve:hover:not(:disabled) { background: rgba(142, 230, 184, .18) !important; }
+
+/* ---- Outils de l'agent (studio) ------------------------------------------ */
+
+.studio-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.studio-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgba(183, 210, 244, .12);
+  border-radius: 999px;
+  background: transparent;
+  color: #7d8ca4;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+
+.studio-tool:hover { color: #dbe6f5; border-color: rgba(185, 217, 255, .3); }
+.studio-tool[aria-pressed="true"] { border-color: rgba(158, 202, 255, .45); background: rgba(158, 202, 255, .1); color: #cfe2ff; }
+.studio-tool-guard { color: #ffd7a1; }
