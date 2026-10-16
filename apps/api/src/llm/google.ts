@@ -23,12 +23,21 @@ type GeminiChunk = {
     finishReason?: string;
   }[];
   promptFeedback?: { blockReason?: string };
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    /** Part du prompt servie par le cache implicite de Gemini (incluse dans promptTokenCount). */
+    cachedContentTokenCount?: number;
+  };
 };
 
 // Arrêts imposés par les filtres de Google : traités comme un refus du modèle.
 const BLOCKED = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY"]);
 const RETRYABLE = new Set([429, 500, 503]);
+// Réflexion (résumée) demandée pour l'afficher, sauf aux anciennes générations qui ne raisonnent pas.
+// Liste d'exclusion : les alias (gemini-flash-latest…) et les nouveaux modèles sont couverts.
+const NO_THINKING = /^gemini-(1\.|2\.0)/;
 
 async function request(path: string, init: RequestInit, apiKey: string, attempts = 3): Promise<Response> {
   for (let attempt = 1; ; attempt++) {
@@ -133,10 +142,15 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
           method: "POST",
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           body: JSON.stringify({
-            systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions) }] },
+            // Début de requête stable (prompt système, puis historique) : le cache implicite de Gemini s'applique.
+            systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary) }] },
             contents: toGeminiContents(conversationTurns(chat)),
             ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
-            generationConfig: { maxOutputTokens: settings.maxOutputTokens, temperature: 0.3 },
+            generationConfig: {
+              maxOutputTokens: settings.maxOutputTokens,
+              temperature: 0.3,
+              ...(NO_THINKING.test(model) ? {} : { thinkingConfig: { includeThoughts: true } }),
+            },
           }),
         },
         settings.apiKey,
@@ -150,8 +164,8 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
 
         const candidate = chunk.candidates?.[0];
         for (const part of candidate?.content?.parts ?? []) {
-          // Les parties « thought » (raisonnement) ne sont pas affichées.
-          if (part.text && !part.thought) yield { type: "token", text: part.text };
+          // Parties « thought » : résumé de la réflexion, affiché à part, jamais dans la réponse.
+          if (part.text) yield part.thought ? { type: "reasoning", text: part.text } : { type: "token", text: part.text };
           if (part.functionCall) {
             calls += 1;
             yield {
@@ -175,6 +189,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
           inputTokens: usage.promptTokenCount ?? 0,
           // Le raisonnement est facturé comme de la sortie.
           outputTokens: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0),
+          ...(usage.cachedContentTokenCount ? { cachedInputTokens: usage.cachedContentTokenCount } : {}),
         };
       }
     },

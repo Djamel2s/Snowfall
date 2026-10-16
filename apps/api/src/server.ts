@@ -18,6 +18,7 @@ import {
   type ChatTurn,
   type ModelImage,
   type PendingApproval,
+  type TokenUsage,
 } from "./graph/chat-graph.js";
 import {
   ProviderRegistry,
@@ -68,6 +69,15 @@ import {
   type StoredMessage,
 } from "./conversations/store.js";
 import { buildModelInput, estimateTokens } from "./attachments/prompt.js";
+import {
+  compactionCandidate,
+  createSummarizer,
+  MemorySummaryStore,
+  planContext,
+  PostgresSummaryStore,
+  type Summarizer,
+  type SummaryStore,
+} from "./conversations/compaction.js";
 import { PostgresAttachmentStore, type AttachmentStore } from "./attachments/store.js";
 import { PostgresProjectStore, type ProjectStore } from "./projects/store.js";
 import { PostgresMemberStore, provisionIdentity, type MemberStore } from "./workspace/members.js";
@@ -177,6 +187,10 @@ export type AppDependencies = {
   runs?: RunStore;
   /** Points de reprise du graphe, par propriétaire. Absent : en mémoire. */
   checkpointer?: (tenant: { organizationId: string; userId: string }) => BaseCheckpointSaver;
+  /** Résumés de compaction des longues conversations. Absent : en mémoire. */
+  summaries?: SummaryStore;
+  /** Résumeur (compaction). Absent : pas de compaction, historique tronqué au budget. */
+  summarize?: Summarizer;
   /** Durées des runs (tests : quelques millisecondes pour simuler une panne). */
   runTiming?: Partial<typeof RUN_TIMING>;
   /** Remplace le routage par modèle (tests). */
@@ -194,6 +208,9 @@ const RUN_TIMING = {
   /** Validation sans réponse au-delà : refusée. */
   approvalTtlSeconds: 24 * 60 * 60,
 };
+
+/** Entrée du modèle au lancement d'un run (le résumé de compaction part dans le prompt système). */
+type RunInput = { history: ChatTurn[]; message: string; images: ModelImage[]; summary?: string | undefined };
 
 /** Échec attendu d'un run (conversation supprimée, modèle retiré…) : message transmis tel quel. */
 class RunFailure extends Error {}
@@ -243,6 +260,7 @@ export function createAppServer(deps: AppDependencies) {
   const memoryCheckpoints = new MemorySaver();
   const checkpointerFor = deps.checkpointer ?? (() => memoryCheckpoints);
   const runEvents = new RunEvents();
+  const summaries = deps.summaries ?? new MemorySummaryStore();
   /** Identifiant de cette instance (bail des runs qu'elle exécute). */
   const instance = `api-${randomUUID()}`;
   const localRuns = new Map<string, { stop: (reason: "cancel" | "lost" | "shutdown") => void }>();
@@ -864,7 +882,7 @@ export function createAppServer(deps: AppDependencies) {
       run: RunRecord,
       answer: string,
       sources: MessageSource[],
-      outcome: { usage?: UsageTotals | undefined; model: string; partial: boolean; steps: number },
+      outcome: { usage?: TokenUsage | undefined; model: string; partial: boolean; steps: number },
     ) {
       const { request: input } = run;
       const payload =
@@ -885,6 +903,8 @@ export function createAppServer(deps: AppDependencies) {
       const counted = outcome.usage ?? { inputTokens: estimateTokens(input.content), outputTokens: estimateTokens(answer) };
       deps.metrics?.tokens.inc({ provider: input.provider, direction: "input" }, counted.inputTokens);
       deps.metrics?.tokens.inc({ provider: input.provider, direction: "output" }, counted.outputTokens);
+      // Inclus dans « input » : le rapport des deux mesure l'efficacité du cache.
+      if (counted.cachedInputTokens) deps.metrics?.tokens.inc({ provider: input.provider, direction: "cached_input" }, counted.cachedInputTokens);
       await deps.settings?.record(user, input.provider, counted).catch((error: unknown) => {
         request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
       });
@@ -898,11 +918,45 @@ export function createAppServer(deps: AppDependencies) {
           model: outcome.model,
           inputTokens: counted.inputTokens,
           outputTokens: counted.outputTokens,
+          // Part de l'entrée servie par le cache du fournisseur (efficacité du cache).
+          cachedInputTokens: counted.cachedInputTokens ?? 0,
           partial: outcome.partial,
           steps: outcome.steps,
         },
       });
       return payload;
+    }
+
+    /**
+     * Compaction en arrière-plan : si l'historique non résumé dépasse le seuil,
+     * les échanges anciens sont résumés (avec le résumé précédent) par le modèle
+     * de la conversation. Échec sans conséquence : l'historique est alors tronqué.
+     */
+    async function compact(request: FastifyRequest, user: AuthenticatedUser, conversationId: string, input: RunRequest) {
+      if (!deps.summarize) return;
+      try {
+        const messages = await conversationStore.getMessages(user, conversationId);
+        if (!messages) return;
+        const candidate = compactionCandidate(messages, await summaries.get(user, conversationId));
+        if (!candidate) return;
+        const result = await deps.summarize({ selection: input.selection, previous: candidate.previous, messages: candidate.fold });
+        if (!result) return;
+        await summaries.set(user, conversationId, {
+          uptoMessageId: candidate.uptoMessageId,
+          coveredMessages: candidate.coveredMessages,
+          summary: result.summary,
+          model: result.model,
+        });
+        if (result.usage) await deps.settings?.record(user, input.provider, result.usage);
+        await kit.record(request, user, {
+          eventType: "conversation.compacted",
+          targetType: "conversation",
+          targetId: conversationId,
+          details: { messages: candidate.coveredMessages, model: result.model, outputTokens: result.usage?.outputTokens ?? 0 },
+        });
+      } catch (error) {
+        request.log.warn({ err: error }, "Compaction de la conversation impossible");
+      }
     }
 
     /** Arrêt demandé : la réponse partielle est gardée (comme avant), le run effacé. */
@@ -936,7 +990,7 @@ export function createAppServer(deps: AppDependencies) {
       request: FastifyRequest,
       user: AuthenticatedUser,
       run: RunRecord,
-      mode: { start?: { input: { history: ChatTurn[]; message: string; images: ModelImage[] }; plan: KnowledgePlan }; resume?: Record<string, boolean>; continue?: boolean },
+      mode: { start?: { input: RunInput; plan: KnowledgePlan }; resume?: Record<string, boolean>; continue?: boolean },
     ) {
       const controller = new AbortController();
       let stopReason: "cancel" | "lost" | "shutdown" | null = null;
@@ -976,7 +1030,7 @@ export function createAppServer(deps: AppDependencies) {
         if (!mode.start && selection && !(await isModelPermitted(user, selection))) throw new RunFailure("Provider unavailable");
         const permitted = await permittedFor(user, agent);
 
-        let input = mode.start?.input ?? { history: [], message: "", images: [] };
+        let input: RunInput = mode.start?.input ?? { history: [], message: "", images: [] };
         if (!mode.start) {
           const values = (await saver.getTuple({ configurable: { thread_id: run.id } }))?.checkpoint.channel_values as
             | { turns?: ChatTurn[]; response?: string }
@@ -995,6 +1049,7 @@ export function createAppServer(deps: AppDependencies) {
             history: input.history,
             images: input.images,
             instructions: agent?.instructions,
+            summary: input.summary,
             ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}),
           },
           {
@@ -1002,6 +1057,10 @@ export function createAppServer(deps: AppDependencies) {
             onToken: (text) => {
               progress.text += text;
               emit({ type: "token", text });
+            },
+            onReasoning: (text) => {
+              progress.reasoning = (progress.reasoning ?? "") + text;
+              emit({ type: "reasoning", text });
             },
             onTool: (event) => {
               const index = progress.steps.findIndex((step) => step.id === event.id);
@@ -1040,6 +1099,8 @@ export function createAppServer(deps: AppDependencies) {
         await runs.finish(user, run.id);
         await saver.deleteThread(run.id);
         emit(payload ? { type: "done", payload } : { type: "error", error: "Not found" });
+        // Conversation devenue longue : résumé des échanges anciens, en arrière-plan.
+        if (payload) void compact(request, user, run.conversationId, run.request);
       } catch (error) {
         if (controller.signal.aborted) {
           observe("aborted");
@@ -1098,10 +1159,11 @@ export function createAppServer(deps: AppDependencies) {
         stream.end();
       };
       const sendSnapshot = (progress: RunProgress, status: string) =>
-        send("snapshot", { status, text: progress.text, steps: progress.steps, approvals: progress.pending.map(approvalView) });
+        send("snapshot", { status, text: progress.text, reasoning: progress.reasoning ?? "", steps: progress.steps, approvals: progress.pending.map(approvalView) });
       const handle = (event: RunEvent) => {
         if (closed) return;
         if (event.type === "token") send("token", { text: event.text });
+        else if (event.type === "reasoning") send("reasoning", { text: event.text });
         else if (event.type === "step") send("step", event.step);
         else if (event.type === "approval") send("approval", approvalView(event.approval));
         else if (event.type === "snapshot") sendSnapshot(event.progress, "running");
@@ -1137,7 +1199,7 @@ export function createAppServer(deps: AppDependencies) {
       user: AuthenticatedUser;
       conversationId: string;
       run: RunRequest;
-      input: { history: ChatTurn[]; message: string; images: ModelImage[] };
+      input: RunInput;
       plan: KnowledgePlan;
     }) {
       const { request, reply, user } = options;
@@ -1294,7 +1356,8 @@ export function createAppServer(deps: AppDependencies) {
       const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior }, permitted);
       if (!plan) return reply;
 
-      const context = prior.slice(-HISTORY_TURNS);
+      // Résumé des échanges anciens (s'il existe) + messages récents dans le budget.
+      const { history: context, summary } = planContext(prior, await summaries.get(user, params.data.id));
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
 
       return startRun({
@@ -1302,7 +1365,7 @@ export function createAppServer(deps: AppDependencies) {
         reply,
         user,
         conversationId: params.data.id,
-        input: knowledgeInput(plan, buildModelInput(context, { content, attachmentIds }, files)),
+        input: { ...knowledgeInput(plan, buildModelInput(context, { content, attachmentIds }, files)), summary },
         plan,
         run: {
           kind: "message",
@@ -1405,6 +1468,7 @@ export function createAppServer(deps: AppDependencies) {
               kind: run.request.kind,
               question: run.request.content,
               text: run.progress.text,
+              reasoning: run.progress.reasoning ?? "",
               steps: run.progress.steps,
               approvals: run.progress.pending.map(approvalView),
             }
@@ -1499,7 +1563,7 @@ export function createAppServer(deps: AppDependencies) {
       );
       if (!plan) return reply;
 
-      const context = history.slice(0, -2).slice(-HISTORY_TURNS);
+      const { history: context, summary } = planContext(history.slice(0, -2), await summaries.get(user, params.data.id));
       const attachmentIds = question.attachments?.map((file) => file.id) ?? [];
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
 
@@ -1508,7 +1572,7 @@ export function createAppServer(deps: AppDependencies) {
         reply,
         user,
         conversationId: params.data.id,
-        input: knowledgeInput(plan, buildModelInput(context, { content: question.content, attachmentIds }, files)),
+        input: { ...knowledgeInput(plan, buildModelInput(context, { content: question.content, attachmentIds }, files)), summary },
         plan,
         run: {
           kind: "regenerate",
@@ -1910,6 +1974,9 @@ export function createProductionServer() {
     models,
     // Exécution durable : runs et points de reprise chiffrés en base.
     runs: new PostgresRunStore(pool, keyring),
+    // Compaction : résumés chiffrés, calculés par le modèle de la conversation.
+    summaries: new PostgresSummaryStore(pool, keyring),
+    summarize: createSummarizer((selection) => models.runner(selection)),
     checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
     settings: settingsStore,

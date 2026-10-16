@@ -52,7 +52,7 @@ export function createMistralModel(model: string, settings: ProviderSettings): C
       const timeout = AbortSignal.timeout(settings.timeoutMs);
       const runnable = request.tools?.length ? llm.bindTools(toMistralTools(request.tools)) : llm;
       const stream = await runnable.stream(
-        [new SystemMessage(buildSystemPrompt(request.instructions)), ...toMistralMessages(conversationTurns(request))],
+        [new SystemMessage(buildSystemPrompt(request.instructions, request.summary)), ...toMistralMessages(conversationTurns(request))],
         { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
       );
 

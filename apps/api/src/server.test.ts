@@ -266,6 +266,7 @@ describe("API HTTP : conversations", () => {
       model: "fake",
       inputTokens: 5,
       outputTokens: 2,
+      cachedInputTokens: 0,
       attachments: 0,
       edited: false,
       passages: 0,

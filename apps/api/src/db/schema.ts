@@ -785,3 +785,32 @@ export const agentCheckpointWrites = pgTable.withRLS(
     tenantPolicy("agent_checkpoint_writes_tenant", table.organizationId, table.userId),
   ],
 );
+
+// ---- Compaction des longues conversations -----------------------------------
+// Résumé des échanges anciens, donné au modèle à la place de ces échanges.
+// L'historique affiché reste intact ; le résumé est chiffré et suit la
+// conversation (effacé avec elle).
+export const conversationSummaries = pgTable.withRLS(
+  "conversation_summaries",
+  {
+    conversationId: uuid("conversation_id").primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    // Dernier message couvert par le résumé (les suivants sont donnés tels quels).
+    uptoMessageId: uuid("upto_message_id").notNull(),
+    coveredMessages: integer("covered_messages").notNull(),
+    summary: text("summary").notNull(),
+    model: text("model").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "conversation_summaries_conversation_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check("conversation_summaries_covered_check", sql`${table.coveredMessages} > 0`),
+    check("conversation_summaries_model_check", sql`length(${table.model}) BETWEEN 1 AND 160`),
+    tenantPolicy("conversation_summaries_tenant", table.organizationId, table.userId),
+  ],
+);

@@ -23,14 +23,33 @@ export type ToolCall = {
  */
 export type ChatTurn =
   | { role: "user"; content: string; images?: ModelImage[] }
-  | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: ToolCall[];
+      /**
+       * Ce que le fournisseur exige de recevoir à nouveau tel quel dans la même
+       * réponse (ex. blocs de réflexion signés d'Anthropic pendant une boucle d'outils).
+       */
+      providerData?: Record<string, unknown>;
+    }
   | { role: "tool"; toolCallId: string; name: string; content: string; isError?: boolean; data?: unknown };
 
-export type TokenUsage = { inputTokens: number; outputTokens: number };
+export type TokenUsage = {
+  /** Tokens d'entrée au total (servis par le cache compris). */
+  inputTokens: number;
+  outputTokens: number;
+  /** Part de l'entrée relue depuis le cache du fournisseur (moins chère, plus rapide). */
+  cachedInputTokens?: number;
+};
 
 export type ChatChunk =
   | { type: "token"; text: string }
+  /** Réflexion du modèle (résumée par le fournisseur), affichée mais jamais enregistrée. */
+  | { type: "reasoning"; text: string }
   | { type: "tool_call"; call: ToolCall }
+  /** Données à rattacher au tour de l'assistant (voir ChatTurn.providerData). */
+  | { type: "provider_data"; data: Record<string, unknown> }
   | ({ type: "usage" } & TokenUsage);
 
 export type ChatRequest = {
@@ -40,6 +59,8 @@ export type ChatRequest = {
   images?: ModelImage[] | undefined;
   /** Instructions de l'agent, ajoutées au prompt système de la plateforme. */
   instructions?: string | undefined;
+  /** Résumé des échanges anciens (compaction), donné comme contexte. */
+  summary?: string | undefined;
   /** Transcription complète (boucle d'agent) : remplace history + message. */
   turns?: ChatTurn[] | undefined;
   /** Outils proposés au modèle pour ce tour. */
@@ -126,6 +147,8 @@ export type ChatRunner = (
     history?: ChatTurn[];
     images?: ModelImage[] | undefined;
     instructions?: string | undefined;
+    /** Résumé des échanges anciens (compaction). */
+    summary?: string | undefined;
     /** Outils disponibles : active la boucle d'agent. */
     tools?: AgentTool[] | undefined;
     /** Nombre maximal d'aller-retour modèle ↔ outils. */
@@ -133,6 +156,8 @@ export type ChatRunner = (
   },
   options?: {
     onToken?: (text: string) => void;
+    /** Réflexion du modèle, au fil de l'eau. */
+    onReasoning?: (text: string) => void;
     onTool?: (event: ToolEvent) => void;
     /** Validation humaine en mémoire (sans exécution durable). Absente : écritures refusées. */
     approve?: Approver;
@@ -155,8 +180,15 @@ export const echoModel: ChatModel = {
   },
 };
 
-const sum = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined =>
-  a || b ? { inputTokens: (a?.inputTokens ?? 0) + (b?.inputTokens ?? 0), outputTokens: (a?.outputTokens ?? 0) + (b?.outputTokens ?? 0) } : undefined;
+const sum = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined => {
+  if (!a && !b) return undefined;
+  const cached = (a?.cachedInputTokens ?? 0) + (b?.cachedInputTokens ?? 0);
+  return {
+    inputTokens: (a?.inputTokens ?? 0) + (b?.inputTokens ?? 0),
+    outputTokens: (a?.outputTokens ?? 0) + (b?.outputTokens ?? 0),
+    ...(cached ? { cachedInputTokens: cached } : {}),
+  };
+};
 
 const AgentState = Annotation.Root({
   /**
@@ -165,6 +197,7 @@ const AgentState = Annotation.Root({
    */
   turns: Annotation<ChatTurn[]>({ reducer: (current, added) => current.concat(added), default: () => [] }),
   instructions: Annotation<string | undefined>,
+  summary: Annotation<string | undefined>,
   /** Texte visible produit par le modèle, toutes étapes confondues. */
   response: Annotation<string>,
   usage: Annotation<TokenUsage | undefined>,
@@ -207,6 +240,7 @@ export function buildAgentGraph(
     .addNode("model", async (state, config) => {
       let text = "";
       let usage: TokenUsage | undefined;
+      let providerData: Record<string, unknown> | undefined;
       const calls: ToolCall[] = [];
       const offerTools = specs.length > 0 && model.supportsTools && state.steps < maxSteps;
 
@@ -215,20 +249,31 @@ export function buildAgentGraph(
         message: "",
         turns: state.turns,
         instructions: state.instructions,
+        summary: state.summary,
         ...(offerTools ? { tools: specs } : {}),
       };
       for await (const chunk of model.stream(request, config.signal)) {
         if (chunk.type === "token") {
           text += chunk.text;
           config.writer?.({ token: chunk.text });
+        } else if (chunk.type === "reasoning") {
+          config.writer?.({ reasoning: chunk.text });
         } else if (chunk.type === "tool_call") {
           calls.push(chunk.call);
+        } else if (chunk.type === "provider_data") {
+          providerData = { ...providerData, ...chunk.data };
         } else {
-          usage = { inputTokens: chunk.inputTokens, outputTokens: chunk.outputTokens };
+          const { type: _type, ...counted } = chunk;
+          usage = counted;
         }
       }
 
-      const turn: ChatTurn = { role: "assistant", content: text, ...(calls.length ? { toolCalls: calls } : {}) };
+      const turn: ChatTurn = {
+        role: "assistant",
+        content: text,
+        ...(calls.length ? { toolCalls: calls } : {}),
+        ...(providerData ? { providerData } : {}),
+      };
       // Au-delà de la limite par étape : refus immédiat, sans tâche.
       const refused: ChatTurn[] = calls.slice(MAX_TOOL_CALLS_PER_STEP).map((call) => ({
         role: "tool",
@@ -301,15 +346,16 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
         ? new Command({ resume: durable.resume })
         : durable?.continue
           ? null
-          : { turns, instructions: input.instructions, response: "", usage: undefined, steps: 0 },
+          : { turns, instructions: input.instructions, summary: input.summary, response: "", usage: undefined, steps: 0 },
       { ...config, streamMode: ["custom", "values"] },
     );
 
     let final: State | undefined;
     for await (const [mode, chunk] of stream) {
       if (mode === "custom") {
-        const event = chunk as { token?: unknown; tool?: ToolEvent };
+        const event = chunk as { token?: unknown; reasoning?: unknown; tool?: ToolEvent };
         if (typeof event.token === "string") options.onToken?.(event.token);
+        if (typeof event.reasoning === "string") options.onReasoning?.(event.reasoning);
         if (event.tool) options.onTool?.(event.tool);
       } else {
         final = chunk as State;

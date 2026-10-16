@@ -924,8 +924,10 @@
   50% { transform: translateY(-3px); }
 }
 
+/* Téléphone : alien réduit en proportion (zoom réduit aussi sa place) pour
+   tenir dans la colonne d'avatar, sans déborder jusqu'au bord de l'écran. */
 @media (max-width: 640px) {
-  .message-avatar-alien .agent-avatar { margin-inline: -22px; transform-origin: top center; }
+  .message-avatar-alien .agent-avatar { zoom: .62; }
 }
 
 /* Colonne d'avatar commune (toi, l'agent, le modèle) : tous les textes démarrent
@@ -956,14 +958,15 @@
   font-size: 12px;
 }
 
-.message-user-logo { display: block; width: 30px; height: 30px; object-fit: contain; opacity: .9; }
+/* Centré sur le nom et la première ligne du message, comme la tête de l'alien. */
+.message-user-logo { display: block; width: 42px; height: 42px; margin-top: 6px; object-fit: contain; }
 
 .user-avatar-logo { display: block; width: 20px; height: 20px; object-fit: contain; }
 
 @media (max-width: 640px) {
   .messages { --message-rail: 46px; }
   .message-badge { width: 29px; height: 29px; }
-  .message-user-logo { width: 27px; height: 27px; }
+  .message-user-logo { width: 32px; height: 32px; margin-top: 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

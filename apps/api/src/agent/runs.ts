@@ -34,6 +34,8 @@ export type RunRequest = {
 /** Avancement visible à la reconnexion. */
 export type RunProgress = {
   text: string;
+  /** Réflexion du modèle pendant la réponse (jamais gardée avec les messages). */
+  reasoning?: string;
   steps: ToolEvent[];
   pending: PendingApproval[];
 };
@@ -307,6 +309,7 @@ export class PostgresRunStore implements RunStore {
 
 export type RunEvent =
   | { type: "token"; text: string }
+  | { type: "reasoning"; text: string }
   | { type: "step"; step: ToolEvent }
   | { type: "approval"; approval: PendingApproval }
   | { type: "paused" }

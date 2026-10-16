@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { z } from "zod";
+import { PostgresSummaryStore } from "../conversations/compaction.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
@@ -179,5 +180,26 @@ describe("Exécution durable : PostgreSQL (RLS, chiffrement, bail)", { skip: !ap
       /agent_checkpoints_encrypted_check/,
     );
     await runs.finish(a, run.id);
+  });
+  it("résumés de compaction : chiffrés, invisibles d'une autre organisation, effacés avec la conversation", async () => {
+    const conversations = new PostgresConversationStore(pool, keyring);
+    const summaries = new PostgresSummaryStore(pool, keyring);
+    const conversation = await conversations.create(a, "Longue");
+    const exchange = (await conversations.appendExchange(a, conversation.id, "Question", "Réponse"))!;
+    await summaries.set(a, conversation.id, { uptoMessageId: exchange.assistantMessage.id, coveredMessages: 2, summary: SECRET, model: "mistral:small" });
+    assert.equal((await summaries.get(a, conversation.id))?.summary, SECRET);
+    assert.equal(await summaries.get(b, conversation.id), null);
+
+    const raw = await withTenant(owner, a, (client) => client.query("SELECT summary FROM conversation_summaries WHERE conversation_id = $1", [conversation.id]));
+    assert.equal(raw.rowCount, 1);
+    assert.ok(!JSON.stringify(raw.rows).includes("Orion"));
+    await assert.rejects(
+      withTenant(owner, a, (client) => client.query("UPDATE conversation_summaries SET summary = 'en clair' WHERE conversation_id = $1", [conversation.id])),
+      /conversation_summaries_encrypted_check/,
+    );
+
+    await conversations.delete(a, conversation.id);
+    const left = await withTenant(owner, a, (client) => client.query("SELECT 1 FROM conversation_summaries WHERE conversation_id = $1", [conversation.id]));
+    assert.equal(left.rowCount, 0);
   });
 });

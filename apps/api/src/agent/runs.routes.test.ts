@@ -14,6 +14,7 @@ import { createFakeConversationStore, createFakeKnowledgeStore } from "../testin
 import { defaultSettings, type OrganizationSettings, type SettingsStore } from "../workspace/settings.js";
 import { defaultAgentTools, type ToolId } from "./catalog.js";
 import { MemoryRunStore } from "./runs.js";
+import { MemorySummaryStore, type Summarizer } from "../conversations/compaction.js";
 
 const ORIGIN = "http://localhost:5173";
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -70,6 +71,7 @@ function sharedDatabase() {
     conversations: createFakeConversationStore(),
     knowledge: createFakeKnowledgeStore(),
     agents: fakeAgents(),
+    summaries: new MemorySummaryStore(),
     events: [] as AuditEvent[],
   };
 }
@@ -79,7 +81,13 @@ type Database = ReturnType<typeof sharedDatabase>;
 /** Une instance de l'API, branchée sur la base partagée. */
 async function instance(
   db: Database,
-  options: { settings?: Partial<OrganizationSettings>; runChat?: ChatRunner; model?: ChatModel; timing?: Parameters<typeof createAppServer>[0]["runTiming"] } = {},
+  options: {
+    settings?: Partial<OrganizationSettings>;
+    runChat?: ChatRunner;
+    model?: ChatModel;
+    timing?: Parameters<typeof createAppServer>[0]["runTiming"];
+    summarize?: Summarizer;
+  } = {},
 ) {
   let current = alice;
   const settings: OrganizationSettings = { ...defaultSettings, ...options.settings };
@@ -105,6 +113,8 @@ async function instance(
     audit,
     runs: db.runs,
     checkpointer: () => db.checkpoints,
+    summaries: db.summaries,
+    ...(options.summarize ? { summarize: options.summarize } : {}),
     ...(options.timing ? { runTiming: options.timing } : {}),
     runChat: options.runChat ?? createChatRunner(options.model ?? notingModel),
   });
@@ -350,6 +360,62 @@ describe("Exécution durable : runs", () => {
     assert.ok(db.events.some((event) => event.eventType === "tool.approval" && event.details?.decision === "expired"));
   });
 
+  it("compaction : une longue conversation est résumée en arrière-plan, puis le résumé remplace le début", async (t) => {
+    const db = sharedDatabase();
+    const inputs: Parameters<ChatRunner>[0][] = [];
+    const runChat: ChatRunner = async (input) => {
+      inputs.push(input);
+      return { content: "Réponse", model: "fake", usage: { inputTokens: 10, outputTokens: 2 } };
+    };
+    const folded: number[] = [];
+    const summarize: Summarizer = async ({ messages, previous }) => {
+      folded.push(messages.length);
+      return { summary: `${previous ? `${previous} + ` : ""}Budget validé : 4,2 M€`, model: "fake", usage: { inputTokens: 50, outputTokens: 10 } };
+    };
+    const api = await instance(db, { runChat, summarize });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, []);
+    // Longue conversation existante (environ 20 000 tokens).
+    for (let index = 0; index < 10; index++) {
+      await db.conversations.appendExchange(alice, conversationId, `Question ${index} ${"q".repeat(4_000)}`, `Réponse ${index} ${"r".repeat(4_000)}`);
+    }
+
+    await (await api.post(`/conversations/${conversationId}/messages`, { content: "Et ensuite ?" })).text();
+    await until(async () => (await db.summaries.get(alice, conversationId)) !== null);
+    const summary = (await db.summaries.get(alice, conversationId))!;
+    assert.equal(summary.summary, "Budget validé : 4,2 M€");
+    assert.ok(db.events.some((event) => event.eventType === "conversation.compacted"));
+    assert.ok(!JSON.stringify(db.events).includes("4,2 M€"));
+
+    await (await api.post(`/conversations/${conversationId}/messages`, { content: "Rappelle le budget" })).text();
+    const last = inputs.at(-1)!;
+    assert.equal(last.summary, "Budget validé : 4,2 M€");
+    // Seuls les messages qui suivent le résumé sont donnés tels quels.
+    const messages = (await db.conversations.getMessages(alice, conversationId))!;
+    const covered = messages.findIndex((message) => message.id === summary.uptoMessageId) + 1;
+    assert.equal(last.history!.length, messages.length - 2 - covered);
+  });
+
+  it("réflexion : diffusée en direct (événement « reasoning »), jamais enregistrée avec la réponse", async (t) => {
+    const db = sharedDatabase();
+    const thinker: ChatModel = {
+      id: "thinker",
+      supportsTools: true,
+      async *stream() {
+        yield { type: "reasoning", text: "Je compare les deux montants." };
+        yield { type: "token", text: "148 €." };
+      },
+    };
+    const api = await instance(db, { model: thinker });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, []);
+    const seen = await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Combien ?" }));
+    assert.deepEqual(names(seen), ["reasoning", "token", "done"]);
+    assert.equal(seen[0]!.data.text, "Je compare les deux montants.");
+    const saved = (await db.conversations.getMessages(alice, conversationId))!;
+    assert.equal(saved[1]!.content, "148 €.");
+    assert.ok(!JSON.stringify(saved).includes("compare"));
+  });
   it("l'outil d'écriture n'est proposé que si l'organisation, l'agent et les droits le permettent", async (t) => {
     const offered: string[][] = [];
     const runChat: ChatRunner = async (input) => {

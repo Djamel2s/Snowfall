@@ -76,7 +76,9 @@ export function createOpenAiCompatibleModel(
           ...(provider === "openai"
             ? { max_completion_tokens: settings.maxOutputTokens }
             : { max_tokens: settings.maxOutputTokens }),
-          messages: [{ role: "system", content: buildSystemPrompt(request.instructions) }, ...toOpenAiMessages(conversationTurns(request))],
+          // Prompt système puis historique, à l'identique d'un tour à l'autre : le cache
+          // automatique d'OpenAI relit ce début de requête (moins cher, plus rapide).
+          messages: [{ role: "system", content: buildSystemPrompt(request.instructions, request.summary) }, ...toOpenAiMessages(conversationTurns(request))],
           ...(request.tools?.length ? { tools: toOpenAiTools(request.tools) } : {}),
         },
         signal ? { signal } : {},
@@ -86,6 +88,9 @@ export function createOpenAiCompatibleModel(
       const pending = new Map<number, { id: string; name: string; arguments: string }>();
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
+        // Serveurs locaux (vLLM, Ollama, LM Studio) : réflexion dans un champ non standard.
+        const reasoning = (delta as { reasoning_content?: unknown; reasoning?: unknown } | undefined)?.reasoning_content ?? (delta as { reasoning?: unknown } | undefined)?.reasoning;
+        if (typeof reasoning === "string" && reasoning) yield { type: "reasoning", text: reasoning };
         if (delta?.content) yield { type: "token", text: delta.content };
         for (const part of delta?.tool_calls ?? []) {
           const current = pending.get(part.index) ?? { id: "", name: "", arguments: "" };
@@ -95,7 +100,13 @@ export function createOpenAiCompatibleModel(
           pending.set(part.index, current);
         }
         if (chunk.usage) {
-          yield { type: "usage", inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens };
+          const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+          yield {
+            type: "usage",
+            inputTokens: chunk.usage.prompt_tokens,
+            outputTokens: chunk.usage.completion_tokens,
+            ...(cached ? { cachedInputTokens: cached } : {}),
+          };
         }
       }
 

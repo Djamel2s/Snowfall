@@ -288,6 +288,8 @@ export type AgentStep = {
 
 type StreamOptions = {
   onToken?: (text: string) => void
+  /** Réflexion du modèle, au fil de l'eau (jamais enregistrée). */
+  onReasoning?: (text: string) => void
   onStep?: (step: AgentStep) => void
   /** Reconnexion : avancement déjà produit (texte, étapes, validations en attente). */
   onSnapshot?: (snapshot: RunSnapshot) => void
@@ -302,6 +304,7 @@ export const isPaused = (value: unknown): value is RunPaused => typeof value ===
 export type RunSnapshot = {
   status: 'running' | 'waiting'
   text: string
+  reasoning?: string
   steps: AgentStep[]
   approvals: (ToolApproval & { stepId: string; tool: string })[]
 }
@@ -352,6 +355,8 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
       } else if (event === 'approval') {
         // L'étape en cours attend ta décision.
         options.onStep?.(approvalStep(payload))
+      } else if (event === 'reasoning') {
+        options.onReasoning?.(payload.text as string)
       } else if (event === 'snapshot') {
         options.onSnapshot?.(payload as RunSnapshot)
       } else if (event === 'paused') {

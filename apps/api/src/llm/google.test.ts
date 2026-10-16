@@ -30,14 +30,14 @@ afterEach(() => {
 });
 
 describe("Google Gemini", () => {
-  it("diffuse le texte, ignore le raisonnement et compte les tokens", async () => {
+  it("diffuse le texte, la réflexion à part, et compte les tokens (cache compris)", async () => {
     mockFetch(
       sse(
         { candidates: [{ content: { parts: [{ text: "réflexion", thought: true }] } }] },
         { candidates: [{ content: { parts: [{ text: "Bon" }] } }] },
         {
           candidates: [{ content: { parts: [{ text: "jour" }] }, finishReason: "STOP" }],
-          usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 2, thoughtsTokenCount: 5 },
+          usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 2, thoughtsTokenCount: 5, cachedContentTokenCount: 4 },
         },
       ),
     );
@@ -51,11 +51,14 @@ describe("Google Gemini", () => {
     );
 
     assert.deepEqual(chunks, [
+      { type: "reasoning", text: "réflexion" },
       { type: "token", text: "Bon" },
       { type: "token", text: "jour" },
-      { type: "usage", inputTokens: 7, outputTokens: 7 },
+      { type: "usage", inputTokens: 7, outputTokens: 7, cachedInputTokens: 4 },
     ]);
     const body = JSON.parse(String(calls[0]!.init.body));
+    // Modèle qui raisonne : la réflexion résumée est demandée.
+    assert.deepEqual(body.generationConfig.thinkingConfig, { includeThoughts: true });
     assert.equal(body.contents[0].role, "model");
     assert.match(body.systemInstruction.parts[0].text, /Sois bref/);
   });

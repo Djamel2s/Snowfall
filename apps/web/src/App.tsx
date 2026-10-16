@@ -29,6 +29,7 @@ import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
 import MessageSources from './components/MessageSources'
 import AgentSteps from './components/AgentSteps'
+import Reasoning from './components/Reasoning'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -126,6 +127,19 @@ function App() {
   const streamingIdRef = useRef<string | null>(null)
   // Réponse en pause : elle attend ta décision sur une action (exécution durable).
   const [paused, setPaused] = useState(false)
+  // Réflexion du modèle : en direct, puis rattachée à la réponse (cette session
+  // seulement : elle n'est jamais enregistrée).
+  const [reasoning, setReasoning] = useState('')
+  const reasoningRef = useRef('')
+  const [reasoningByMessage, setReasoningByMessage] = useState<Record<string, string>>({})
+  const onReasoning = (text: string) => {
+    reasoningRef.current += text
+    setReasoning(reasoningRef.current)
+  }
+  const showReasoning = (text: string) => {
+    reasoningRef.current = text
+    setReasoning(text)
+  }
   // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
   const [regenerating, setRegenerating] = useState(false)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
@@ -570,6 +584,7 @@ function App() {
     setAgentSteps([])
     setRegenerating(false)
     setPaused(false)
+    showReasoning('')
     streamingIdRef.current = null
   }
 
@@ -577,6 +592,7 @@ function App() {
   async function refreshMessages(conversationId: string) {
     const messages = await api.getMessages(conversationId)
     updateConversation(conversationId, (conversation) => ({ ...conversation, messages }))
+    return messages.at(-1)?.role === 'assistant' ? messages.at(-1)!.id : undefined
   }
 
   /**
@@ -586,14 +602,17 @@ function App() {
    */
   async function stream(
     conversationId: string,
-    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<'paused' | void>,
+    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<'paused' | string | void>,
     rollback: () => void,
     options: { resume?: boolean } = {},
   ) {
     setError('')
     setSending(true)
     setPaused(false)
-    if (!options.resume) setAgentSteps([])
+    if (!options.resume) {
+      setAgentSteps([])
+      showReasoning('')
+    }
     streamingIdRef.current = conversationId
     stoppedRef.current = false
     const controller = new AbortController()
@@ -609,6 +628,9 @@ function App() {
         setPaused(true)
         return
       }
+      // Réponse terminée (outcome : son identifiant) : la réflexion reste consultable.
+      const thought = reasoningRef.current
+      if (outcome && thought) setReasoningByMessage((current) => ({ ...current, [outcome]: thought }))
       // Synchronise l'ordre et les titres depuis le serveur.
       const history = await api.listConversations()
       setConversations((current) =>
@@ -665,9 +687,9 @@ function App() {
     await stream(
       conversationId,
       async (signal, onToken) => {
-        const result = await api.decideApproval(conversationId, approvalId, approved, { signal, onToken, onStep })
+        const result = await api.decideApproval(conversationId, approvalId, approved, { signal, onToken, onReasoning, onStep })
         if (isPaused(result)) return 'paused'
-        await refreshMessages(conversationId)
+        return refreshMessages(conversationId)
       },
       () => void refreshMessages(conversationId).catch(() => undefined),
       { resume: true },
@@ -704,6 +726,7 @@ function App() {
       setRegenerating(true)
     }
     setStreamingText(run.text)
+    showReasoning(run.reasoning ?? '')
     setAgentSteps(restoreSteps(run))
     if (run.status === 'waiting') {
       streamingIdRef.current = conversationId
@@ -717,14 +740,16 @@ function App() {
         const result = await api.watchRun(conversationId, {
           signal,
           onToken,
+          onReasoning,
           onStep,
           onSnapshot: (snapshot) => {
             setStreamingText(snapshot.text)
+            showReasoning(snapshot.reasoning ?? '')
             setAgentSteps(restoreSteps(snapshot))
           },
         })
         if (isPaused(result)) return 'paused'
-        await refreshMessages(conversationId)
+        return refreshMessages(conversationId)
       },
       () => void refreshMessages(conversationId).catch(() => undefined),
       { resume: true },
@@ -764,13 +789,14 @@ function App() {
         const result = await api.sendMessage(
           conversationId,
           { content: message, attachmentIds: attachments.map((file) => file.id) },
-          { signal, onToken, onStep },
+          { signal, onToken, onReasoning, onStep },
         )
         if (isPaused(result)) return 'paused'
         updateConversation(conversationId, (current) => ({
           ...current,
           messages: [...current.messages.filter((item) => item.id !== optimistic.id), result.userMessage, result.assistantMessage],
         }))
+        return result.assistantMessage.id
       },
       () => {
         updateConversation(conversationId, (current) => ({
@@ -803,13 +829,14 @@ function App() {
         const result = await api.sendMessage(
           conversation.id,
           { content: text, attachmentIds, editMessageId: original.id },
-          { signal, onToken, onStep },
+          { signal, onToken, onReasoning, onStep },
         )
         if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...previous.slice(0, index), result.userMessage, result.assistantMessage],
         }))
+        return result.assistantMessage.id
       },
       () => updateConversation(conversation.id, (current) => ({ ...current, messages: previous })),
     )
@@ -823,12 +850,13 @@ function App() {
     await stream(
       conversation.id,
       async (signal, onToken) => {
-        const result = await api.regenerate(conversation.id, { signal, onToken, onStep })
+        const result = await api.regenerate(conversation.id, { signal, onToken, onReasoning, onStep })
         if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...current.messages.slice(0, -1), result.assistantMessage],
         }))
+        return result.assistantMessage.id
       },
       () => undefined,
     )
@@ -1092,6 +1120,7 @@ function App() {
                         </form>
                       ) : message.role === 'assistant' ? (
                         <>
+                          {reasoningByMessage[message.id] && <Reasoning text={reasoningByMessage[message.id]!} />}
                           <Markdown source={message.content} />
                           {message.sources?.length ? <MessageSources sources={message.sources} /> : null}
                         </>
@@ -1157,6 +1186,7 @@ function App() {
                     </div>
                     <div className="message-body">
                       <div className="message-author">{assistantName}</div>
+                      {reasoning && <Reasoning text={reasoning} thinking={!streamingText && !paused} />}
                       {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={decideApproval} />}
                       {streamingText ? (
                         <Markdown source={streamingText} />

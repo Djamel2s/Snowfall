@@ -939,3 +939,36 @@
 .studio-tool:hover { color: #dbe6f5; border-color: rgba(185, 217, 255, .3); }
 .studio-tool[aria-pressed="true"] { border-color: rgba(158, 202, 255, .45); background: rgba(158, 202, 255, .1); color: #cfe2ff; }
 .studio-tool-guard { color: #ffd7a1; }
+/* ---- Réflexion du modèle -------------------------------------------------- */
+
+.reasoning { margin: 0 0 10px; }
+
+.reasoning-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid rgba(183, 210, 244, .1);
+  border-radius: 999px;
+  background: transparent;
+  color: #8fa0b8;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reasoning-toggle:hover { color: #dbe6f5; border-color: rgba(185, 217, 255, .25); }
+.reasoning-chevron { transition: transform .15s; }
+.reasoning.open .reasoning-chevron { transform: rotate(90deg); }
+
+.reasoning-text {
+  max-height: 260px;
+  margin: 8px 0 0;
+  overflow: auto;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid rgba(158, 202, 255, .2);
+  color: #7d8ca4 !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  white-space: pre-wrap;
+}
