@@ -16,15 +16,19 @@ import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
 import KnowledgePanel from './KnowledgePanel'
+import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
 
 type Props = {
   agent: Agent | null
+  /** Message à afficher à l'ouverture (documents refusés juste après la création). */
+  notice?: string
   onClose: () => void
-  onSaved: (agent: Agent) => void
+  /** notice : l'agent est créé mais des documents ont échoué ; le studio reste ouvert. */
+  onSaved: (agent: Agent, notice?: string) => void
   onDeleted: (id: string) => void
 }
 
-export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Props) {
+export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted }: Props) {
   const { t } = useI18n()
   const [catalog, setCatalog] = useState<ProviderCatalog[] | null>(null)
   const [name, setName] = useState(agent?.name ?? '')
@@ -38,7 +42,9 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
   const [model, setModel] = useState(agent?.model ?? '')
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(notice ?? '')
+  // Nouvel agent : documents en attente, envoyés juste après la création.
+  const [draft, setDraft] = useState<KnowledgeDraft>(emptyKnowledgeDraft)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -92,12 +98,16 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
     setSaving(true)
     setError('')
     try {
-      onSaved(
-        await api.saveAgent(
-          { name: name.trim(), avatar, instructions: instructions.trim(), provider, model },
-          agent?.id,
-        ),
+      const saved = await api.saveAgent(
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model },
+        agent?.id,
       )
+      if (agent || (draft.items.length === 0 && !draft.confidential)) {
+        onSaved(saved)
+        return
+      }
+      const failures = await submitKnowledgeDraft(api, 'agents', saved.id, draft, t('knowledge.failed.generic'))
+      onSaved(saved, failures.length ? `${t('knowledge.draftFailed')} ${failures.join(' · ')}` : undefined)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('studio.saveFailed'))
     } finally {
@@ -217,6 +227,8 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
             onClick={() => {
               setProvider(item.id)
               setModel(item.models[0]?.id ?? '')
+              // Confidentiel exige un modèle local : on ne garde pas le choix ailleurs.
+              if (item.id !== 'local' && draft.confidential) setDraft({ ...draft, confidential: false })
             }}
           >
             <ProviderLogo provider={item.id} size={20} />
@@ -241,7 +253,7 @@ export default function AgentStudio({ agent, onClose, onSaved, onDeleted }: Prop
       {agent ? (
         <KnowledgePanel kind="agents" ownerId={agent.id} />
       ) : (
-        <p className="knowledge-empty">{t('knowledge.saveFirst')}</p>
+        <KnowledgePanel kind="agents" draft={draft} onDraftChange={setDraft} confidentialAllowed={provider === 'local'} />
       )}
 
       {error && <p className="studio-error" role="alert">{error}</p>}

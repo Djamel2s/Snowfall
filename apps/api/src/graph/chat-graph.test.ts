@@ -22,11 +22,11 @@ describe("Chat graph", () => {
   });
 
   it("transmet l'historique et remonte la consommation de tokens", async () => {
-    let seenHistory: unknown;
+    let seenTurns: unknown;
     const model: ChatModel = {
       id: "fake",
-      async *stream({ history }) {
-        seenHistory = history;
+      async *stream({ turns }) {
+        seenTurns = turns;
         yield { type: "token", text: "ok" };
         yield { type: "usage", inputTokens: 12, outputTokens: 1 };
       },
@@ -35,7 +35,8 @@ describe("Chat graph", () => {
 
     const result = await createChatRunner(model)({ message: "maintenant", history });
 
-    assert.deepEqual(seenHistory, history);
+    // La boucle envoie la transcription complète : historique puis message.
+    assert.deepEqual(seenTurns, [...history, { role: "user", content: "maintenant" }]);
     assert.deepEqual(result.usage, { inputTokens: 12, outputTokens: 1 });
   });
 

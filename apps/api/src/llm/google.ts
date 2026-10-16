@@ -1,4 +1,5 @@
-import { ModelRefusalError, type ChatModel } from "../graph/chat-graph.js";
+import type { ToolSpec } from "../agent/tools.js";
+import { ModelRefusalError, ProviderRateLimitError, type ChatModel, type ChatTurn } from "../graph/chat-graph.js";
 import { conversationTurns } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
@@ -8,9 +9,17 @@ import type { ModelInfo, ProviderSettings } from "./types.js";
 // pour ne pas finir dans des journaux.
 const API = "https://generativelanguage.googleapis.com/v1beta";
 
+type GeminiPart = {
+  text?: string;
+  thought?: boolean;
+  functionCall?: { id?: string; name: string; args?: Record<string, unknown> };
+  /** Signature du raisonnement : à renvoyer telle quelle avec l'appel d'outil. */
+  thoughtSignature?: string;
+};
+
 type GeminiChunk = {
   candidates?: {
-    content?: { parts?: { text?: string; thought?: boolean }[] };
+    content?: { parts?: GeminiPart[] };
     finishReason?: string;
   }[];
   promptFeedback?: { blockReason?: string };
@@ -32,9 +41,13 @@ async function request(path: string, init: RequestInit, apiKey: string, attempts
     // Corps d'erreur volontairement ignoré : il peut refléter la requête.
     await response.body?.cancel();
     if (!RETRYABLE.has(response.status) || attempt >= attempts || init.signal?.aborted) {
+      if (response.status === 429) throw new ProviderRateLimitError();
       throw new Error(`GOOGLE_${response.status}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 400 * 2 ** attempt));
+    // Délai demandé par Google s'il est indiqué (borné à 10 s), sinon attente croissante.
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 10_000) : 400 * 2 ** attempt;
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
 }
 
@@ -59,9 +72,57 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Gemi
   }
 }
 
+/**
+ * Transcription neutre → « contents » Gemini. Un appel d'outil est une partie
+ * functionCall du tour « model » (avec sa signature de raisonnement, exigée
+ * par Gemini 3) ; les résultats d'une étape sont des parties functionResponse
+ * regroupées dans un seul tour « user ».
+ */
+export function toGeminiContents(turns: ChatTurn[]) {
+  const contents: { role: "user" | "model"; parts: Record<string, unknown>[] }[] = [];
+  for (const turn of turns) {
+    if (turn.role === "tool") {
+      const part = {
+        functionResponse: {
+          id: turn.toolCallId,
+          name: turn.name,
+          response: turn.isError ? { error: turn.content } : { content: turn.content },
+        },
+      };
+      const last = contents.at(-1);
+      if (last?.role === "user" && last.parts.every((item) => "functionResponse" in item)) last.parts.push(part);
+      else contents.push({ role: "user", parts: [part] });
+    } else if (turn.role === "assistant") {
+      const parts: Record<string, unknown>[] = [
+        ...(turn.content ? [{ text: turn.content }] : []),
+        ...(turn.toolCalls ?? []).map((call) => ({
+          functionCall: { id: call.id, name: call.name, args: call.arguments ?? {} },
+          ...(typeof call.providerData?.thoughtSignature === "string" ? { thoughtSignature: call.providerData.thoughtSignature } : {}),
+        })),
+      ];
+      if (parts.length) contents.push({ role: "model", parts });
+    } else {
+      contents.push({
+        role: "user",
+        parts: [
+          ...(turn.images ?? []).map((image) => ({ inlineData: { mimeType: image.mediaType, data: image.data } })),
+          { text: turn.content },
+        ],
+      });
+    }
+  }
+  return contents;
+}
+
+// Schéma JSON complet (parametersJsonSchema), pas le sous-ensemble OpenAPI.
+const toGeminiTools = (tools: ToolSpec[]) => [
+  { functionDeclarations: tools.map((tool) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters })) },
+];
+
 export function createGoogleModel(model: string, settings: ProviderSettings): ChatModel {
   return {
     id: `google:${model}`,
+    supportsTools: true,
 
     async *stream(chat, signal) {
       const timeout = AbortSignal.timeout(settings.timeoutMs);
@@ -73,15 +134,8 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions) }] },
-            contents: conversationTurns(chat).map((turn) => ({
-              role: turn.role === "assistant" ? "model" : "user",
-              parts: [
-                ...(turn.images ?? []).map((image) => ({
-                  inlineData: { mimeType: image.mediaType, data: image.data },
-                })),
-                { text: turn.content },
-              ],
-            })),
+            contents: toGeminiContents(conversationTurns(chat)),
+            ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
             generationConfig: { maxOutputTokens: settings.maxOutputTokens, temperature: 0.3 },
           }),
         },
@@ -90,6 +144,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
       if (!response.body) throw new Error("GOOGLE_EMPTY_STREAM");
 
       let usage: GeminiChunk["usageMetadata"];
+      let calls = 0;
       for await (const chunk of sseEvents(response.body)) {
         if (chunk.promptFeedback?.blockReason) throw new ModelRefusalError();
 
@@ -97,6 +152,18 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
         for (const part of candidate?.content?.parts ?? []) {
           // Les parties « thought » (raisonnement) ne sont pas affichées.
           if (part.text && !part.thought) yield { type: "token", text: part.text };
+          if (part.functionCall) {
+            calls += 1;
+            yield {
+              type: "tool_call",
+              call: {
+                id: part.functionCall.id ?? `call_${calls}`,
+                name: part.functionCall.name,
+                arguments: part.functionCall.args ?? {},
+                ...(part.thoughtSignature ? { providerData: { thoughtSignature: part.thoughtSignature } } : {}),
+              },
+            };
+          }
         }
         if (candidate?.finishReason && BLOCKED.has(candidate.finishReason)) throw new ModelRefusalError();
         if (chunk.usageMetadata) usage = chunk.usageMetadata;

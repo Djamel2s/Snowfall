@@ -264,7 +264,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
 
-type StreamOptions = { onToken?: (text: string) => void; signal?: AbortSignal }
+/** Étape d'un agent pendant la réponse (appel d'outil). */
+export type AgentStep = { id: string; name: string; status: 'running' | 'done' | 'error'; summary?: string }
+
+type StreamOptions = { onToken?: (text: string) => void; onStep?: (step: AgentStep) => void; signal?: AbortSignal }
 
 /** Réponse en Server-Sent Events : onToken reçoit chaque fragment. */
 async function stream<T>(path: string, body: unknown, options: StreamOptions): Promise<T> {
@@ -294,7 +297,9 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
       if (!event || !data) continue
       const payload = JSON.parse(data)
 
-      if (event === 'token') {
+      if (event === 'step') {
+        options.onStep?.(payload as AgentStep)
+      } else if (event === 'token') {
         options.onToken?.(payload.text as string)
       } else if (event === 'done') {
         return payload as T
@@ -306,6 +311,8 @@ async function stream<T>(path: string, body: unknown, options: StreamOptions): P
               ? t('error.refused')
               : payload.error === 'Provider unavailable'
                 ? t('error.providerUnavailable')
+                : payload.error === 'Provider rate limited'
+                  ? t('error.providerRateLimited')
                 : t('error.assistantUnavailable'),
         )
       }

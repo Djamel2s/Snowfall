@@ -11,6 +11,7 @@ import { z } from "zod";
 import {
   echoModel,
   ModelRefusalError,
+  isRateLimit,
   type ChatRunner,
   type ChatTurn,
   type ModelImage,
@@ -82,6 +83,8 @@ import { citationsOf, KnowledgeService, renderKnowledge, type ActiveBase, type P
 import { PostgresKnowledgeStore } from "./knowledge/store.js";
 import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./knowledge/rewrite.js";
 import { HttpReranker } from "./knowledge/rerank.js";
+import { CitationRegistry, knowledgeTool } from "./agent/knowledge-tool.js";
+import type { AgentTool } from "./agent/tools.js";
 import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
 import { countingAuditLog, createMetrics, startMetricsServer, type Metrics } from "./observability/metrics.js";
 
@@ -151,12 +154,23 @@ export type AppDependencies = {
   metrics?: Metrics;
   /** Reformulation des questions de suivi pour la recherche (sinon : repli simple). */
   rewriteQuery?: QueryRewriter;
+  /** Boucle d'agent : aller-retour modèle ↔ outils au maximum par réponse. */
+  agentMaxSteps?: number;
   /** Remplace le routage par modèle (tests). */
   runChat?: ChatRunner;
 };
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const HISTORY_TURNS = 20;
+
+/**
+ * Connaissances d'une réponse : aucune, injectées d'office (modèle sans
+ * outils), ou outil de recherche confié à l'agent (RAG agentique).
+ */
+type KnowledgePlan =
+  | { mode: "none" }
+  | { mode: "inline"; passages: Passage[] }
+  | { mode: "agent"; tools: AgentTool[]; citations: CitationRegistry };
 
 export function cookieNames(secure: boolean) {
   // Le préfixe __Host- impose Secure, Path=/ et l'absence de Domain.
@@ -370,6 +384,8 @@ export function createAppServer(deps: AppDependencies) {
     selection: ModelSelection | undefined;
     provider: ProviderId | "echo";
     input: { history: ChatTurn[]; message: string; images: ModelImage[] };
+    /** Outils proposés au modèle (boucle d'agent). */
+    tools?: AgentTool[];
     eventType: string;
     details: Record<string, string | number | boolean>;
     persist: (content: string) => Promise<Record<string, unknown> | null>;
@@ -378,7 +394,7 @@ export function createAppServer(deps: AppDependencies) {
     const runChat = runnerFor(options.selection);
 
     const stream = new PassThrough();
-    const send = (event: "token" | "done" | "error", data: unknown) => {
+    const send = (event: "token" | "step" | "done" | "error", data: unknown) => {
       stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
@@ -391,10 +407,10 @@ export function createAppServer(deps: AppDependencies) {
       input.message.length + input.history.reduce((total, turn) => total + turn.content.length, 0);
     let partial = "";
     const started = performance.now();
-    const observe = (outcome: "success" | "aborted" | "refused" | "error") =>
+    const observe = (outcome: "success" | "aborted" | "refused" | "rate_limited" | "error") =>
       deps.metrics?.generation.observe({ provider: options.provider, outcome }, (performance.now() - started) / 1000);
 
-    const finish = async (content: string, usage: UsageTotals | undefined, model: string, partialAnswer: boolean) => {
+    const finish = async (content: string, usage: UsageTotals | undefined, model: string, partialAnswer: boolean, steps = 0) => {
       const payload = await options.persist(content);
       if (!payload) return null;
 
@@ -416,6 +432,7 @@ export function createAppServer(deps: AppDependencies) {
           inputTokens: counted.inputTokens,
           outputTokens: counted.outputTokens,
           partial: partialAnswer,
+          steps,
         },
       });
       return payload;
@@ -424,18 +441,26 @@ export function createAppServer(deps: AppDependencies) {
     void (async () => {
       try {
         const result = await runChat(
-          { message: input.message, history: input.history, images: input.images, instructions: agent?.instructions },
+          {
+            message: input.message,
+            history: input.history,
+            images: input.images,
+            instructions: agent?.instructions,
+            ...(options.tools?.length ? { tools: options.tools, maxSteps: deps.agentMaxSteps } : {}),
+          },
           {
             signal: generation.signal,
             onToken: (text) => {
               partial += text;
               send("token", { text });
             },
+            // Étapes visibles : « Recherche dans la base : … ».
+            onTool: (event) => send("step", event),
           },
         );
 
         observe("success");
-        const payload = await finish(result.content, result.usage, result.model, false);
+        const payload = await finish(result.content, result.usage, result.model, false, result.steps ?? 0);
         if (!payload) {
           send("error", { error: "Not found" });
           return;
@@ -451,11 +476,13 @@ export function createAppServer(deps: AppDependencies) {
             });
           }
         } else {
-          observe(error instanceof ModelRefusalError ? "refused" : "error");
+          observe(error instanceof ModelRefusalError ? "refused" : isRateLimit(error) ? "rate_limited" : "error");
           request.log.error({ err: error }, "Échec du graphe de chat");
           send("error", {
             error: error instanceof ModelRefusalError
               ? "Refused"
+              : isRateLimit(error)
+                ? "Provider rate limited"
               : error instanceof ProviderUnavailableError
                 ? "Provider unavailable"
                 : "Assistant unavailable",
@@ -807,9 +834,9 @@ export function createAppServer(deps: AppDependencies) {
       loaded: { conversation: ConversationSummary; agent: Agent | null; selection: ModelSelection | undefined },
       provider: ProviderId | "echo",
       query: { message: string; history: StoredMessage[] },
-    ): Promise<Passage[] | null> {
+    ): Promise<KnowledgePlan | null> {
       const bases = await activeBases(user, loaded.conversation, loaded.agent);
-      if (bases.length === 0) return [];
+      if (bases.length === 0) return { mode: "none" };
       if (bases.some((base) => base.confidential) && provider !== "local" && provider !== "echo") {
         await kit.record(request, user, {
           eventType: "knowledge.confidential_denied",
@@ -821,17 +848,31 @@ export function createAppServer(deps: AppDependencies) {
         await reply.code(409).send({ error: "Local model required", reason: "confidential_requires_local" });
         return null;
       }
-      if (!query.message.trim()) return [];
+      // RAG agentique : le modèle sait appeler des outils, il cherche lui-même
+      // (quand il le juge utile, avec ses propres requêtes, plusieurs fois si besoin).
+      if (models.supportsTools?.(loaded.selection)) {
+        const citations = new CitationRegistry();
+        return { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge!, user, bases, citations)] };
+      }
+      if (!query.message.trim()) return { mode: "none" };
       try {
         const turns: ChatTurn[] = query.history.slice(-HISTORY_TURNS).map((turn) => ({ role: turn.role, content: turn.content }));
         const standalone = turns.length ? await standaloneQuery(request, user, loaded.selection, provider, turns, query.message) : null;
-        return await deps.knowledge!.retrieve(user, bases, { text: query.message, standalone });
+        return { mode: "inline", passages: await deps.knowledge!.retrieve(user, bases, { text: query.message, standalone }) };
       } catch (error) {
         // Base momentanément indisponible : la réponse se fait sans elle.
         request.log.error({ err: error }, "Recherche dans la base de connaissances impossible");
-        return [];
+        return { mode: "none" };
       }
     }
+
+    /** Paramètres de génération selon le mode de connaissance retenu. */
+    const knowledgeInput = (plan: KnowledgePlan, input: { history: ChatTurn[]; message: string; images: ModelImage[] }) =>
+      plan.mode === "inline" ? withKnowledge(input, plan.passages) : input;
+    const knowledgeSources = (plan: KnowledgePlan, answer: string) =>
+      plan.mode === "inline" ? citationsOf(plan.passages) : plan.mode === "agent" ? plan.citations.citations(answer) : [];
+    const knowledgeDetail = (plan: KnowledgePlan) =>
+      plan.mode === "inline" ? plan.passages.length : plan.mode === "agent" ? "agent" : 0;
 
     /**
      * Question de suivi rendue autonome pour la recherche, par le modèle de la
@@ -903,8 +944,8 @@ export function createAppServer(deps: AppDependencies) {
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
-      const passages = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior });
-      if (!passages) return reply;
+      const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, { message: content, history: prior });
+      if (!plan) return reply;
 
       const context = prior.slice(-HISTORY_TURNS);
       const files = await modelFiles(user, params.data.id, context, attachmentIds);
@@ -917,14 +958,16 @@ export function createAppServer(deps: AppDependencies) {
         agent,
         selection,
         provider: admitted.provider,
-        input: withKnowledge(buildModelInput(context, { content, attachmentIds }, files), passages),
+        input: knowledgeInput(plan, buildModelInput(context, { content, attachmentIds }, files)),
+        ...(plan.mode === "agent" ? { tools: plan.tools } : {}),
         eventType: "message.create",
-        details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: passages.length },
+        details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: knowledgeDetail(plan) },
         persist: async (answer) => {
+          const sources = knowledgeSources(plan, answer);
           const exchange = await conversationStore.appendExchange(user, params.data.id, content, answer, {
             attachmentIds,
             ...(editMessageId ? { replaceFromMessageId: editMessageId } : {}),
-            ...(passages.length ? { sources: citationsOf(passages) } : {}),
+            ...(sources.length ? { sources } : {}),
           });
           return exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null;
         },
@@ -955,11 +998,11 @@ export function createAppServer(deps: AppDependencies) {
       const admitted = await admitGeneration(request, reply, user, selection);
       if (!admitted) return reply;
 
-      const passages = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, {
+      const plan = await retrieveKnowledge(request, reply, user, loaded, admitted.provider, {
         message: question.content,
         history: history.slice(0, -2),
       });
-      if (!passages) return reply;
+      if (!plan) return reply;
 
       const context = history.slice(0, -2).slice(-HISTORY_TURNS);
       const attachmentIds = question.attachments?.map((file) => file.id) ?? [];
@@ -973,16 +1016,18 @@ export function createAppServer(deps: AppDependencies) {
         agent,
         selection,
         provider: admitted.provider,
-        input: withKnowledge(buildModelInput(context, { content: question.content, attachmentIds }, files), passages),
+        input: knowledgeInput(plan, buildModelInput(context, { content: question.content, attachmentIds }, files)),
+        ...(plan.mode === "agent" ? { tools: plan.tools } : {}),
         eventType: "message.regenerate",
-        details: { attachments: attachmentIds.length, passages: passages.length },
+        details: { attachments: attachmentIds.length, passages: knowledgeDetail(plan) },
         persist: async (answer) => {
+          const sources = knowledgeSources(plan, answer);
           const assistantMessage = await conversationStore.replaceLastAssistant(
             user,
             params.data.id,
             last.id,
             answer,
-            passages.length ? citationsOf(passages) : undefined,
+            sources.length ? sources : undefined,
           );
           return assistantMessage ? { assistantMessage } : null;
         },
@@ -1325,6 +1370,7 @@ export function createProductionServer() {
     providers.local = {
       apiKey: config.llm.localApiKey ?? "local",
       baseUrl: config.llm.localBaseUrl,
+      tools: config.llm.localTools,
       ...llmLimits,
     };
   }
@@ -1373,6 +1419,7 @@ export function createProductionServer() {
     knowledge,
     embeddingProviders: () => embeddings.available(),
     rewriteQuery: createQueryRewriter((selection) => models.runner(selection)),
+    agentMaxSteps: config.llm.agentMaxSteps,
     ...(scanner ? { scanner } : {}),
     metrics,
     members: new PostgresMemberStore(pool),

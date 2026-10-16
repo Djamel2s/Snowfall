@@ -4,6 +4,7 @@ import {
   api,
   type Agent,
   type AttachmentMeta,
+  type AgentStep,
   type KnowledgeOwnerKind,
   type Message,
   type ModelSelection,
@@ -24,6 +25,7 @@ import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/Agen
 import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
 import MessageSources from './components/MessageSources'
+import AgentSteps from './components/AgentSteps'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -113,6 +115,10 @@ function App() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [streamingText, setStreamingText] = useState('')
+  // Étapes de l'agent pendant la réponse (outils appelés), remplacées à chaque nouvel état.
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
+  const onStep = (step: AgentStep) =>
+    setAgentSteps((current) => (current.some((item) => item.id === step.id) ? current.map((item) => (item.id === step.id ? { ...item, ...step } : item)) : [...current, step]))
   // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
   const [regenerating, setRegenerating] = useState(false)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
@@ -127,6 +133,7 @@ function App() {
   const [agents, setAgents] = useState<Agent[]>([])
   // undefined = studio fermé, null = création, Agent = édition.
   const [studioAgent, setStudioAgent] = useState<Agent | null | undefined>(undefined)
+  const [studioNotice, setStudioNotice] = useState<string | undefined>(undefined)
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences)
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
@@ -478,6 +485,7 @@ function App() {
     setSidebarPanel('agents')
     setSidebarCollapsed(false)
     setSidebarOpen(true)
+    setStudioNotice(undefined)
     setStudioAgent(agent)
   }
 
@@ -553,6 +561,7 @@ function App() {
   ) {
     setError('')
     setSending(true)
+    setAgentSteps([])
     stoppedRef.current = false
     const controller = new AbortController()
     abortRef.current = controller
@@ -591,6 +600,7 @@ function App() {
         abortRef.current = null
         setSending(false)
         setStreamingText('')
+        setAgentSteps([])
         setRegenerating(false)
       }
     }
@@ -634,7 +644,7 @@ function App() {
         const result = await api.sendMessage(
           conversationId,
           { content: message, attachmentIds: attachments.map((file) => file.id) },
-          { signal, onToken },
+          { signal, onToken, onStep },
         )
         updateConversation(conversationId, (current) => ({
           ...current,
@@ -672,7 +682,7 @@ function App() {
         const result = await api.sendMessage(
           conversation.id,
           { content: text, attachmentIds, editMessageId: original.id },
-          { signal, onToken },
+          { signal, onToken, onStep },
         )
         updateConversation(conversation.id, (current) => ({
           ...current,
@@ -691,7 +701,7 @@ function App() {
     await stream(
       conversation.id,
       async (signal, onToken) => {
-        const result = await api.regenerate(conversation.id, { signal, onToken })
+        const result = await api.regenerate(conversation.id, { signal, onToken, onStep })
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...current.messages.slice(0, -1), result.assistantMessage],
@@ -797,11 +807,18 @@ function App() {
         onEditAgent={openAgentEditor}
         agentEditor={studioAgent}
         onAgentEditorClose={() => setStudioAgent(undefined)}
-        onAgentSaved={(saved) => {
+        agentEditorNotice={studioNotice}
+        onAgentSaved={(saved, notice) => {
           const isNew = !agents.some((agent) => agent.id === saved.id)
           setAgents((current) =>
             isNew ? [...current, saved] : current.map((agent) => (agent.id === saved.id ? saved : agent)),
           )
+          // Documents refusés à la création : on reste sur l'agent pour que l'utilisateur voie et corrige.
+          setStudioNotice(notice)
+          if (notice) {
+            setStudioAgent(saved)
+            return
+          }
           setStudioAgent(undefined)
           if (isNew) void newChat(saved)
         }}
@@ -1013,6 +1030,7 @@ function App() {
                     </div>
                     <div className="message-body">
                       <div className="message-author">{assistantName}</div>
+                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} />}
                       {streamingText ? (
                         <Markdown source={streamingText} />
                       ) : (

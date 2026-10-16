@@ -68,8 +68,9 @@ type SidebarProps = {
   activeAgentId: string | null
   /** undefined : éditeur fermé ; null : création ; Agent : modification. */
   agentEditor: Agent | null | undefined
+  agentEditorNotice?: string
   onAgentEditorClose: () => void
-  onAgentSaved: (agent: Agent) => void
+  onAgentSaved: (agent: Agent, notice?: string) => void
   onAgentDeleted: (id: string) => void
   onCreateAgent?: () => void
   onStartAgent: (agent: Agent) => void
@@ -371,6 +372,7 @@ export default function Sidebar(props: SidebarProps) {
             <AgentStudio
               key={agentEditor?.id ?? 'new'}
               agent={agentEditor}
+              notice={props.agentEditorNotice}
               onClose={props.onAgentEditorClose}
               onSaved={props.onAgentSaved}
               onDeleted={props.onAgentDeleted}

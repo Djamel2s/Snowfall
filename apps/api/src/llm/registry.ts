@@ -33,6 +33,8 @@ export interface ModelRegistry {
   providerFor(selection?: ModelSelection): ProviderId | "echo";
   /** Modèle des conversations sans agent ni modèle choisi. */
   defaultSelection?(): ModelSelection | undefined;
+  /** Le modèle sait appeler des outils (boucle d'agent). */
+  supportsTools?(selection?: ModelSelection): boolean;
 }
 
 const CATALOG_TTL_MS = 10 * 60 * 1000;
@@ -104,17 +106,25 @@ export class ProviderRegistry implements ModelRegistry {
     return (selection ?? this.options.defaultSelection)?.provider ?? "echo";
   }
 
-  runner(selection?: ModelSelection): ChatRunner {
+  private readonly chatModels = new Map<string, ChatModel | undefined>();
+
+  private model(selection?: ModelSelection) {
     const target = selection ?? this.options.defaultSelection;
     const key = target ? `${target.provider}:${target.model}` : "fallback";
+    if (!this.chatModels.has(key)) {
+      this.chatModels.set(key, target ? this.adapters.get(target.provider)?.create(target.model) : this.options.fallback);
+    }
+    return { key, model: this.chatModels.get(key) };
+  }
+
+  supportsTools(selection?: ModelSelection) {
+    return this.model(selection).model?.supportsTools ?? false;
+  }
+
+  runner(selection?: ModelSelection): ChatRunner {
+    const { key, model } = this.model(selection);
     const cached = this.runners.get(key);
     if (cached) return cached;
-
-    let model = this.options.fallback;
-    if (target) {
-      const adapter = this.adapters.get(target.provider);
-      model = adapter?.create(target.model);
-    }
 
     if (!model) {
       return async () => {
@@ -148,7 +158,7 @@ function adapterFor(id: ProviderId, settings: ProviderSettings): ProviderAdapter
     case "openai":
     case "local":
       return {
-        create: (model) => createOpenAiCompatibleModel(id, model, settings),
+        create: (model) => createOpenAiCompatibleModel(id, model, settings, { tools: settings.tools === true }),
         list: () => listOpenAiCompatibleModels(id, settings),
       };
   }

@@ -76,7 +76,16 @@ function fakeEmbedder(provider: EmbeddingProvider, calls: string[]): Embedder {
   };
 }
 
-function setup(options: { settings?: Partial<OrganizationSettings>; rewriteQuery?: QueryRewriter; scanner?: MalwareScanner } = {}) {
+function setup(
+  options: {
+    settings?: Partial<OrganizationSettings>;
+    rewriteQuery?: QueryRewriter;
+    scanner?: MalwareScanner;
+    /** Modèle capable d'appeler des outils (RAG agentique). */
+    tools?: boolean;
+    runChat?: ChatRunner;
+  } = {},
+) {
   let current = alice;
   const events: AuditEvent[] = [];
   const calls: Parameters<ChatRunner>[0][] = [];
@@ -112,18 +121,20 @@ function setup(options: { settings?: Partial<OrganizationSettings>; rewriteQuery
     authenticate: async () => current,
     conversationStore: createFakeConversationStore(),
     agents: fakeAgents(),
-    models: registry,
+    models: options.tools ? { ...registry, supportsTools: () => true } : registry,
     settings: settingsStore,
     knowledge,
     embeddingProviders: () => embeddings.available(),
     audit,
     ...(options.rewriteQuery ? { rewriteQuery: options.rewriteQuery } : {}),
     ...(options.scanner ? { scanner: options.scanner } : {}),
-    runChat: async (input, runOptions) => {
-      calls.push(input);
-      runOptions?.onToken?.("ok");
-      return { content: "Réponse [1]", model: "fake" };
-    },
+    runChat:
+      options.runChat ??
+      (async (input, runOptions) => {
+        calls.push(input);
+        runOptions?.onToken?.("ok");
+        return { content: "Réponse [1]", model: "fake" };
+      }),
   });
   return {
     app,
@@ -221,6 +232,36 @@ describe("Bases de connaissances : routes", () => {
     assert.equal(done(answer.body).assistantMessage.sources[0].section, "Politique RH > Stagiaires");
     // La reformulation consomme le quota du fournisseur de la conversation.
     assert.ok(recorded.includes("mistral"));
+  });
+
+  it("RAG agentique : l'agent reçoit l'outil, cherche lui-même, seules les sources citées sont gardées", async (t) => {
+    const seen: Parameters<ChatRunner>[0][] = [];
+    const { app, knowledge } = setup({
+      tools: true,
+      // L'agent cherche deux fois, puis ne cite que le second extrait.
+      runChat: async (input) => {
+        seen.push(input);
+        const tool = input.tools!.find((item) => item.name === "search_knowledge")!;
+        const signal = new AbortController().signal;
+        const first = await tool.execute({ query: "politique de congés" }, { signal });
+        const second = await tool.execute({ query: "télétravail jours par semaine" }, { signal });
+        assert.match(first.content, /<source id="1"/);
+        assert.match(second.content, /<source id="2"[\s\S]*deux jours/);
+        return { content: "Deux jours de télétravail par semaine [2].", model: "fake", steps: 2 };
+      },
+    });
+    t.after(() => app.close());
+    const agent = await createAgent(app);
+    await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "conges.md", "# Congés\n\nTrente jours de congés payés par an."));
+    await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "teletravail.md", "# Télétravail\n\nLe télétravail est possible deux jours par semaine."));
+    await knowledge.idle();
+
+    const conversation = (await app.inject(json("POST", "/conversations", { agentId: agent.id }))).json().conversation;
+    const answer = await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Combien de jours de télétravail ?" }));
+
+    // Aucun extrait injecté d'office : c'est l'agent qui a cherché.
+    assert.ok(!seen[0]!.message.includes("<knowledge>"));
+    assert.deepEqual(done(answer.body).assistantMessage.sources.map((source: { n: number; name: string }) => [source.n, source.name]), [[2, "teletravail.md"]]);
   });
 
   it("un membre lit la base d'un agent qu'il n'a pas créé, sans pouvoir la modifier", async (t) => {

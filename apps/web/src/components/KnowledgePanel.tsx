@@ -17,6 +17,7 @@ import {
 import { api, type KnowledgeBaseView, type KnowledgeOwnerKind, type KnowledgeSource } from '../lib/api'
 import { formatNumber, useI18n } from '../lib/i18n'
 import { safeHref } from '../lib/markdown'
+import { draftLink, emptyKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const POLL_MS = 1_500
@@ -61,16 +62,22 @@ function failureKey(code: string | null): FailureKey {
 
 type Props = {
   kind: KnowledgeOwnerKind
-  ownerId: string
+  /** Absent : propriétaire pas encore créé, les documents sont mis en attente (brouillon). */
+  ownerId?: string
   /** Prévient le parent quand le nombre de sources prêtes change. */
   onChange?: (ready: number) => void
+  draft?: KnowledgeDraft
+  onDraftChange?: (draft: KnowledgeDraft) => void
+  /** Brouillon : le mode confidentiel n'est possible qu'avec un modèle local. */
+  confidentialAllowed?: boolean
 }
 
 /**
  * Base de connaissances d'un agent ou d'un projet : fichiers et liens,
  * indexés côté serveur (chiffrés), avec leur état d'avancement.
  */
-export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
+export default function KnowledgePanel(props: Props) {
+  const { kind, ownerId, onChange } = props
   const { t } = useI18n()
   const [view, setView] = useState<KnowledgeBaseView | null>(null)
   const [error, setError] = useState('')
@@ -89,6 +96,7 @@ export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
   const refresh = useCallback(() => setVersion((current) => current + 1), [])
 
   useEffect(() => {
+    if (!ownerId) return
     let cancelled = false
     api
       .getKnowledge(kind, ownerId)
@@ -126,21 +134,43 @@ export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
     }
   }
 
+  // Brouillon : la liste vit chez le parent, envoyée après la création.
+  const draft = ownerId ? null : (props.draft ?? emptyKnowledgeDraft)
+  const setDraft = (next: KnowledgeDraft) => props.onDraftChange?.(next)
+  const nextDraftId = useRef(0)
+  const draftId = () => `draft-${++nextDraftId.current}`
+
   function addFiles(files: File[]) {
     if (files.some((file) => file.size > MAX_FILE_BYTES)) {
       setError(t('error.fileTooLarge'))
       return
     }
+    if (draft) {
+      setError('')
+      setDraft({ ...draft, items: [...draft.items, ...files.map((file) => ({ id: draftId(), kind: 'file' as const, name: file.name, file }))] })
+      return
+    }
     void run(async () => {
-      for (const file of files) await api.addKnowledgeFile(kind, ownerId, file, file.name)
+      for (const file of files) await api.addKnowledgeFile(kind, ownerId!, file, file.name)
     })
   }
 
   function addLink() {
     const url = link.trim()
     if (!url) return
+    if (draft) {
+      const checked = draftLink(url)
+      if (!checked) {
+        setError(t('knowledge.error.invalidLink'))
+        return
+      }
+      setError('')
+      setDraft({ ...draft, items: [...draft.items, { id: draftId(), kind: 'link', name: new URL(checked).host, url: checked }] })
+      setLink('')
+      return
+    }
     void run(async () => {
-      await api.addKnowledgeLink(kind, ownerId, url)
+      await api.addKnowledgeLink(kind, ownerId!, url)
       setLink('')
     })
   }
@@ -151,23 +181,30 @@ export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
     if (canManage && event.dataTransfer.files.length) addFiles([...event.dataTransfer.files])
   }
 
-  const canManage = view?.canManage ?? false
+  const canManage = draft ? true : (view?.canManage ?? false)
+  // Brouillon : on ne sait pas encore si l'admin autorise les liens ; le serveur tranchera à l'envoi.
+  const linksEnabled = draft ? true : (view?.linksEnabled ?? false)
+  const confidential = draft ? draft.confidential : (view?.confidential ?? false)
   const sources = view?.sources ?? []
 
   return (
     <section className="knowledge-panel" aria-label={t('knowledge.title')}>
       <div className="knowledge-heading">
         <span className="sidebar-section-label">{t('knowledge.title')}</span>
-        {view && (
+        {(view || draft) && (
           <button
             type="button"
-            className={`knowledge-lock ${view.confidential ? 'on' : ''}`}
-            aria-pressed={view.confidential}
-            disabled={!canManage || busy}
-            title={t('knowledge.confidentialHint')}
-            onClick={() => void run(() => api.setKnowledgeConfidential(kind, ownerId, !view.confidential))}
+            className={`knowledge-lock ${confidential ? 'on' : ''}`}
+            aria-pressed={confidential}
+            disabled={!canManage || busy || (!!draft && !confidential && !props.confidentialAllowed)}
+            title={draft && !props.confidentialAllowed ? t('knowledge.error.agentLocal') : t('knowledge.confidentialHint')}
+            onClick={() =>
+              draft
+                ? setDraft({ ...draft, confidential: !draft.confidential })
+                : void run(() => api.setKnowledgeConfidential(kind, ownerId!, !confidential))
+            }
           >
-            {view.confidential ? <Lock size={12} /> : <LockOpen size={12} />}
+            {confidential ? <Lock size={12} /> : <LockOpen size={12} />}
             {t('knowledge.confidential')}
           </button>
         )}
@@ -198,7 +235,7 @@ export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
               event.target.value = ''
             }}
           />
-          {view?.linksEnabled && (
+          {linksEnabled && (
             // Pas de <form> : le panneau peut vivre dans le formulaire du studio d'agent.
             <div className="knowledge-link">
               <Link2 size={13} />
@@ -230,7 +267,38 @@ export default function KnowledgePanel({ kind, ownerId, onChange }: Props) {
         </p>
       )}
 
-      {sources.length > 0 ? (
+      {draft ? (
+        draft.items.length > 0 ? (
+          <ul className="knowledge-sources">
+            {draft.items.map((item) => {
+              const Icon = item.kind === 'link' ? Link2 : FileText
+              return (
+                <li key={item.id} className="knowledge-source knowledge-queued">
+                  <Icon size={14} />
+                  <span className="knowledge-source-text">
+                    <span className="knowledge-source-name" title={item.kind === 'link' ? item.url : item.name}>
+                      {item.name}
+                    </span>
+                    <small>{t('knowledge.queued')}</small>
+                  </span>
+                  <span className="knowledge-source-actions">
+                    <button
+                      type="button"
+                      aria-label={t('knowledge.remove', { name: item.name })}
+                      title={t('knowledge.remove', { name: item.name })}
+                      onClick={() => setDraft({ ...draft, items: draft.items.filter((other) => other.id !== item.id) })}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <p className="knowledge-empty">{t('knowledge.empty')}</p>
+        )
+      ) : sources.length > 0 ? (
         <ul className="knowledge-sources">
           {sources.map((source) => {
             const href = source.kind === 'link' && source.url ? safeHref(source.url) : null

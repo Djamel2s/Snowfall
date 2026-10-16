@@ -10,6 +10,8 @@ export type ProviderSettings = {
   baseUrl?: string | undefined;
   maxOutputTokens: number;
   timeoutMs: number;
+  /** Serveur local : le modèle sait appeler des outils (LOCAL_LLM_TOOLS). */
+  tools?: boolean;
 };
 
 export type ModelSelection = { provider: ProviderId; model: string };

@@ -20,6 +20,10 @@ const envSchema = z.object({
   GOOGLE_API_KEY: z.string().optional(),
   LOCAL_LLM_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
   LOCAL_LLM_API_KEY: z.string().optional(),
+  // Le modèle local sait appeler des outils (Ollama, vLLM avec un modèle compatible).
+  LOCAL_LLM_TOOLS: z.enum(["true", "false"]).default("false"),
+  // Boucle d'agent : aller-retour modèle ↔ outils au maximum par réponse.
+  AGENT_MAX_STEPS: z.coerce.number().int().min(1).max(20).default(6),
   // "fournisseur:modèle" des conversations sans agent, ex. "mistral:mistral-small-latest".
   LLM_DEFAULT_MODEL: z
     .string()
@@ -107,6 +111,8 @@ export type AppConfig = {
     googleApiKey: string | undefined;
     localBaseUrl: string | undefined;
     localApiKey: string | undefined;
+    localTools: boolean;
+    agentMaxSteps: number;
     defaultSelection: ModelSelection | undefined;
     maxOutputTokens: number;
     timeoutMs: number;
@@ -267,6 +273,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       googleApiKey: e.GOOGLE_API_KEY || undefined,
       localBaseUrl: e.LOCAL_LLM_BASE_URL || undefined,
       localApiKey: e.LOCAL_LLM_API_KEY || undefined,
+      localTools: e.LOCAL_LLM_TOOLS === "true",
+      agentMaxSteps: e.AGENT_MAX_STEPS,
       defaultSelection,
       maxOutputTokens: e.LLM_MAX_OUTPUT_TOKENS,
       timeoutMs: e.LLM_TIMEOUT_MS,

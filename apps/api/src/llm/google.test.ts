@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { ModelRefusalError, type ChatChunk } from "../graph/chat-graph.js";
+import { isRateLimit, ModelRefusalError, ProviderRateLimitError, type ChatChunk } from "../graph/chat-graph.js";
 import { createGoogleModel, listGoogleModels } from "./google.js";
 
 const settings = { apiKey: "test-key", maxOutputTokens: 1000, timeoutMs: 5_000 };
@@ -104,5 +104,23 @@ describe("Google Gemini", () => {
 
     const models = await listGoogleModels(settings);
     assert.deepEqual(models.map((model) => model.id), ["gemini-2.5-pro", "gemini-2.5-flash"]);
+  });
+});
+
+describe("Limite de débit (429)", () => {
+  it("Gemini réessaie, puis signale clairement la limite atteinte", async () => {
+    mockFetch(429, 429, 429);
+    await assert.rejects(
+      collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" })),
+      ProviderRateLimitError,
+    );
+    assert.equal(calls.length, 3);
+  });
+
+  it("reconnaît le 429 des SDK, quelle que soit leur forme", () => {
+    assert.ok(isRateLimit(new ProviderRateLimitError()));
+    assert.ok(isRateLimit(Object.assign(new Error("Rate limit reached"), { status: 429 })));
+    assert.ok(isRateLimit(new Error("429 Too Many Requests")));
+    assert.ok(!isRateLimit(Object.assign(new Error("Bad request"), { status: 400 })));
   });
 });
