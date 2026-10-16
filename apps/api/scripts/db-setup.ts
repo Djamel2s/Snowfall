@@ -131,6 +131,33 @@ async function main() {
   await client.query("REVOKE ALL ON DATABASE keycloak FROM PUBLIC");
   await client.query("GRANT CONNECT, CREATE, TEMPORARY ON DATABASE keycloak TO keycloak");
 
+  // Sauvegarde (facultatif) : lecture seule de toutes les données, RLS
+  // ignorée (sinon le dump serait silencieusement incomplet), aucune écriture.
+  const backupPassword = process.env.BACKUP_DB_PASSWORD;
+  if (backupPassword) {
+    if (backupPassword.length < 16) throw new Error("BACKUP_DB_PASSWORD : 16 caractères minimum.");
+    const role = client.escapeIdentifier("snowfall_backup");
+    const exists = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'snowfall_backup'");
+    const options = `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS PASSWORD ${client.escapeLiteral(backupPassword)}`;
+    await client.query(exists.rowCount ? `ALTER ROLE ${role} WITH ${options}` : `CREATE ROLE ${role} WITH ${options}`);
+    await client.query(`GRANT pg_read_all_data TO ${role}`);
+    await client.query(`GRANT CONNECT ON DATABASE ${db} TO ${role}`);
+    await client.query(`GRANT CONNECT ON DATABASE keycloak TO ${role}`);
+    // Transactions longues autorisées (gros dumps), mais jamais d'écriture.
+    await client.query(`ALTER ROLE ${role} SET default_transaction_read_only = on`);
+  }
+
+  // Supervision (facultatif) : statistiques seulement (pg_monitor), aucune
+  // lecture des tables de l'application.
+  const monitorPassword = process.env.MONITOR_DB_PASSWORD;
+  if (monitorPassword) {
+    if (monitorPassword.length < 16) throw new Error("MONITOR_DB_PASSWORD : 16 caractères minimum.");
+    await upsertRole("snowfall_monitor", monitorPassword);
+    await client.query("GRANT pg_monitor TO snowfall_monitor");
+    await client.query(`GRANT CONNECT ON DATABASE ${db} TO snowfall_monitor`);
+    await client.query("ALTER ROLE snowfall_monitor SET statement_timeout = '10s'");
+  }
+
   console.log(
     `Rôles prêts : ${migrator.user} (migrations), ${app.user} (application), keycloak.`,
   );

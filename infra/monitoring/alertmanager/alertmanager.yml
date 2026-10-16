@@ -1,0 +1,35 @@
+# Snowfall — Alertmanager : envoi des alertes par e-mail. Adapter les
+# adresses ; le mot de passe SMTP est lu dans un secret, jamais écrit ici.
+global:
+  smtp_smarthost: "smtp.exemple.com:587"
+  smtp_from: "alertes@exemple.com"
+  smtp_auth_username: "alertes@exemple.com"
+  smtp_auth_password_file: /run/secrets/alertmanager_smtp_password
+  smtp_require_tls: true
+
+route:
+  receiver: exploitation
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity="critical"']
+      receiver: exploitation
+      repeat_interval: 1h
+
+receivers:
+  - name: exploitation
+    email_configs:
+      - to: "exploitation@exemple.com"
+        send_resolved: true
+    # Webhook (messagerie d'astreinte, SOAR) : URL dans un secret.
+    # webhook_configs:
+    #   - url_file: /run/secrets/alertmanager_webhook_url
+    #     send_resolved: true
+
+# Une alerte critique masque l'avertissement de même nom.
+inhibit_rules:
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: [alertname]

@@ -1,0 +1,29 @@
+# Snowfall — alertes sur les journaux (Loki ruler, locataire unique « fake »).
+groups:
+  - name: snowfall-journaux
+    rules:
+      - alert: SauvegardeManquante
+        # Le service de sauvegarde écrit « backup_ok » à chaque réussite.
+        expr: absent_over_time({service=~".*backup.*"} |= "backup_ok" [26h])
+        labels: { severity: critical }
+        annotations:
+          summary: "Aucune sauvegarde réussie depuis plus de 26 heures."
+
+      - alert: SauvegardeEchouee
+        expr: sum(count_over_time({service=~".*backup.*"} |= "backup_failed" [1h])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Une sauvegarde a échoué (voir les journaux du service backup)."
+
+      - alert: SortiesRefusees
+        # Le proxy de sortie refuse à répétition : configuration ou exfiltration ?
+        expr: sum(count_over_time({service=~".*egress.*"} |= "TCP_DENIED" [10m])) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 20 connexions sortantes refusées en 10 minutes."
+
+      - alert: KmsAccesRefuse
+        expr: sum(count_over_time({service=~".*openbao.*"} |= "permission denied" [10m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Opération refusée par le KMS (jeton invalide ou tentative hors politique)."

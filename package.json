@@ -23,6 +23,7 @@
     "db:setup": "npm run db:setup -w @snowfall/api",
     "keys:rotate": "npm run keys:rotate -w @snowfall/api --",
     "audit:purge": "npm run audit:purge -w @snowfall/api --",
+    "knowledge:eval": "npm run knowledge:eval -w @snowfall/api --",
     "keycloak:sync": "npm run keycloak:sync -w @snowfall/api"
   },
   "dependencies": {

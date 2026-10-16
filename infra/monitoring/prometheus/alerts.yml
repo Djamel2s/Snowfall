@@ -1,0 +1,103 @@
+# Snowfall — alertes Prometheus. « critical » : action immédiate ;
+# « warning » : à traiter dans la journée. Les seuils de sécurité portent sur
+# le journal d'audit (snowfall_audit_events_total).
+groups:
+  - name: snowfall-disponibilite
+    rules:
+      - alert: SnowfallApiInjoignable
+        expr: up{job="snowfall-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "L'API Snowfall ne répond plus à Prometheus."
+
+      - alert: SnowfallErreursServeur
+        expr: |
+          sum(rate(snowfall_http_request_duration_seconds_count{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(snowfall_http_request_duration_seconds_count[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 5 % de réponses en erreur serveur depuis 10 minutes."
+
+      - alert: SnowfallLenteur
+        # Réponses en flux (messages, régénération) exclues : longues par nature.
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(snowfall_http_request_duration_seconds_bucket{route!~".*/(messages|regenerate)"}[5m]))) > 2
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "95e centile des requêtes au-delà de 2 s."
+
+      - alert: SnowfallEchecsModeles
+        expr: |
+          sum(rate(snowfall_llm_generation_seconds_count{outcome="error"}[10m]))
+            / clamp_min(sum(rate(snowfall_llm_generation_seconds_count[10m])), 1e-9) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 20 % des réponses des modèles échouent (fournisseur indisponible ?)."
+
+      - alert: PostgresInjoignable
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL ne répond plus à l'exporteur."
+
+      - alert: PostgresConnexionsSaturees
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 80 % des connexions PostgreSQL utilisées."
+
+  - name: snowfall-securite
+    rules:
+      - alert: SnowfallMenaceDetectee
+        expr: increase(snowfall_audit_events_total{event="security.malware_detected"}[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "L'antivirus a bloqué un fichier infecté (voir l'audit : security.malware_detected)."
+
+      - alert: SnowfallAntivirusIndisponible
+        expr: increase(snowfall_audit_events_total{event="security.scan_unavailable"}[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Analyse antivirus impossible : les dépôts de fichiers sont refusés."
+
+      - alert: SnowfallAccesCroises
+        expr: increase(snowfall_audit_events_total{event="conversation.access", outcome="denied"}[10m]) > 20
+        labels: { severity: critical }
+        annotations:
+          summary: "Nombreux accès refusés à des conversations d'autrui (énumération possible)."
+
+      - alert: SnowfallCsrf
+        expr: increase(snowfall_audit_events_total{event="security.csrf_rejected"}[10m]) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "Requêtes d'une origine étrangère rejetées (CSRF)."
+
+      - alert: SnowfallEchecsConnexion
+        expr: increase(snowfall_audit_events_total{event=~"auth\\..*", outcome=~"denied|failure"}[10m]) > 30
+        labels: { severity: warning }
+        annotations:
+          summary: "Pic d'échecs d'authentification (attaque par force brute ?)."
+
+      - alert: SnowfallEcrituresRefusees
+        expr: increase(snowfall_audit_events_total{event="authorization.write", outcome="denied"}[10m]) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "Nombreuses écritures refusées (rôle lecteur ou tentative d'élévation)."
+
+      - alert: SnowfallTentativesSsrf
+        expr: increase(snowfall_audit_events_total{event="knowledge.link_denied"}[10m]) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "Liens vers des adresses internes refusés à répétition (SSRF ?)."
+
+      - alert: SnowfallDonneesConfidentielles
+        expr: increase(snowfall_audit_events_total{event="knowledge.confidential_denied"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Base confidentielle interrogée avec un modèle externe (refusé)."

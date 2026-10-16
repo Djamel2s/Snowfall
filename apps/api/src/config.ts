@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { VaultAuthSettings } from "./crypto/vault.js";
 import type { ModelSelection, ProviderId } from "./llm/types.js";
 
 const envSchema = z.object({
@@ -35,7 +36,13 @@ const envSchema = z.object({
   // SNOWFALL_MASTER_KEY) ou "vault" (HashiCorp Vault / OpenBao Transit).
   KMS_PROVIDER: z.enum(["local", "vault"]).default("local"),
   VAULT_ADDR: z.url().optional(),
+  // Authentification au KMS : AppRole (production) ou jeton statique (dev).
+  VAULT_AUTH: z.enum(["token", "approle"]).optional(),
   VAULT_TOKEN: z.string().optional(),
+  VAULT_ROLE_ID: z.string().optional(),
+  VAULT_SECRET_ID: z.string().optional(),
+  VAULT_SECRET_ID_FILE: z.string().optional(),
+  VAULT_APPROLE_MOUNT: z.string().regex(/^[\w-]+$/).default("approle"),
   VAULT_NAMESPACE: z.string().optional(),
   VAULT_TRANSIT_MOUNT: z.string().regex(/^[\w-]+$/).default("transit"),
   VAULT_TRANSIT_KEY: z.string().regex(/^[\w-]+$/).default("snowfall"),
@@ -50,6 +57,10 @@ const envSchema = z.object({
   EMBEDDING_MODEL_OPENAI: z.string().regex(/^[\w.:\/-]{1,120}$/).default("text-embedding-3-small"),
   EMBEDDING_MODEL_GOOGLE: z.string().regex(/^[\w.:\/-]{1,120}$/).default("gemini-embedding-001"),
   LOCAL_EMBEDDING_MODEL: z.union([z.string().regex(/^[\w.:\/-]{1,120}$/), z.literal("")]).optional(),
+  // Serveur d'embeddings dédié (Text Embeddings Inference, vLLM…), compatible
+  // OpenAI ; à défaut, celui du modèle de chat local (LOCAL_LLM_BASE_URL).
+  LOCAL_EMBEDDING_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
+  LOCAL_EMBEDDING_API_KEY: z.string().optional(),
   // Import de pages web (à couper si la plateforme n'a pas d'accès sortant contrôlé).
   KNOWLEDGE_LINKS: z.enum(["on", "off"]).default("on"),
   // Reclassement des passages (cross-encoder servi par vLLM, Infinity ou TEI).
@@ -62,6 +73,8 @@ const envSchema = z.object({
   RERANK_SCOPE: z.enum(["local", "external"]).default("local"),
   RERANK_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.02),
   RERANK_TIMEOUT_MS: z.coerce.number().int().min(500).max(60_000).default(8_000),
+  // Passages reclassés par question : 10 suffit au CPU, 30 avec un GPU.
+  RERANK_CANDIDATES: z.coerce.number().int().min(2).max(50).default(10),
   // Antivirus des fichiers reçus (ClamAV). Par défaut : actif en production
   // (refus si le service est injoignable), désactivé en développement.
   ANTIVIRUS: z.enum(["clamav", "off"]).optional(),
@@ -71,6 +84,10 @@ const envSchema = z.object({
   // Proxy de sortie (Squid) pour l'import de liens ; les SDK des fournisseurs
   // passent par HTTPS_PROXY (NODE_USE_ENV_PROXY=1).
   EGRESS_PROXY_URL: z.union([z.url(), z.literal("")]).optional(),
+  // Métriques Prometheus sur un port dédié (jamais publié par nginx).
+  METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9464),
+  METRICS_HOST: z.string().default("127.0.0.1"),
+  METRICS_TOKEN: z.string().optional(),
 });
 
 export type AppConfig = {
@@ -97,18 +114,27 @@ export type AppConfig = {
   oidcExtraScopes: string[];
   kms:
     | { provider: "local" }
-    | { provider: "vault"; address: string; token: string; namespace: string | undefined; mount: string; key: string };
+    | {
+        provider: "vault";
+        address: string;
+        auth: VaultAuthSettings;
+        namespace: string | undefined;
+        mount: string;
+        key: string;
+      };
   audit: {
     stdout: boolean;
     siem: { url: string; token: string | undefined; format: "json" | "splunk-hec" } | undefined;
   };
   antivirus: { host: string; port: number; timeoutMs: number } | undefined;
   egressProxy: string | undefined;
+  metrics: { host: string; port: number; token: string | undefined } | undefined;
   knowledge: {
     embeddingModels: { mistral: string; openai: string; google: string; local: string | undefined };
+    localEmbedding: { baseUrl: string; apiKey: string } | undefined;
     links: boolean;
     rerank:
-      | { baseUrl: string; model: string; apiKey: string | undefined; api: "cohere" | "tei"; local: boolean; minScore: number; timeoutMs: number }
+      | { baseUrl: string; model: string; apiKey: string | undefined; api: "cohere" | "tei"; local: boolean; minScore: number; timeoutMs: number; candidates: number }
       | undefined;
   };
 };
@@ -124,7 +150,12 @@ export function loadKmsConfig(env: NodeJS.ProcessEnv = process.env): { masterKey
       SNOWFALL_MASTER_KEY: true,
       KMS_PROVIDER: true,
       VAULT_ADDR: true,
+      VAULT_AUTH: true,
       VAULT_TOKEN: true,
+      VAULT_ROLE_ID: true,
+      VAULT_SECRET_ID: true,
+      VAULT_SECRET_ID_FILE: true,
+      VAULT_APPROLE_MOUNT: true,
       VAULT_NAMESPACE: true,
       VAULT_TRANSIT_MOUNT: true,
       VAULT_TRANSIT_KEY: true,
@@ -134,9 +165,23 @@ export function loadKmsConfig(env: NodeJS.ProcessEnv = process.env): { masterKey
     throw new Error(`Configuration KMS invalide : ${parsed.error.issues.map((issue) => issue.path.join(".")).join(", ")}`);
   }
   const e = parsed.data;
-  if (e.KMS_PROVIDER === "vault" && (!e.VAULT_ADDR || !e.VAULT_TOKEN)) {
-    throw new Error("KMS_PROVIDER=vault exige VAULT_ADDR et VAULT_TOKEN.");
+  const production = e.NODE_ENV === "production";
+  const method = e.VAULT_AUTH ?? (e.VAULT_ROLE_ID ? "approle" : "token");
+  if (e.KMS_PROVIDER === "vault") {
+    if (!e.VAULT_ADDR) throw new Error("KMS_PROVIDER=vault exige VAULT_ADDR.");
+    if (method === "token" && !e.VAULT_TOKEN) throw new Error("VAULT_AUTH=token exige VAULT_TOKEN.");
+    if (method === "approle" && (!e.VAULT_ROLE_ID || !(e.VAULT_SECRET_ID || e.VAULT_SECRET_ID_FILE))) {
+      throw new Error("VAULT_AUTH=approle exige VAULT_ROLE_ID et VAULT_SECRET_ID_FILE (ou VAULT_SECRET_ID).");
+    }
+    // Un jeton statique ne s'expire ni ne se renouvelle : refusé en production.
+    if (production && method === "token" && process.env.VAULT_ALLOW_STATIC_TOKEN !== "true") {
+      throw new Error("En production, utiliser VAULT_AUTH=approle (jeton statique refusé).");
+    }
   }
+  const auth: VaultAuthSettings =
+    method === "approle"
+      ? { method, roleId: e.VAULT_ROLE_ID!, secretId: e.VAULT_SECRET_ID, secretIdFile: e.VAULT_SECRET_ID_FILE, mount: e.VAULT_APPROLE_MOUNT }
+      : { method, token: e.VAULT_TOKEN ?? "" };
   return {
     masterKey: e.SNOWFALL_MASTER_KEY,
     kms:
@@ -144,7 +189,7 @@ export function loadKmsConfig(env: NodeJS.ProcessEnv = process.env): { masterKey
         ? {
             provider: "vault",
             address: e.VAULT_ADDR!.replace(/\/$/, ""),
-            token: e.VAULT_TOKEN!,
+            auth,
             namespace: e.VAULT_NAMESPACE || undefined,
             mount: e.VAULT_TRANSIT_MOUNT,
             key: e.VAULT_TRANSIT_KEY,
@@ -194,9 +239,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (production && !e.OIDC_ISSUER.startsWith("https://")) {
     throw new Error("OIDC_ISSUER doit être en HTTPS en production.");
   }
-  if (e.KMS_PROVIDER === "vault" && (!e.VAULT_ADDR || !e.VAULT_TOKEN)) {
-    throw new Error("KMS_PROVIDER=vault exige VAULT_ADDR et VAULT_TOKEN.");
-  }
   if (production && e.KMS_PROVIDER === "vault" && !e.VAULT_ADDR!.startsWith("https://")) {
     throw new Error("VAULT_ADDR doit être en HTTPS en production.");
   }
@@ -242,6 +284,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         ? { host: e.CLAMAV_HOST, port: e.CLAMAV_PORT, timeoutMs: e.ANTIVIRUS_TIMEOUT_MS }
         : undefined,
     egressProxy: e.EGRESS_PROXY_URL || undefined,
+    // METRICS_PORT=0 désactive l'exposition.
+    metrics: e.METRICS_PORT ? { host: e.METRICS_HOST, port: e.METRICS_PORT, token: e.METRICS_TOKEN || undefined } : undefined,
     knowledge: {
       embeddingModels: {
         mistral: e.EMBEDDING_MODEL_MISTRAL,
@@ -250,6 +294,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         local: e.LOCAL_EMBEDDING_MODEL || undefined,
       },
       links: e.KNOWLEDGE_LINKS === "on",
+      localEmbedding:
+        e.LOCAL_EMBEDDING_BASE_URL || e.LOCAL_LLM_BASE_URL
+          ? {
+              baseUrl: (e.LOCAL_EMBEDDING_BASE_URL || e.LOCAL_LLM_BASE_URL)!,
+              apiKey: e.LOCAL_EMBEDDING_API_KEY || e.LOCAL_LLM_API_KEY || "local",
+            }
+          : undefined,
       rerank: e.RERANK_BASE_URL
         ? {
             baseUrl: e.RERANK_BASE_URL,
@@ -259,6 +310,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
             local: e.RERANK_SCOPE === "local",
             minScore: e.RERANK_MIN_SCORE,
             timeoutMs: e.RERANK_TIMEOUT_MS,
+            candidates: e.RERANK_CANDIDATES,
           }
         : undefined,
     },

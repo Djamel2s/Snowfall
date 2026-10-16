@@ -9,11 +9,21 @@
 # base, ClamAV n'y sont que là ; leur seule sortie est le proxy « egress »
 # (Squid), qui n'autorise que les domaines listés dans infra/egress.
 
+# Journaux : fichiers json-file bornés, étiquetés du nom du conteneur (lus
+# par Alloy sans accès au socket Docker).
+x-logging: &logging
+  driver: json-file
+  options:
+    tag: "{{.Name}}"
+    max-size: "20m"
+    max-file: "5"
+
 x-hardened: &hardened
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
   restart: unless-stopped
+  logging: *logging
 
 networks:
   default:
@@ -31,6 +41,7 @@ services:
     # Aucune exposition réseau hors du réseau Docker, aucun accès à Internet.
     ports: !reset []
     networks: [backend]
+    logging: *logging
     command:
       - postgres
       - -c
@@ -54,6 +65,7 @@ services:
     # Mode production : HTTPS obligatoire, hostname strict, pas de H2.
     # Réseau public (fédération d'identité, SMTP) et interne (base, API).
     networks: [default, backend]
+    logging: *logging
     command: start --import-realm
     ports: !override
       - "127.0.0.1:8443:8443"
@@ -110,6 +122,10 @@ services:
     # Réseau interne seulement : Internet uniquement via le proxy de sortie.
     networks: [backend]
     tmpfs: ["/tmp"]
+    # secret_id AppRole : fichier monté en lecture seule, jamais en variable.
+    secrets: [vault_secret_id]
+    volumes:
+      - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
     environment:
       NODE_ENV: production
       APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
@@ -126,9 +142,20 @@ services:
       ANTIVIRUS: clamav
       CLAMAV_HOST: clamav
       KNOWLEDGE_LINKS: ${KNOWLEDGE_LINKS:-on}
+      # IA locale (profil « local-ai ») : embeddings et reclassement sur la
+      # plateforme, seuls autorisés pour les bases confidentielles. Activer :
+      # LOCAL_EMBEDDING_BASE_URL=http://embeddings/v1, LOCAL_EMBEDDING_MODEL=BAAI/bge-m3,
+      # RERANK_BASE_URL=http://reranker.
+      LOCAL_EMBEDDING_BASE_URL: ${LOCAL_EMBEDDING_BASE_URL:-}
       LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-}
       RERANK_BASE_URL: ${RERANK_BASE_URL:-}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      RERANK_API: ${RERANK_API:-tei}
+      RERANK_CANDIDATES: ${RERANK_CANDIDATES:-10}
+      # Métriques Prometheus : port interne, jeton en plus du réseau.
+      METRICS_HOST: 0.0.0.0
+      METRICS_PORT: "9464"
+      METRICS_TOKEN: ${METRICS_TOKEN:?Define METRICS_TOKEN (même valeur que infra/secrets/metrics_token)}
       DATABASE_URL: ${DATABASE_URL:?Define DATABASE_URL (sslmode=verify-full)}
       OIDC_ISSUER: ${OIDC_ISSUER:?Define OIDC_ISSUER}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-snowfall-bff}
@@ -136,9 +163,14 @@ services:
       OIDC_EXTRA_SCOPES: ${OIDC_EXTRA_SCOPES:-organization}
       SNOWFALL_MASTER_KEY: ${SNOWFALL_MASTER_KEY:?Define SNOWFALL_MASTER_KEY}
       KMS_PROVIDER: ${KMS_PROVIDER:-vault}
-      VAULT_ADDR: ${VAULT_ADDR:-}
-      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      # OpenBao interne (profil « kms ») ou Vault externe (ajouter son nom à
+      # infra/egress/allowed-domains.txt). Certificat d'AC privée : NODE_EXTRA_CA_CERTS.
+      VAULT_ADDR: ${VAULT_ADDR:-https://openbao:8200}
+      VAULT_AUTH: approle
+      VAULT_ROLE_ID: ${VAULT_ROLE_ID:?Define VAULT_ROLE_ID (infra/openbao/bootstrap.sh)}
+      VAULT_SECRET_ID_FILE: /run/secrets/vault_secret_id
       VAULT_NAMESPACE: ${VAULT_NAMESPACE:-}
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-/etc/snowfall/ca.crt}
       REDIS_URL: ${REDIS_URL:-}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:?Define LLM_DEFAULT_MODEL}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
@@ -149,6 +181,26 @@ services:
       SIEM_WEBHOOK_URL: ${SIEM_WEBHOOK_URL:-}
       SIEM_WEBHOOK_TOKEN: ${SIEM_WEBHOOK_TOKEN:-}
       SIEM_FORMAT: ${SIEM_FORMAT:-json}
+
+  # KMS interne (facultatif : profil « kms »). Initialisation unique :
+  #   bao operator init (clés de descellement réparties entre plusieurs
+  #   personnes), bao operator unseal ×3, puis infra/openbao/bootstrap.sh.
+  openbao:
+    <<: *hardened
+    image: openbao/openbao:2.6.4@sha256:cf2340fc9a22cb9358ca0defd1f39b65673836bd23fe2bb8984a07e11fe13ef4
+    profiles: ["kms"]
+    user: "100:1000"
+    networks: [backend]
+    command: ["server", "-config=/openbao/config/config.hcl"]
+    environment:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_CACERT: /openbao/tls/ca.crt
+    tmpfs: ["/tmp"]
+    volumes:
+      - snowfall_openbao_data:/openbao/data
+      - ./infra/openbao/config.hcl:/openbao/config/config.hcl:ro
+      - ./infra/openbao:/openbao/bootstrap:ro
+      - ./infra/tls/openbao:/openbao/tls:ro
 
   # Antivirus : réseau interne, signatures mises à jour via le proxy de sortie.
   clamav:
@@ -198,6 +250,175 @@ services:
       - ./infra/egress/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
       - ./infra/egress/knowledge-domains.txt:/etc/squid/knowledge-domains.txt:ro
 
+  # ---- IA locale (profil « local-ai ») ---------------------------------------
+  # Text Embeddings Inference (Hugging Face), CPU. Premier démarrage : les
+  # modèles (~2,3 Go chacun) sont téléchargés via le proxy de sortie (activer
+  # temporairement les domaines Hugging Face dans infra/egress), puis servis
+  # hors ligne depuis le volume. Pour un GPU : image « cuda-1.9.4 ».
+  embeddings:
+    <<: *hardened
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    profiles: ["local-ai"]
+    networks: [backend]
+    # Lots de 2 048 tokens : au-delà, le préchauffage ONNX sur CPU dépasse 6 Go
+    # (mesuré). Usage observé : ~4,5 Go.
+    command: ["--model-id", "BAAI/bge-m3", "--max-client-batch-size", "32", "--max-batch-tokens", "2048", "--auto-truncate"]
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    tmpfs: ["/tmp"]
+    volumes:
+      - snowfall_models:/data
+    deploy:
+      resources:
+        limits: { memory: 8g }
+
+  reranker:
+    <<: *hardened
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4@sha256:2538ea1c9640d3763b15af668039d24172d063b42337b0c27796fc2be180c78d
+    profiles: ["local-ai"]
+    networks: [backend]
+    command: ["--model-id", "BAAI/bge-reranker-v2-m3", "--max-client-batch-size", "64", "--auto-truncate"]
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    tmpfs: ["/tmp"]
+    volumes:
+      - snowfall_models:/data
+    deploy:
+      resources:
+        limits: { memory: 6g }
+
+  # ---- Sauvegardes --------------------------------------------------------
+  # Chaque jour à BACKUP_HOUR (UTC), chiffrées pour les clés publiques age de
+  # infra/secrets/backup_recipients (clé hors site + clé de test), copie hors
+  # site si BACKUP_REMOTE est défini (rclone ; configuration dans un secret).
+  backup:
+    <<: *hardened
+    build: { context: infra/backup }
+    # Copie hors site par le proxy de sortie (ajouter le point d'accès du
+    # stockage, ex. s3.fr-par.scw.cloud, à infra/egress/allowed-domains.txt).
+    networks: [backend]
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      BACKUP_DB_HOST: db
+      BACKUP_DB_SSLMODE: verify-full
+      PGSSLROOTCERT: /etc/snowfall/ca.crt
+      BACKUP_HOUR: ${BACKUP_HOUR:-02}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-35}
+      BACKUP_REMOTE: ${BACKUP_REMOTE:-}
+      RCLONE_CONFIG: /run/secrets/rclone_config
+      HTTPS_PROXY: http://egress:3128
+    tmpfs: ["/tmp:uid=70,gid=70"]
+    secrets: [backup_db_password, backup_recipients, rclone_config]
+    volumes:
+      - ./backups:/backups
+      - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
+
+  # Test de restauration mensuel (preuve d'audit) :
+  #   docker compose -f compose.yaml -f compose.prod.yaml run --rm backup-verify
+  # Utilise la clé privée de test (jamais la clé hors site), sans réseau.
+  backup-verify:
+    <<: *hardened
+    build: { context: infra/backup }
+    profiles: ["verify"]
+    restart: "no"
+    network_mode: none
+    command: ["restore-test.sh"]
+    tmpfs: ["/tmp:uid=70,gid=70"]
+    secrets: [backup_restore_identity]
+    volumes:
+      - ./backups:/backups:ro
+
+  # ---- Supervision ----------------------------------------------------------
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    networks: [backend]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=90d
+      - --web.enable-lifecycle=false
+    secrets: [metrics_token]
+    volumes:
+      - snowfall_prometheus_data:/prometheus
+      - ./infra/monitoring/prometheus:/etc/prometheus:ro
+
+  alertmanager:
+    <<: *hardened
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    # Réseau public pour l'envoi des e-mails d'alerte.
+    networks: [backend, default]
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    secrets: [alertmanager_smtp_password]
+    volumes:
+      - snowfall_alertmanager_data:/alertmanager
+      - ./infra/monitoring/alertmanager:/etc/alertmanager:ro
+
+  loki:
+    <<: *hardened
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+    networks: [backend]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - snowfall_loki_data:/loki
+      - ./infra/monitoring/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - ./infra/monitoring/loki/rules:/etc/loki/rules:ro
+
+  # Collecte des journaux : lecture seule des fichiers de Docker, pas de socket.
+  alloy:
+    <<: *hardened
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+    networks: [backend]
+    user: "0:0"
+    command: ["run", "--storage.path=/var/lib/alloy", "--server.http.listen-addr=127.0.0.1:12345", "/etc/alloy/config.alloy"]
+    tmpfs: ["/var/lib/alloy", "/tmp"]
+    volumes:
+      - ./infra/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+
+  postgres-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    networks: [backend]
+    environment:
+      DATA_SOURCE_URI: db:5432/snowfall?sslmode=verify-full&sslrootcert=/etc/snowfall/ca.crt
+      DATA_SOURCE_USER: snowfall_monitor
+      DATA_SOURCE_PASS_FILE: /run/secrets/monitor_db_password
+    secrets: [monitor_db_password]
+    volumes:
+      - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
+
+  # Tableaux de bord : uniquement sur la boucle locale (tunnel SSH ou VPN).
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    networks: [backend, default]
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    tmpfs: ["/tmp"]
+    secrets: [grafana_admin_password]
+    volumes:
+      - snowfall_grafana_data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
   web:
     <<: *hardened
     build: { context: ., dockerfile: apps/web/Dockerfile }
@@ -215,3 +436,30 @@ services:
 
 volumes:
   snowfall_clamav_db:
+  snowfall_openbao_data:
+  snowfall_prometheus_data:
+  snowfall_alertmanager_data:
+  snowfall_loki_data:
+  snowfall_grafana_data:
+  snowfall_models:
+
+# Fichiers non versionnés (voir .gitignore), lisibles par le seul exploitant.
+secrets:
+  vault_secret_id:
+    file: ./infra/secrets/vault_secret_id
+  metrics_token:
+    file: ./infra/secrets/metrics_token
+  backup_db_password:
+    file: ./infra/secrets/backup_db_password
+  backup_recipients:
+    file: ./infra/secrets/backup_recipients
+  backup_restore_identity:
+    file: ./infra/secrets/backup_restore_identity
+  rclone_config:
+    file: ./infra/secrets/rclone.conf
+  monitor_db_password:
+    file: ./infra/secrets/monitor_db_password
+  alertmanager_smtp_password:
+    file: ./infra/secrets/alertmanager_smtp_password
+  grafana_admin_password:
+    file: ./infra/secrets/grafana_admin_password

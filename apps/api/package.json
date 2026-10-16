@@ -10,7 +10,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc -p tsconfig.scripts.json",
-    "test": "tsx --test src/server.test.ts src/auth/auth.test.ts src/crypto/envelope.test.ts src/graph/chat-graph.test.ts src/llm/google.test.ts src/agents/agents.test.ts src/attachments/attachments.test.ts src/routes/routes.test.ts src/agents/store.integration.test.ts src/conversations/store.integration.test.ts src/auth/session-store.integration.test.ts src/workspace/workspace.integration.test.ts src/knowledge/knowledge.test.ts src/knowledge/knowledge.routes.test.ts src/knowledge/store.integration.test.ts src/knowledge/retrieval.eval.test.ts src/security/security.test.ts",
+    "test": "tsx --test src/server.test.ts src/auth/auth.test.ts src/crypto/envelope.test.ts src/graph/chat-graph.test.ts src/llm/google.test.ts src/agents/agents.test.ts src/attachments/attachments.test.ts src/routes/routes.test.ts src/agents/store.integration.test.ts src/conversations/store.integration.test.ts src/auth/session-store.integration.test.ts src/workspace/workspace.integration.test.ts src/knowledge/knowledge.test.ts src/knowledge/knowledge.routes.test.ts src/knowledge/store.integration.test.ts src/knowledge/retrieval.eval.test.ts src/security/security.test.ts src/crypto/vault.integration.test.ts src/observability/metrics.test.ts",
     "check": "npm run typecheck && npm run lint --if-present && npm run test && npm run build",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts && tsx scripts/db-grants.ts",
@@ -20,6 +20,7 @@
     "db:encrypt-existing": "tsx scripts/encrypt-existing.ts",
     "keys:rotate": "tsx scripts/rotate-keys.ts",
     "audit:purge": "tsx scripts/audit-purge.ts",
+    "knowledge:eval": "tsx scripts/knowledge-eval.ts",
     "keycloak:sync": "tsx scripts/keycloak-sync.ts"
   },
   "devDependencies": {
@@ -47,6 +48,7 @@
     "openid-client": "6.8.8",
     "pdfjs-dist": "6.3.289",
     "pg": "^8.23.1",
+    "prom-client": "15.1.3",
     "zod": "^4.6.5"
   }
 }

@@ -129,7 +129,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       if (
         embeddingProvider &&
         (!(deps.embeddingProviders?.() ?? []).includes(embeddingProvider) ||
-          !body.data.allowedProviders.includes(embeddingProvider))
+          (embeddingProvider !== "local" && !body.data.allowedProviders.includes(embeddingProvider)))
       ) {
         return reply.code(400).send({ error: "Invalid request" });
       }

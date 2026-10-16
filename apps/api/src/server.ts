@@ -83,6 +83,7 @@ import { PostgresKnowledgeStore } from "./knowledge/store.js";
 import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./knowledge/rewrite.js";
 import { HttpReranker } from "./knowledge/rerank.js";
 import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
+import { countingAuditLog, createMetrics, startMetricsServer, type Metrics } from "./observability/metrics.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -146,6 +147,8 @@ export type AppDependencies = {
   embeddingProviders?: () => EmbeddingProvider[];
   /** Antivirus des fichiers reçus (pièces jointes, bases de connaissances). */
   scanner?: MalwareScanner;
+  /** Métriques Prometheus (exposées sur un port interne dédié). */
+  metrics?: Metrics;
   /** Reformulation des questions de suivi pour la recherche (sinon : repli simple). */
   rewriteQuery?: QueryRewriter;
   /** Remplace le routage par modèle (tests). */
@@ -215,6 +218,17 @@ export function createAppServer(deps: AppDependencies) {
   });
 
   app.decorateRequest("principal", null);
+
+  // Durée et statut par modèle de route (« /conversations/:id »), jamais l'URL.
+  if (deps.metrics) {
+    const histogram = deps.metrics.http;
+    app.addHook("onResponse", async (request, reply) => {
+      histogram.observe(
+        { method: request.method, route: request.routeOptions.url ?? "unmatched", status: String(reply.statusCode) },
+        reply.elapsedTime / 1000,
+      );
+    });
+  }
 
   app.register(helmet);
   app.register(cookie);
@@ -376,6 +390,9 @@ export function createAppServer(deps: AppDependencies) {
     const inputChars =
       input.message.length + input.history.reduce((total, turn) => total + turn.content.length, 0);
     let partial = "";
+    const started = performance.now();
+    const observe = (outcome: "success" | "aborted" | "refused" | "error") =>
+      deps.metrics?.generation.observe({ provider: options.provider, outcome }, (performance.now() - started) / 1000);
 
     const finish = async (content: string, usage: UsageTotals | undefined, model: string, partialAnswer: boolean) => {
       const payload = await options.persist(content);
@@ -383,6 +400,8 @@ export function createAppServer(deps: AppDependencies) {
 
       // Le fournisseur ne compte pas toujours (arrêt, echo) : estimation prudente.
       const counted = usage ?? { inputTokens: estimateTokens("x".repeat(inputChars)), outputTokens: estimateTokens(content) };
+      deps.metrics?.tokens.inc({ provider: options.provider, direction: "input" }, counted.inputTokens);
+      deps.metrics?.tokens.inc({ provider: options.provider, direction: "output" }, counted.outputTokens);
       await deps.settings?.record(user, options.provider, counted).catch((error: unknown) => {
         request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
       });
@@ -415,6 +434,7 @@ export function createAppServer(deps: AppDependencies) {
           },
         );
 
+        observe("success");
         const payload = await finish(result.content, result.usage, result.model, false);
         if (!payload) {
           send("error", { error: "Not found" });
@@ -423,6 +443,7 @@ export function createAppServer(deps: AppDependencies) {
         send("done", payload);
       } catch (error) {
         if (generation.signal.aborted) {
+          observe("aborted");
           request.log.info("Génération interrompue par le client");
           if (partial.trim()) {
             await finish(partial, undefined, options.provider, true).catch((cause: unknown) => {
@@ -430,6 +451,7 @@ export function createAppServer(deps: AppDependencies) {
             });
           }
         } else {
+          observe(error instanceof ModelRefusalError ? "refused" : "error");
           request.log.error({ err: error }, "Échec du graphe de chat");
           send("error", {
             error: error instanceof ModelRefusalError
@@ -1286,7 +1308,9 @@ export function createProductionServer() {
 
   // Le logger Fastify n'existe qu'après création : l'audit est branché ensuite.
   const auditRef: { current: AuditLog } = { current: noopAuditLog };
-  const audit: AuditLog = { record: (request, event) => auditRef.current.record(request, event) };
+  const metrics = createMetrics();
+  // Chaque événement d'audit est aussi compté (alertes de sécurité).
+  const audit: AuditLog = countingAuditLog({ record: (request, event) => auditRef.current.record(request, event) }, metrics);
 
   const llmLimits = {
     maxOutputTokens: config.llm.maxOutputTokens,
@@ -1317,8 +1341,11 @@ export function createProductionServer() {
   if (providers.mistral) embeddingConfig.mistral = { settings: providers.mistral, model: config.knowledge.embeddingModels.mistral };
   if (providers.openai) embeddingConfig.openai = { settings: providers.openai, model: config.knowledge.embeddingModels.openai };
   if (providers.google) embeddingConfig.google = { settings: providers.google, model: config.knowledge.embeddingModels.google };
-  if (providers.local && config.knowledge.embeddingModels.local) {
-    embeddingConfig.local = { settings: providers.local, model: config.knowledge.embeddingModels.local };
+  if (config.knowledge.localEmbedding && config.knowledge.embeddingModels.local) {
+    embeddingConfig.local = {
+      settings: { ...llmLimits, apiKey: config.knowledge.localEmbedding.apiKey, baseUrl: config.knowledge.localEmbedding.baseUrl },
+      model: config.knowledge.embeddingModels.local,
+    };
   }
   const embeddings = new EmbeddingRegistry(embeddingConfig);
   const scanner = config.antivirus ? new ClamdScanner(config.antivirus) : undefined;
@@ -1336,6 +1363,7 @@ export function createProductionServer() {
     scanner,
     fetchProxy: config.egressProxy,
     rerankMinScore: config.knowledge.rerank?.minScore ?? 0,
+    rerankCandidates: config.knowledge.rerank?.candidates ?? 10,
   });
 
   const app = createAppServer({
@@ -1346,6 +1374,7 @@ export function createProductionServer() {
     embeddingProviders: () => embeddings.available(),
     rewriteQuery: createQueryRewriter((selection) => models.runner(selection)),
     ...(scanner ? { scanner } : {}),
+    metrics,
     members: new PostgresMemberStore(pool),
     preferences: new PostgresPreferencesStore(pool),
     projects: new PostgresProjectStore(pool, keyring),
@@ -1414,7 +1443,12 @@ export function createProductionServer() {
   }, 10 * 60 * 1000);
   purge.unref();
 
+  const metricsServer = config.metrics
+    ? startMetricsServer(metrics, config.metrics)
+    : null;
+
   app.addHook("onClose", async () => {
+    metricsServer?.close();
     clearInterval(purge);
     await redis?.quit();
   });

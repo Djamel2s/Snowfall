@@ -1,0 +1,61 @@
+// Snowfall — Grafana Alloy : collecte des journaux des conteneurs vers Loki.
+// Lecture des fichiers json-file de Docker en lecture seule : aucun accès au
+// socket Docker (qui donnerait le contrôle de l'hôte). Le nom du service vient
+// de l'option de journalisation « tag » posée dans compose.prod.yaml.
+
+local.file_match "containers" {
+  path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log"}]
+  sync_period  = "15s"
+}
+
+loki.source.file "containers" {
+  targets       = local.file_match.containers.targets
+  forward_to    = [loki.process.docker.receiver]
+  tail_from_end = true
+}
+
+loki.process "docker" {
+  stage.json {
+    expressions = { log = "log", stream = "stream", time = "time", service = "attrs.tag" }
+  }
+
+  stage.labels {
+    values = { service = "", stream = "" }
+  }
+
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339Nano"
+  }
+
+  stage.output {
+    source = "log"
+  }
+
+  // Journal d'audit de l'API : type d'événement et issue en libellés
+  // (cardinalité bornée), jamais les identifiants.
+  stage.match {
+    selector = "{service=~\".*api.*\"} |= \"\\\"audit\\\"\""
+
+    stage.json {
+      expressions = { event = "audit.eventType", outcome = "audit.outcome" }
+    }
+
+    stage.labels {
+      values = { event = "", outcome = "" }
+    }
+  }
+
+  // Chemin du fichier (identifiant de conteneur) : inutile, et coûteux en index.
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

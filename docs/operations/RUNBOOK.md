@@ -17,26 +17,38 @@ realm : sans `keycloak:sync`, une installation existante garde ses anciens régl
 
 L'API refuse de démarrer si une migration manque (message explicite).
 
-## 2. KMS (HashiCorp Vault / OpenBao Transit)
+## 2. KMS (OpenBao / HashiCorp Vault Transit, authentification AppRole)
 
-Préparer la clé (une fois) :
+**OpenBao interne** (profil `kms` de `compose.prod.yaml`) :
 
-```bash
-vault secrets enable transit
-vault write -f transit/keys/snowfall type=aes256-gcm96 derived=true
-```
+1. Certificat TLS dans `infra/tls/openbao/` (`server.crt`, `server.key`, `ca.crt`).
+2. `docker compose -f compose.yaml -f compose.prod.yaml --profile kms up -d openbao`
+3. `bao operator init -key-shares=5 -key-threshold=3` (dans le conteneur) :
+   répartir les 5 clés de descellement entre personnes différentes, mettre le
+   jeton racine au coffre. Desceller avec 3 clés (`bao operator unseal`) après
+   chaque redémarrage.
+4. `BAO_TOKEN=<jeton racine> sh /openbao/bootstrap/bootstrap.sh` : Transit, clé
+   `snowfall` dérivée et non exportable, politique minimale `snowfall-api`
+   (chiffrer, déchiffrer, rechiffrer — rien d'autre), rôle AppRole aux jetons
+   d'1 h (24 h max), utilisables depuis le seul réseau interne. Puis révoquer
+   le jeton racine (`bao token revoke`).
+5. Copier `role_id` dans `VAULT_ROLE_ID` et `secret_id` dans
+   `infra/secrets/vault_secret_id` (secret Docker), puis effacer
+   `/openbao/approle`.
 
-`derived=true` est obligatoire : chaque clé d'organisation est liée à un contexte
-(organisation, version). La clé n'est jamais exportable.
+**Vault externe** : mêmes commandes (`vault` au lieu de `bao`, audit à activer
+par `vault audit enable`), `VAULT_ADDR` vers le cluster, son nom dans
+`infra/egress/allowed-domains.txt`, son AC dans `infra/tls/ca.crt`.
 
-Basculer une installation existante (aucune interruption) :
+**Rotation du secret_id** (tous les 30 jours au plus) :
+`bao write -f -field=secret_id auth/approle/role/snowfall-api/secret-id >
+infra/secrets/vault_secret_id`, puis redémarrer l'API ; révoquer l'ancien
+(`auth/approle/role/snowfall-api/secret-id-accessor/destroy`). En production,
+un jeton statique (`VAULT_AUTH=token`) est refusé au démarrage.
 
-1. Renseigner `KMS_PROVIDER=vault`, `VAULT_ADDR` (HTTPS), `VAULT_TOKEN`
-   (idéalement AppRole à durée courte), puis redémarrer l'API : les anciennes clés,
-   enveloppées localement, restent lisibles.
-2. `npm run keys:rotate -- --kek` : toutes les clés d'organisation sont
-   rechiffrées par le KMS.
-3. Conserver `SNOWFALL_MASTER_KEY` (sessions, cookie de connexion).
+**Basculer une installation existante** (aucune interruption) : `KMS_PROVIDER=vault`
+et l'AppRole, redémarrer (les clés enveloppées localement restent lisibles),
+puis `npm run keys:rotate -- --kek`. Conserver `SNOWFALL_MASTER_KEY`.
 
 ## 3. Rotation des clés
 
@@ -145,3 +157,65 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Appliquer une modification : `docker compose -f compose.yaml -f compose.prod.yaml restart egress`.
 - **Diagnostic** : `docker compose logs egress` (une ligne par connexion,
   `TCP_DENIED/403` pour un refus).
+
+## 12. Supervision (Prometheus, Alertmanager, Loki, Grafana)
+
+- **Accès** : Grafana écoute sur `127.0.0.1:3000` du serveur (tunnel SSH :
+  `ssh -L 3000:127.0.0.1:3000 serveur`). Tableau « Snowfall — exploitation et
+  sécurité » : disponibilité, latences, consommation des modèles, menaces
+  bloquées, refus de sécurité, journaux du proxy, des sauvegardes et du KMS.
+- **Métriques de l'API** : port interne 9464, jeton `infra/secrets/metrics_token`
+  (même valeur que `METRICS_TOKEN`). Aucune donnée d'utilisateur ni de contenu.
+- **Journaux** : Alloy lit les fichiers de journaux de Docker (lecture seule,
+  sans accès au socket) et les envoie à Loki (30 jours). Le journal d'audit de
+  référence reste en base et dans le SIEM.
+- **Alertes** : `infra/monitoring/prometheus/alerts.yml` (disponibilité,
+  sécurité) et `infra/monitoring/loki/rules` (sauvegarde manquante ou échouée,
+  sorties refusées, refus du KMS) → Alertmanager → e-mail (adapter
+  `alertmanager.yml`, mot de passe SMTP dans `infra/secrets`).
+- **SIEM** : l'audit applicatif part déjà vers `SIEM_WEBHOOK_URL` ; pour le
+  proxy de sortie, ajouter dans `squid.conf` une ligne
+  `access_log tcp://<siem>:514 snowfall` ; OpenBao journalise sur sa sortie
+  standard (collectée par Alloy).
+- **Base de supervision** : rôle `snowfall_monitor` (statistiques seules),
+  créé par `npm run db:setup` si `MONITOR_DB_PASSWORD` est défini.
+
+## 13. Sauvegardes et test de restauration
+
+- **Clés** : deux paires age (`age-keygen`). La clé privée « hors site » va au
+  coffre (jamais sur le serveur) ; la clé « de test » sert uniquement au test
+  mensuel. Les deux clés publiques dans `infra/secrets/backup_recipients`, la
+  clé de test dans `infra/secrets/backup_restore_identity`.
+- **Rôle** : `snowfall_backup` (lecture seule, contourne la RLS pour un dump
+  complet), créé par `npm run db:setup` avec `BACKUP_DB_PASSWORD`.
+- **Planification** : service `backup`, chaque jour à `BACKUP_HOUR` UTC,
+  rétention locale `BACKUP_KEEP_DAYS`. Copie hors site : `BACKUP_REMOTE`
+  (rclone, ex. `s3:snowfall-backups`, configuration dans
+  `infra/secrets/rclone.conf`) — utiliser un compartiment avec **verrouillage
+  d'objet** (immuable : protège des rançongiciels) et autoriser son point
+  d'accès dans le proxy de sortie.
+- **Test mensuel** : `docker compose -f compose.yaml -f compose.prod.yaml run --rm backup-verify`
+  → `restore_test_ok … duration_s=…` (à conserver comme preuve d'audit, avec la
+  durée : temps de reprise mesuré). Vérifie empreintes, déchiffrement,
+  restauration, nombre de lignes par table, migrations, chiffrement des messages.
+- **Restauration réelle** : `infra/scripts/restore-db.sh` avec la clé hors site,
+  puis `SNOWFALL_MASTER_KEY` et l'accès au KMS (sans eux, les données
+  restaurées restent chiffrées).
+
+## 14. IA locale (embeddings et reclassement)
+
+- `docker compose -f compose.yaml -f compose.prod.yaml --profile local-ai up -d embeddings reranker`
+  (premier démarrage : autoriser temporairement les domaines Hugging Face dans
+  le proxy, puis `HF_HUB_OFFLINE=1`).
+- API : `LOCAL_EMBEDDING_BASE_URL=http://embeddings/v1`,
+  `LOCAL_EMBEDDING_MODEL=BAAI/bge-m3`, `RERANK_BASE_URL=http://reranker`,
+  `RERANK_API=tei`. Puis, dans Snowfall : Réglages → Bases de connaissances →
+  Embeddings « Local », et réindexer les sources existantes.
+- **Résultats mesurés** (jeu fictif, 25 questions, CPU) : mots-clés R@3 0,84 ;
+  hybride bge-m3 R@3 0,96 (97 ms/question) ; hybride + reclassement de 10
+  passages R@1 = R@3 = 1,00 (2,3 s/question sur CPU partagé — prévoir un GPU,
+  image `cuda-1.9.4`, ou `RERANK_CANDIDATES=5`). Mémoire : ~4,5 Go par modèle.
+- **Mesurer sur vos documents** : `npm run knowledge:eval -- --docs <dossier>
+  --questions <fichier.json> --embeddings http://<hôte>:<port>/v1 --rerank
+  http://<hôte>:<port>` (questions : `[{"question": "...", "expected": "extrait
+  attendu"}]`).

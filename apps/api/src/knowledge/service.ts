@@ -25,7 +25,7 @@ const LINK_TIMEOUT_MS = 20_000;
 /** Passages injectés par réponse, et leur volume total. */
 export const MAX_PASSAGES = 8;
 export const PASSAGE_CHAR_BUDGET = 20_000;
-/** Candidats soumis au reclassement (recherche hybride, toutes bases). */
+/** Candidats retenus par la recherche hybride, et (par défaut) soumis au reclassement. */
 const RERANK_CANDIDATES = 30;
 
 const CACHE_BASES = 32;
@@ -82,6 +82,8 @@ export class KnowledgeService {
       reranker?: Reranker | null | undefined;
       /** Score de reclassement minimal pour garder un passage. */
       rerankMinScore?: number;
+      /** Passages soumis au reclassement (coût proportionnel, surtout sur CPU). */
+      rerankCandidates?: number;
       /** Tests uniquement : résolution DNS simulée pour les liens. */
       fetchTesting?: SafeFetchOptions["testing"];
     },
@@ -98,7 +100,9 @@ export class KnowledgeService {
     if (!provider) return null;
     // Base confidentielle : rien ne sort, jamais d'embeddings chez un tiers.
     if (base.confidential && provider !== "local") return null;
-    if (settings && !settings.allowedProviders.includes(provider)) return null;
+    // La liste des fournisseurs autorisés régit les envois à des tiers ; les
+    // embeddings locaux restent sur la plateforme.
+    if (settings && provider !== "local" && !settings.allowedProviders.includes(provider)) return null;
     return this.deps.embeddings.get(provider);
   }
 
@@ -271,7 +275,7 @@ export class KnowledgeService {
   private async admit(tenant: TenantContext, provider: ProviderId) {
     if (!this.deps.settings) return;
     const [settings, usage] = await Promise.all([this.deps.settings.get(tenant), this.deps.settings.usage(tenant)]);
-    const decision = checkQuota(settings, usage, provider);
+    const decision = provider === "local" ? checkQuota({ ...settings, allowedProviders: [...settings.allowedProviders, "local"] }, usage, provider) : checkQuota(settings, usage, provider);
     if (!decision.allowed) throw new SourceFailure(decision.reason === "provider_not_allowed" ? "provider_not_allowed" : "quota_exceeded");
   }
 
@@ -344,6 +348,9 @@ export class KnowledgeService {
     let ranked = candidates.sort((a, b) => b.hit.score - a.hit.score).slice(0, RERANK_CANDIDATES);
     const reranker = this.rerankerFor(ranked.map((candidate) => candidate.loaded.base));
     if (reranker && ranked.length > 1) {
+      // Seuls les meilleurs candidats sont reclassés ; les autres gardent leur rang.
+      const tail = ranked.slice(this.deps.rerankCandidates ?? RERANK_CANDIDATES);
+      ranked = ranked.slice(0, this.deps.rerankCandidates ?? RERANK_CANDIDATES);
       try {
         const scores = await reranker.rerank(
           semantic,
@@ -356,7 +363,8 @@ export class KnowledgeService {
         ranked = ranked
           .map((candidate, index) => ({ ...candidate, hit: { ...candidate.hit, score: scores[index]! } }))
           .filter((candidate) => candidate.hit.score >= minimum)
-          .sort((a, b) => b.hit.score - a.hit.score);
+          .sort((a, b) => b.hit.score - a.hit.score)
+          .concat(tail);
       } catch (error) {
         // Service de reclassement indisponible : l'ordre de la fusion est gardé.
         this.deps.log().warn({ err: error }, "Reclassement indisponible, ordre de la recherche hybride");

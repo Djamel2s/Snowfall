@@ -5,6 +5,11 @@ build/
 coverage/
 /backups/
 
+# Secrets et certificats de déploiement : jamais versionnés.
+/infra/tls/
+/infra/secrets/
+*.agekey
+
 .env
 .env.*
 !.env.example

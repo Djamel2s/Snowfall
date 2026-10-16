@@ -329,7 +329,7 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
               >
                 <option value="">{t('settings.embeddingsNone')}</option>
                 {(organization?.embeddingProviders ?? [])
-                  .filter((id) => draft.allowedProviders.includes(id))
+                  .filter((id) => id === 'local' || draft.allowedProviders.includes(id))
                   .map((id) => (
                     <option key={id} value={id}>
                       {providerMeta[id].label}

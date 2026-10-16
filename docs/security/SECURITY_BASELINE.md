@@ -133,13 +133,19 @@ IdP-side revocation, logout).
 | Web links (SSRF) | http(s) only, standard ports, no credentials in URLs, internal names refused; every resolved address checked at connection time (custom DNS lookup: defeats DNS rebinding) against private, loopback, link-local/cloud metadata, CGNAT, multicast, reserved and IPv4-mapped IPv6 ranges; redirects followed manually and revalidated (max 3); 15 MB, 20 s, identity encoding only, no cookies, no shared connection pool. Optional per-organization domain allow-list, organization switch and platform kill switch (`KNOWLEDGE_LINKS=off`). Refused links audited without the URL. |
 | Content-Security-Policy | nginx (`infra/nginx`) serves the UI with a strict CSP (`default-src 'none'`, scripts and styles from self only, no inline code, Trusted Types enforced, `frame-ancestors 'none'`), HSTS, COOP/COEP/CORP, Permissions-Policy and reports to `/api/security/csp-report` (audited, blocked origin only). TLS 1.3 only. |
 | Supply chain | CI actions pinned by commit SHA, least-privilege tokens, CodeQL (`security-extended`), CycloneDX SBOM (`npm sbom`), Trivy scans of both images and of Docker/compose configuration, gitleaks, `npm audit`. Dependabot with a 14-day cooldown for npm, actions, Dockerfiles and compose. Base images pinned by digest, system packages upgraded at build, both containers run as non-root, read-only, all capabilities dropped. |
-| Backups | `pg_dump` piped to `age` (never plaintext on disk), checksum, restore script. |
+| KMS authentication | AppRole: the API holds a role ID and a secret ID mounted as a Docker secret (never an environment variable, re-read at each login so it can be rotated without restart); it obtains 1 h tokens (24 h max) bound to the internal network CIDR, renews them before expiry, re-authenticates on expiry or revocation (verified against OpenBao 2.6.4: TTL, max TTL, revocation, CIDR refusal, invalid secret). Static tokens are refused in production. Policy `snowfall-api`: encrypt/decrypt/rewrap on the `snowfall` Transit key only (no read, export, rotate or delete; deletion disabled on the key). OpenBao: Raft storage, TLS 1.3, audit device declared in configuration (cannot be disabled through the API), Shamir unseal keys split between people. |
+| Backups | Daily scheduled service: `pg_dump` by a read-only `BYPASSRLS` role (complete dump despite RLS, no write access), encrypted in-stream with `age` for public keys only (offline key + restore-test key; no private key on the server), SHA-256 manifest with per-table row counts, optional immutable off-site copy (rclone, object lock) through the egress proxy, local retention, `backup_ok`/`backup_failed` alerts. Monthly restore test (`backup-verify`, no network): restores into a throwaway PostgreSQL inside the container and checks checksums, decryption, row counts per table, migrations and that messages remain ciphertext; reports duration (measured RTO). Verified: tampered file, tampered file with recomputed checksums (caught by age authentication), wrong key and incomplete backup are all detected with a precise reason. |
+| Monitoring | Prometheus (API metrics on an internal port with a bearer token; bounded labels only: route templates, provider, audit event type; no user, tenant or content), PostgreSQL exporter with a `pg_monitor`-only role, Alertmanager (e-mail, secret from file), Loki fed by Grafana Alloy reading Docker log files read-only (no Docker socket), Grafana on loopback only (no anonymous access, no sign-up, no external snapshots, no telemetry). Alerts on availability, error rate, latency, model failures, malware, scanner outage, cross-tenant access bursts, CSRF, authentication failures, denied writes, SSRF attempts, confidential-knowledge misuse, missing or failed backups, egress denials and KMS refusals. All configurations validated with promtool, amtool, Loki and Alloy, and the pipeline verified live. |
+| Local AI | Embeddings (`BAAI/bge-m3`) and reranking (`BAAI/bge-reranker-v2-m3`) served by Text Embeddings Inference on the internal network, models cached in a volume and served offline: required for confidential knowledge bases, nothing leaves the platform. Retrieval quality measured with `npm run knowledge:eval` through the production code path, on the evaluation set or the organization's own documents: recall@3 0.84 (keywords) → 0.96 (hybrid with bge-m3) → 1.00 (with reranking of 10 candidates) on the fictitious set. |
 
 ## 12. Known gaps
 
 - `SNOWFALL_MASTER_KEY` still protects session secrets and the login transaction
   cookie (short-lived data), even with the KMS: inject it from the secret manager.
-- The Vault token is static: prefer AppRole or Kubernetes auth with short TTLs.
+- OpenBao runs as a single node: a 3-node Raft cluster (or a managed HSM-backed
+  Vault) is needed for high availability; unseal is manual (Shamir).
+- Grafana uses a local admin account: federate it with Keycloak (generic OAuth)
+  before giving access to several operators.
 - SSO federation (Entra ID, Google Workspace) is configured in Keycloak by an
   operator; it has been verified with a Keycloak organization, not yet against a
   real Entra ID or Google Workspace tenant.
@@ -148,9 +154,9 @@ IdP-side revocation, logout).
 - Knowledge bases are searched in memory after decryption (up to 50 000 passages
   per base): beyond that, an encrypted vector index will be needed. Audio, video
   and images (OCR) are not indexed yet.
-- Retrieval is evaluated offline on keyword search only: embedding and reranker
-  quality must be measured on the organization's own documents once a provider
-  and a reranking service are chosen.
+- Retrieval was measured on a fictitious French set: it must be measured again on
+  each organization's real documents (`npm run knowledge:eval -- --docs`).
+- CPU reranking costs ~2 s per question: a GPU is recommended in production.
 - ClamAV is signature-based: it does not replace sandbox detonation for targeted
   attacks; parsing of untrusted files stays isolated in worker threads.
 - AI providers: sign each provider's DPA (Mistral, OpenAI, Anthropic, Google), confirm data
