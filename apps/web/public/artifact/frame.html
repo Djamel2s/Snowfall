@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aperçu</title>
+</head>
+<body>
+<script>
+// Cadre des artifacts. Chargé dans une iframe sandbox SANS allow-same-origin :
+// origine opaque, donc aucun accès aux cookies, à l'API ni à la page de
+// Snowfall. Sa propre CSP (nginx) interdit tout appel réseau.
+//
+// Il attend un seul message de sa page parente, puis affiche le contenu :
+// - html  : sans scripts (aperçu) ou avec (« Exécuter », à la demande) ;
+// - svg   : sans scripts ;
+// - mermaid : rendu par Mermaid en mode strict (étiquettes nettoyées), dans la
+//   variante /artifact/mermaid.html qui contient Mermaid (aucun chargement).
+(function () {
+  "use strict";
+  // Verrou ajouté en tête du document écrit : toute balise <script> qui suit est ignorée.
+  var LOCK = '<meta http-equiv="Content-Security-Policy" content="script-src \'none\'">';
+  var BASE = '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+
+  function write(html) {
+    document.open();
+    document.write(html);
+    document.close();
+  }
+
+  function page(head, body) {
+    return "<!doctype html><html><head>" + BASE + head + "</head><body>" + body + "</body></html>";
+  }
+
+  // detail : message de l'analyseur (ligne fautive), affiché en texte brut.
+  function fail(message, detail) {
+    write(page(LOCK + "<style>body{font:14px system-ui;color:#b42318;padding:16px}pre{color:#475467;font:12px ui-monospace,monospace;white-space:pre-wrap}</style>", ""));
+    var title = document.createElement("p");
+    title.textContent = message;
+    document.body.appendChild(title);
+    if (detail) {
+      var pre = document.createElement("pre");
+      pre.textContent = String(detail).slice(0, 1200);
+      document.body.appendChild(pre);
+    }
+  }
+
+  // Mermaid est intégré à la page /artifact/mermaid.html (générée au build) :
+  // aucun chargement réseau depuis ce cadre.
+  // fallback : version réparée (libellés entre guillemets), essayée seulement
+  // si le diagramme d'origine est refusé.
+  function renderMermaid(source, fallback) {
+    if (!window.mermaid) return fail("Rendu Mermaid indisponible.");
+    var mermaid = window.mermaid;
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+    var firstError = null;
+    Promise.resolve()
+      .then(function () { return mermaid.parse(source); })
+      .then(function () { return source; }, function (error) {
+        firstError = error;
+        if (!fallback || fallback === source) throw error;
+        return Promise.resolve(mermaid.parse(fallback)).then(function () { return fallback; });
+      })
+      .then(function (valid) { return mermaid.render("artifact-diagram", valid); })
+      .then(function (result) {
+        document.body.style.cssText = "margin:0;padding:16px;display:grid;place-items:center;min-height:100vh;box-sizing:border-box;background:#fff";
+        // SVG produit par Mermaid en mode strict (texte nettoyé par DOMPurify).
+        document.body.innerHTML = result.svg;
+        // Image rendue, pour le téléchargement (la page ne l'affiche jamais, elle l'enregistre).
+        window.parent.postMessage({ type: "artifact-svg", svg: result.svg }, "*");
+      })
+      .catch(function (error) {
+        var reason = firstError || error;
+        fail("Diagramme Mermaid invalide.", reason && reason.message ? reason.message : "");
+      });
+  }
+  function render(data) {
+    var source = String(data.source || "");
+    if (data.kind === "html") {
+      var html = /<html[\s>]/i.test(source) ? source : page("", source);
+      write(data.mode === "run" ? html : LOCK + html);
+    } else if (data.kind === "svg") {
+      write(page(LOCK + "<style>body{margin:0;padding:16px;display:grid;place-items:center;min-height:100vh;box-sizing:border-box;background:#fff}svg{max-width:100%;height:auto}</style>", source));
+    } else if (data.kind === "mermaid") {
+      renderMermaid(source, typeof data.fallback === "string" ? data.fallback : null);
+    }
+  }
+
+  window.addEventListener("message", function onMessage(event) {
+    // Seule la page qui nous affiche peut nous écrire, une seule fois.
+    if (event.source !== window.parent || !event.data || event.data.type !== "render") return;
+    window.removeEventListener("message", onMessage);
+    render(event.data);
+  });
+  window.parent.postMessage({ type: "artifact-ready" }, "*");
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Serveurs MCP joignables par l'API (un domaine par ligne, « .exemple.com »
+# couvre les sous-domaines). Double verrou : un administrateur de
+# l'organisation approuve le serveur dans Snowfall, l'exploitant de la
+# plateforme ouvre son domaine ici. Vide par défaut : aucun serveur joignable.
+#
+# Exemples :
+# mcp.atlassian.com
+# mcp.notion.com

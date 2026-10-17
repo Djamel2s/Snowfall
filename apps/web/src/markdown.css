@@ -159,3 +159,55 @@
 @media (max-width: 640px) {
   .markdown { font-size: 12px; }
 }
+
+/* ---- Artifact replié dans la réponse ------------------------------------ */
+
+.md-artifact {
+  display: flex;
+  align-items: stretch;
+  max-width: 420px;
+  margin: 0 0 .9em;
+  overflow: hidden;
+  border: 1px solid rgba(183, 210, 244, .12);
+  border-radius: 12px;
+  background: rgba(158, 202, 255, .04);
+}
+
+.md-artifact + .md-code { margin-top: -.4em; }
+
+.md-artifact-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: #9ecaff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.md-artifact-open span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.md-artifact-open strong { overflow: hidden; color: #e2ebf8; font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.md-artifact-open small { color: #7f93b0; font-size: 10.5px; }
+.md-artifact-open:hover { background: rgba(158, 202, 255, .07); }
+
+.md-artifact-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 11px;
+  border: 0;
+  border-left: 1px solid rgba(183, 210, 244, .1);
+  background: transparent;
+  color: #7f93b0;
+  cursor: pointer;
+}
+
+.md-artifact-code:hover,
+.md-artifact-code[aria-expanded="true"] { background: rgba(255, 255, 255, .05); color: #e1edff; }
+.md-artifact-code svg:last-child { transition: transform .15s ease; }
+.md-artifact-code svg.open { transform: rotate(180deg); }

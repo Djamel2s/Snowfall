@@ -1,0 +1,41 @@
+# SearXNG pour la recherche web des agents : instance privée (réseau interne),
+# API JSON seule, quelques moteurs, sortie uniquement par le proxy (Squid).
+# Les moteurs voient les requêtes, jamais les utilisateurs.
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - brave
+      - qwant
+      - mojeek
+      - wikipedia
+
+general:
+  instance_name: "Snowfall"
+  enable_metrics: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  # L'API ne répond qu'en JSON (aucune page pour un navigateur).
+  formats:
+    - json
+
+server:
+  # Clé secrète : variable SEARXNG_SECRET (jamais dans ce fichier).
+  secret_key: "remplacée-par-SEARXNG_SECRET"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+  # Sortie par le proxy de la plateforme : il n'autorise que les moteurs listés.
+  proxies:
+    all://:
+      - http://egress:3128
+
+ui:
+  static_use_hash: true

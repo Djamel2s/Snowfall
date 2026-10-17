@@ -1,0 +1,7 @@
+# Moteurs interrogés par SearXNG (et par lui seul : adresse 172.31.0.20).
+# Doit correspondre aux moteurs gardés dans infra/searxng/settings.yml.
+.duckduckgo.com
+search.brave.com
+.qwant.com
+www.mojeek.com
+.wikipedia.org

@@ -21,6 +21,9 @@ export const MAX_SOURCE_CHARS = 2_000_000;
 const EXTRACT_TIMEOUT_MS = 90_000;
 export const LINK_MAX_BYTES = 15 * 1024 * 1024;
 const LINK_TIMEOUT_MS = 20_000;
+/** Page lue par l'outil read_webpage : taille téléchargée et texte gardé. */
+const WEB_PAGE_MAX_BYTES = 5 * 1024 * 1024;
+const WEB_PAGE_MAX_CHARS = 60_000;
 
 /** Passages injectés par réponse, et leur volume total. */
 export const MAX_PASSAGES = 8;
@@ -39,7 +42,8 @@ export type Passage = {
   sourceId: string;
   name: string;
   url: string | null;
-  base: "agent" | "project";
+  /** web : page trouvée par la recherche web (sourceId = adresse). */
+  base: "agent" | "project" | "web";
   /** Section (« Partie > Sous-partie ») et page du passage, si connues. */
   section: string | null;
   page: number | null;
@@ -254,6 +258,40 @@ export class KnowledgeService {
     const title = isHtml ? htmlTitle(fetched.bytes.toString("utf8")) : null;
     const name = sanitizeFileName(title ?? fetched.fileName ?? (pathName || final.hostname));
     return { file, bytes: fetched.bytes, name };
+  }
+
+  /**
+   * Lecture d'une page pour l'outil read_webpage : mêmes protections qu'un
+   * lien importé (SSRF, proxy de sortie, domaines autorisés par l'organisation,
+   * antivirus, extraction isolée), sans rien enregistrer.
+   */
+  async readWebPage(tenant: TenantContext, url: string, signal: AbortSignal): Promise<{ url: string; title: string; text: string }> {
+    const policy = await this.linkPolicy(tenant);
+    const fetched = await safeFetch(url, {
+      maxBytes: WEB_PAGE_MAX_BYTES,
+      timeoutMs: LINK_TIMEOUT_MS,
+      domains: policy.domains,
+      proxy: this.deps.fetchProxy,
+      signal,
+      ...(this.deps.fetchTesting ? { testing: this.deps.fetchTesting } : {}),
+    });
+    if (this.deps.scanner) {
+      const result = await this.deps.scanner.scan(fetched.bytes);
+      if (!result.clean) throw new SourceFailure("malware");
+    }
+    const final = new URL(fetched.url);
+    const isHtml = fetched.contentType === "text/html" || fetched.contentType === "application/xhtml+xml";
+    const pathName = decodeURIComponent(final.pathname.split("/").filter(Boolean).pop() ?? "");
+    const file: KnowledgeFile | string = isHtml
+      ? { format: "html", mediaType: "text/html" }
+      : detectKnowledgeFile(fetched.bytes, fetched.fileName ?? (pathName.includes(".") ? pathName : `${pathName || "page"}${extensionFor(fetched.contentType)}`), WEB_PAGE_MAX_BYTES);
+    if (typeof file === "string") throw new SourceFailure(file);
+    const text =
+      file.format === "text"
+        ? fetched.bytes.toString("utf8").replace(/\u0000/g, "").slice(0, WEB_PAGE_MAX_CHARS)
+        : await extractInWorker(fetched.bytes, file.format, { maxChars: WEB_PAGE_MAX_CHARS, timeoutMs: 20_000 });
+    const title = (isHtml ? htmlTitle(fetched.bytes.toString("utf8")) : null) ?? fetched.fileName ?? final.hostname;
+    return { url: fetched.url, title: title.replace(/\s+/g, " ").trim().slice(0, 200), text };
   }
 
   private async embedDocuments(tenant: TenantContext, embedder: Embedder, chunks: string[]) {

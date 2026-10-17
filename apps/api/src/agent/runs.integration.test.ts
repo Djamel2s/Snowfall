@@ -4,6 +4,8 @@ import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
 import { z } from "zod";
 import { PostgresSummaryStore } from "../conversations/compaction.js";
+import { PostgresGeneratedFileStore } from "../files/generated.js";
+import { PostgresMcpServerStore } from "../mcp/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
@@ -201,5 +203,53 @@ describe("Exécution durable : PostgreSQL (RLS, chiffrement, bail)", { skip: !ap
     await conversations.delete(a, conversation.id);
     const left = await withTenant(owner, a, (client) => client.query("SELECT 1 FROM conversation_summaries WHERE conversation_id = $1", [conversation.id]));
     assert.equal(left.rowCount, 0);
+  });
+  it("fichiers produits par le code : chiffrés, privés, rattachés à la réponse, effacés avec elle", async () => {
+    const conversations = new PostgresConversationStore(pool, keyring);
+    const files = new PostgresGeneratedFileStore(pool, keyring);
+    const conversation = await conversations.create(a, "Analyse");
+    const created = await files.create(a, conversation.id, { name: "budget-orion.csv", mediaType: "text/csv", bytes: Buffer.from(SECRET) });
+    // Pas encore rattaché : absent de la liste, mais lisible pour être rattaché.
+    assert.deepEqual(await files.list(a, conversation.id), []);
+    const exchange = (await conversations.appendExchange(a, conversation.id, "Analyse", "Voici le fichier."))!;
+    assert.equal(await files.attach(a, conversation.id, exchange.assistantMessage.id, [created.id]), 1);
+    assert.deepEqual((await files.list(a, conversation.id)).map((file) => file.name), ["budget-orion.csv"]);
+    assert.equal((await files.content(a, conversation.id, created.id))?.bytes.toString(), SECRET);
+    assert.equal(await files.content(b, conversation.id, created.id), null);
+
+    const raw = await withTenant(owner, a, (client) => client.query("SELECT name, content FROM generated_files WHERE id = $1", [created.id]));
+    assert.ok(!JSON.stringify(raw.rows).includes("orion") && !JSON.stringify(raw.rows).includes("Orion"));
+    await assert.rejects(
+      withTenant(owner, a, (client) => client.query("UPDATE generated_files SET name = 'en clair' WHERE id = $1", [created.id])),
+      /generated_files_encrypted_check/,
+    );
+    await conversations.delete(a, conversation.id);
+    const left = await withTenant(owner, a, (client) => client.query("SELECT 1 FROM generated_files WHERE id = $1", [created.id]));
+    assert.equal(left.rowCount, 0);
+  });
+
+  it("serveurs MCP : adresse, jeton et outils approuvés chiffrés ; invisibles d'une autre organisation", async () => {
+    const servers = new PostgresMcpServerStore(pool, keyring);
+    const created = await servers.create(a, { name: "Jira", url: "https://orion.example.com/mcp", token: "jeton-orion" });
+    assert.equal(created.hasToken, true);
+    const tool = { name: "create_ticket", description: "Crée un ticket Orion.", inputSchema: { type: "object" }, access: "write" as const, fingerprint: "f".repeat(64) };
+    assert.equal((await servers.approve(a, created.id, [tool]))?.status, "approved");
+    const connection = await servers.connection(a, created.id);
+    assert.equal(connection?.token, "jeton-orion");
+    assert.deepEqual(connection?.tools, [tool]);
+    // Liste : jamais le jeton.
+    assert.ok(!JSON.stringify(await servers.list(a)).includes("jeton-orion"));
+    assert.deepEqual(await servers.list(b), []);
+    assert.equal(await servers.connection(b, created.id), null);
+    assert.equal(await servers.delete(b, created.id), false);
+
+    const raw = await withTenant(owner, a, (client) => client.query("SELECT url, token, tools FROM mcp_servers WHERE id = $1", [created.id]));
+    assert.ok(!/orion/i.test(JSON.stringify(raw.rows)));
+    await assert.rejects(
+      withTenant(owner, a, (client) => client.query("UPDATE mcp_servers SET url = 'https://evil.example.com' WHERE id = $1", [created.id])),
+      /mcp_servers_encrypted_check/,
+    );
+    assert.equal(await servers.setStatus(a, created.id, "disabled"), true);
+    assert.equal(await servers.delete(a, created.id), true);
   });
 });

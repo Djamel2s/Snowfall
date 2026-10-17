@@ -34,14 +34,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools };
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers };
       agents.set(id, agent);
       return agent;
     },

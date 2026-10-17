@@ -18,6 +18,7 @@ import {
 import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
+import McpSettings from './McpSettings'
 
 type Props = {
   preferences: Preferences
@@ -385,7 +386,7 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
 
           <section className="settings-card" aria-label={t('settings.tools')}>
             <h3>{t('settings.tools')}</h3>
-            {toolIds.map((id) => (
+            {toolIds.filter((id) => (organization?.platformTools ?? toolIds).includes(id)).map((id) => (
               <label key={id} className="settings-row settings-switch">
                 <span>
                   {t(`tool.${id}`)}
@@ -417,6 +418,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
               {saved === 'tools' ? t('settings.saved') : t('common.save')}
             </button>
           </section>
+
+          {(organization?.platformTools ?? []).includes('mcp') && <McpSettings onError={setError} />}
 
           <section className="settings-card" aria-label={t('settings.members')}>
             <h3>{t('settings.members')}</h3>

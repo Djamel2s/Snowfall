@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronLeft, PenLine, Search, ShieldCheck, Sparkles, Trash2 } from 'lucide-react'
+import { Camera, Check, ChevronLeft, Globe, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2 } from 'lucide-react'
 import {
   api,
   toolAccess,
@@ -7,6 +7,7 @@ import {
   type ToolId,
   type Agent,
   type AgentAvatarData,
+  type McpServer,
   type AlienAvatar,
   type ProviderCatalog,
   type ProviderId,
@@ -46,6 +47,9 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
   const [tools, setTools] = useState<ToolId[]>(agent?.tools ?? ['search_knowledge'])
   // Outils activés par l'organisation : l'auteur choisit parmi eux.
   const [organizationTools, setOrganizationTools] = useState<readonly ToolId[]>(toolIds)
+  // Serveurs MCP approuvés par l'admin, et ceux confiés à l'agent.
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+  const [agentMcp, setAgentMcp] = useState<string[]>(agent?.mcpServers ?? [])
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState(notice ?? '')
@@ -79,7 +83,18 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
     let cancelled = false
     api
       .getOrganization()
-      .then((organization) => !cancelled && setOrganizationTools(organization.settings.tools))
+      // Outils activés par l'organisation ET fournis par la plateforme.
+      .then((organization) => {
+        if (cancelled) return
+        const available = organization.settings.tools.filter((id) => (organization.platformTools ?? toolIds).includes(id))
+        setOrganizationTools(available)
+        if (available.includes('mcp')) {
+          api
+            .listMcpServers()
+            .then((servers) => !cancelled && setMcpServers(servers.filter((server) => server.status === 'approved')))
+            .catch(() => undefined)
+        }
+      })
       // Réglages illisibles : on montre tout, le serveur filtre à l'enregistrement.
       .catch(() => undefined)
     return () => {
@@ -117,7 +132,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
     setError('')
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)) },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [] },
         agent?.id,
       )
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
@@ -271,7 +286,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
       {organizationTools.length > 0 && (
         <div className="studio-tools" role="group" aria-label={t('studio.tools')}>
           {organizationTools.map((id) => {
-            const Icon = id === 'search_knowledge' ? Search : PenLine
+            const Icon = id === 'search_knowledge' ? Search : id === 'web_search' ? Globe : id === 'code_interpreter' ? SquareTerminal : id === 'mcp' ? Plug : PenLine
             const write = toolAccess[id] === 'write'
             return (
               <button
@@ -288,6 +303,25 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
               </button>
             )
           })}
+        </div>
+      )}
+
+      {tools.includes('mcp') && organizationTools.includes('mcp') && mcpServers.length > 0 && (
+        <div className="studio-tools" role="group" aria-label={t('studio.mcpServers')}>
+          {mcpServers.map((server) => (
+            <button
+              key={server.id}
+              type="button"
+              className="studio-tool"
+              aria-pressed={agentMcp.includes(server.id)}
+              title={server.tools.map((tool) => tool.title ?? tool.name).join(' · ')}
+              onClick={() => setAgentMcp(agentMcp.includes(server.id) ? agentMcp.filter((id) => id !== server.id) : [...agentMcp, server.id])}
+            >
+              <Plug size={13} />
+              {server.name}
+              {server.tools.some((tool) => tool.access === 'write') && <ShieldCheck size={12} className="studio-tool-guard" />}
+            </button>
+          ))}
         </div>
       )}
 

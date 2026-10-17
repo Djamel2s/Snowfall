@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { getSession, logout as endSession } from './auth/session'
 import {
   api,
@@ -6,6 +6,7 @@ import {
   type AttachmentMeta,
   type AgentStep,
   type RunSnapshot,
+  type GeneratedFile,
   approvalStep,
   isPaused,
   type KnowledgeOwnerKind,
@@ -30,6 +31,9 @@ import Markdown from './components/Markdown'
 import MessageSources from './components/MessageSources'
 import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
+import MessageFiles from './components/MessageFiles'
+import ArtifactPanel from './components/ArtifactPanel'
+import { ArtifactContext, artifactsIn, wantsCode, type Artifact } from './lib/artifacts'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -129,9 +133,24 @@ function App() {
   const [paused, setPaused] = useState(false)
   // Réflexion du modèle : en direct, puis rattachée à la réponse (cette session
   // seulement : elle n'est jamais enregistrée).
+  // Artifact affiché à côté de la conversation (page HTML, SVG, diagramme).
+  const [artifact, setArtifact] = useState<Artifact | null>(null)
+  const closeArtifact = useCallback(() => setArtifact(null), [])
+  // Copie des conversations lisible à la fin d'une réponse (ouverture de son artifact).
+  const conversationsRef = useRef({ conversations, activeId })
+  useEffect(() => {
+    conversationsRef.current = { conversations, activeId }
+  }, [conversations, activeId])
   const [reasoning, setReasoning] = useState('')
   const reasoningRef = useRef('')
   const [reasoningByMessage, setReasoningByMessage] = useState<Record<string, string>>({})
+  // Fichiers produits par l'interpréteur de code, par conversation.
+  const [generatedFiles, setGeneratedFiles] = useState<Record<string, GeneratedFile[]>>({})
+  const refreshFiles = (conversationId: string) =>
+    api
+      .listGeneratedFiles(conversationId)
+      .then((files) => setGeneratedFiles((current) => ({ ...current, [conversationId]: files })))
+      .catch(() => undefined)
   const onReasoning = (text: string) => {
     reasoningRef.current += text
     setReasoning(reasoningRef.current)
@@ -287,6 +306,7 @@ function App() {
         const messages = await api.getMessages(id)
         if (cancelled) return
         updateConversation(id, (conversation) => ({ ...conversation, messages }))
+        void refreshFiles(id)
         // Réponse encore en cours ou en attente de validation : on la retrouve.
         void resumeRun(id)
       } catch (cause) {
@@ -631,6 +651,8 @@ function App() {
       // Réponse terminée (outcome : son identifiant) : la réflexion reste consultable.
       const thought = reasoningRef.current
       if (outcome && thought) setReasoningByMessage((current) => ({ ...current, [outcome]: thought }))
+      // Fichiers produits par le code pendant cette réponse.
+      void refreshFiles(conversationId)
       // Synchronise l'ordre et les titres depuis le serveur.
       const history = await api.listConversations()
       setConversations((current) =>
@@ -641,6 +663,10 @@ function App() {
           })
           .sort((a, b) => b.updatedAt - a.updatedAt),
       )
+      // Un seul artifact dans la réponse (et toujours sur cette conversation) : ouvert d'office.
+      const answer = outcome ? conversationsRef.current.conversations.find((item) => item.id === conversationId)?.messages.find((item) => item.id === outcome) : undefined
+      const found = answer ? artifactsIn(answer.content) : []
+      if (found.length === 1 && conversationsRef.current.activeId === conversationId) setArtifact(found[0]!)
     } catch (cause) {
       if (cause instanceof Error && cause.name === 'AbortError') {
         // Arrêt volontaire : la réponse partielle est enregistrée côté serveur.
@@ -909,7 +935,8 @@ function App() {
     canWrite
 
   return (
-    <main className="snowfall-app">
+    <ArtifactContext.Provider value={setArtifact}>
+    <main className={`snowfall-app ${artifact ? 'with-artifact' : ''}`}>
       <Snowfall />
 
       <Sidebar
@@ -1057,7 +1084,7 @@ function App() {
               </section>
             ) : (
               <section className="messages" aria-live="polite">
-                {shownMessages.map((message) => (
+                {shownMessages.map((message, messageIndex) => (
                   <article className={`message message-${message.role}`} key={message.id}>
                     <div
                       className={`message-avatar ${message.role === 'assistant' && activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}
@@ -1121,7 +1148,12 @@ function App() {
                       ) : message.role === 'assistant' ? (
                         <>
                           {reasoningByMessage[message.id] && <Reasoning text={reasoningByMessage[message.id]!} />}
-                          <Markdown source={message.content} />
+                          <Markdown source={message.content} showCode={wantsCode(shownMessages[messageIndex - 1]?.content ?? '')} />
+                          {activeConversation &&
+                            (() => {
+                              const files = (generatedFiles[activeConversation.id] ?? []).filter((file) => file.messageId === message.id)
+                              return files.length ? <MessageFiles conversationId={activeConversation.id} files={files} /> : null
+                            })()}
                           {message.sources?.length ? <MessageSources sources={message.sources} /> : null}
                         </>
                       ) : (
@@ -1189,7 +1221,7 @@ function App() {
                       {reasoning && <Reasoning text={reasoning} thinking={!streamingText && !paused} />}
                       {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={decideApproval} />}
                       {streamingText ? (
-                        <Markdown source={streamingText} />
+                        <Markdown source={streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
                       ) : (
                         <div className="typing-indicator" aria-label={t('chat.answering')}>
                           <span />
@@ -1349,7 +1381,9 @@ function App() {
           </footer>
         </div>
       </section>
+      {artifact && <ArtifactPanel artifact={artifact} onClose={closeArtifact} />}
     </main>
+    </ArtifactContext.Provider>
   )
 }
 

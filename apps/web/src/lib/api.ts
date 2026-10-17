@@ -17,11 +17,15 @@ export type MessageSource = {
   sourceId: string
   name: string
   url: string | null
-  base: 'agent' | 'project'
+  /** web : page trouvée par la recherche web. */
+  base: 'agent' | 'project' | 'web'
   /** Section (« Partie > Sous-partie ») et page du passage cité. */
   section?: string | null
   page?: number | null
 }
+
+/** Fichier produit par l'interpréteur de code, rattaché à une réponse. */
+export type GeneratedFile = { id: string; name: string; mediaType: string; size: number; messageId: string; createdAt: string }
 
 export type Message = {
   id: string
@@ -112,9 +116,16 @@ export type AlienAvatar = {
 export type AgentAvatarData = AlienAvatar | { kind: 'image'; data: string }
 
 /** Outils d'agent ; write = demande ton accord à chaque utilisation. */
-export const toolIds = ['search_knowledge', 'save_to_knowledge'] as const
+export const toolIds = ['search_knowledge', 'save_to_knowledge', 'web_search', 'code_interpreter', 'mcp'] as const
 export type ToolId = (typeof toolIds)[number]
-export const toolAccess: Record<ToolId, 'read' | 'write'> = { search_knowledge: 'read', save_to_knowledge: 'write' }
+export const toolAccess: Record<ToolId, 'read' | 'write'> = {
+  search_knowledge: 'read',
+  save_to_knowledge: 'write',
+  web_search: 'read',
+  code_interpreter: 'read',
+  // Accès réel fixé outil par outil par l'admin ; les écritures demandent ton accord.
+  mcp: 'write',
+}
 
 export type AgentInput = {
   name: string
@@ -123,6 +134,8 @@ export type AgentInput = {
   provider: ProviderId
   model: string
   tools: ToolId[]
+  /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
+  mcpServers: string[]
 }
 
 export type Agent = AgentInput & {
@@ -171,6 +184,28 @@ export type Organization = {
   configuredProviders: ProviderId[]
   /** Fournisseurs configurés pour les embeddings sur la plateforme. */
   embeddingProviders?: EmbeddingProvider[]
+  /** Outils que la plateforme sait fournir (la recherche web exige SearXNG). */
+  platformTools?: ToolId[]
+}
+
+/** Serveur MCP de l'organisation ; url et hasToken : administrateurs seulement. */
+export type McpServer = {
+  id: string
+  name: string
+  status: 'pending' | 'approved' | 'disabled'
+  url?: string
+  hasToken?: boolean
+  tools: { name: string; title: string | null; access: 'read' | 'write' }[]
+}
+
+/** Outil publié par un serveur, à examiner avant approbation. */
+export type McpDiscoveredTool = {
+  name: string
+  title: string | null
+  description: string
+  readOnlyHint: boolean
+  supported: boolean
+  approved: boolean
 }
 
 export type Member = { userId: string; email: string; role: Role; joinedAt: string; monthlyTokens: number }
@@ -450,6 +485,11 @@ export const api = {
   watchRun: (conversationId: string, options: StreamOptions = {}) =>
     stream<{ userMessage?: Message; assistantMessage?: Message; refresh?: boolean }>(`/conversations/${conversationId}/run/events`, undefined, options),
 
+  /** Fichiers produits par l'interpréteur de code dans la conversation. */
+  listGeneratedFiles: async (conversationId: string) =>
+    (await request<{ files: GeneratedFile[] }>(`/conversations/${conversationId}/files`)).files,
+  generatedFileBlob: async (conversationId: string, id: string) => (await send(`/conversations/${conversationId}/files/${id}`)).blob(),
+
   /** Arrêter la réponse (fermer l'onglet ne l'arrête pas) ; le partiel est gardé. */
   cancelRun: (conversationId: string) => request<void>(`/conversations/${conversationId}/run/cancel`, json('POST', {})),
 
@@ -522,4 +562,16 @@ export const api = {
   invite: async (email: string, role: Invitation['role']) =>
     (await request<{ invitation: Invitation }>('/organization/invitations', json('POST', { email, role }))).invitation,
   revokeInvitation: (id: string) => request<void>(`/organization/invitations/${id}`, { method: 'DELETE' }),
+
+  // Serveurs MCP : ajout, examen et approbation par un administrateur.
+  listMcpServers: async () => (await request<{ servers: McpServer[] }>('/organization/mcp-servers')).servers,
+  createMcpServer: async (input: { name: string; url: string; token?: string }) =>
+    (await request<{ server: McpServer }>('/organization/mcp-servers', json('POST', input))).server,
+  discoverMcpTools: async (id: string) =>
+    (await request<{ tools: McpDiscoveredTool[] }>(`/organization/mcp-servers/${id}/discover`, { method: 'POST' })).tools,
+  approveMcpServer: async (id: string, tools: { name: string; access: 'read' | 'write' }[]) =>
+    (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}/approve`, json('POST', { tools }))).server,
+  setMcpServerEnabled: async (id: string, enabled: boolean) =>
+    (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}`, json('PATCH', { enabled }))).server,
+  deleteMcpServer: (id: string) => request<void>(`/organization/mcp-servers/${id}`, { method: 'DELETE' }),
 }

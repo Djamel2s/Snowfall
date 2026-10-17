@@ -90,6 +90,9 @@ import {
 } from "./workspace/settings.js";
 import { createRouteKit } from "./routes/kit.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
+import { PostgresMcpServerStore } from "./mcp/store.js";
+import { mcpToolsFor } from "./mcp/tools.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { EmbeddingRegistry, type EmbeddingConfig, type EmbeddingProvider } from "./knowledge/embeddings.js";
@@ -99,6 +102,10 @@ import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./
 import { HttpReranker } from "./knowledge/rerank.js";
 import { CitationRegistry, knowledgeTool } from "./agent/knowledge-tool.js";
 import { knowledgeWriteTool } from "./agent/knowledge-write-tool.js";
+import { webTools, WebSession } from "./agent/web-tools.js";
+import { codeTool, generatedFileIds, UnixSocketSandbox, type CodeSandbox } from "./agent/code-tool.js";
+import { MemoryGeneratedFileStore, PostgresGeneratedFileStore, type GeneratedFileStore } from "./files/generated.js";
+import { SearxngClient, type WebSearchEngine } from "./web/searxng.js";
 import { EncryptedCheckpointSaver } from "./agent/checkpointer.js";
 import {
   MemoryRunStore,
@@ -110,10 +117,11 @@ import {
   type RunRequest,
   type RunStore,
 } from "./agent/runs.js";
-import { defaultOrganizationTools, permittedTools, type ToolId } from "./agent/catalog.js";
+import { defaultOrganizationTools, permittedTools, platformDependentTools, toolIds, type ToolId } from "./agent/catalog.js";
 import type { AgentTool } from "./agent/tools.js";
 import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
 import { countingAuditLog, createMetrics, startMetricsServer, type Metrics } from "./observability/metrics.js";
+import { createLangfuseTracer, noopTracer, startTraceRetention, type RunTrace, type RunTracer } from "./observability/tracing.js";
 
 dotenv.config({
   path: fileURLToPath(new URL("../../../.env", import.meta.url)),
@@ -187,6 +195,16 @@ export type AppDependencies = {
   runs?: RunStore;
   /** Points de reprise du graphe, par propriétaire. Absent : en mémoire. */
   checkpointer?: (tenant: { organizationId: string; userId: string }) => BaseCheckpointSaver;
+  /** Moteur de recherche web (SearXNG). Absent : outil web_search indisponible. */
+  webSearch?: WebSearchEngine;
+  /** Bac à sable d'exécution de code. Absent : interpréteur indisponible. */
+  sandbox?: CodeSandbox;
+  /** Serveurs MCP approuvés par l'admin. Absent : outil « mcp » indisponible. */
+  mcp?: McpDependencies;
+  /** Fichiers produits par le code. Absent : en mémoire. */
+  generatedFiles?: GeneratedFileStore;
+  /** Traces des agents (OpenTelemetry → Langfuse). Absent : aucune trace. */
+  tracer?: RunTracer;
   /** Résumés de compaction des longues conversations. Absent : en mémoire. */
   summaries?: SummaryStore;
   /** Résumeur (compaction). Absent : pas de compaction, historique tronqué au budget. */
@@ -261,6 +279,8 @@ export function createAppServer(deps: AppDependencies) {
   const checkpointerFor = deps.checkpointer ?? (() => memoryCheckpoints);
   const runEvents = new RunEvents();
   const summaries = deps.summaries ?? new MemorySummaryStore();
+  const tracer = deps.tracer ?? noopTracer;
+  const generatedFiles = deps.generatedFiles ?? new MemoryGeneratedFileStore();
   /** Identifiant de cette instance (bail des runs qu'elle exécute). */
   const instance = `api-${randomUUID()}`;
   const localRuns = new Map<string, { stop: (reason: "cancel" | "lost" | "shutdown") => void }>();
@@ -677,7 +697,17 @@ export function createAppServer(deps: AppDependencies) {
       configuredProviders: async () =>
         (await models.catalog()).filter((provider) => provider.available).map((provider) => provider.id),
       ...(deps.embeddingProviders ? { embeddingProviders: deps.embeddingProviders } : {}),
+      // Outils dont le service n'est pas installé : ni activables, ni proposés.
+      platformTools: () =>
+        toolIds.filter(
+          (id) =>
+            !platformDependentTools.includes(id) ||
+            (id === "web_search" && deps.webSearch !== undefined) ||
+            (id === "code_interpreter" && deps.sandbox !== undefined) ||
+            (id === "mcp" && deps.mcp !== undefined),
+        ),
     });
+    if (deps.mcp) registerMcpRoutes(api, kit, deps.mcp);
 
     if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments, deps.scanner);
     if (deps.knowledge) {
@@ -828,9 +858,36 @@ export function createAppServer(deps: AppDependencies) {
       selection: ModelSelection | undefined,
       plan: KnowledgePlan,
       permitted: Set<ToolId>,
+      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number } },
     ): AgentTool[] {
       if (!models.supportsTools?.(selection)) return [];
       const tools: AgentTool[] = plan.mode === "agent" ? [...plan.tools] : [];
+      // Recherche web : configurée sur la plateforme, choisie, et jamais pour une
+      // conversation confidentielle (la requête partirait vers les moteurs publics).
+      if (permitted.has("web_search") && deps.webSearch && deps.knowledge && !context.confidential) {
+        const knowledge = deps.knowledge;
+        tools.push(
+          ...webTools({
+            engine: deps.webSearch,
+            readPage: (url, signal) => knowledge.readWebPage(user, url, signal),
+            citations: context.citations,
+            session: context.web,
+          }),
+        );
+      }
+      // Interpréteur de code : bac à sable local, sans réseau (permis même en confidentiel).
+      if (permitted.has("code_interpreter") && deps.sandbox) {
+        // Fichiers d'anciennes réponses jamais terminées : purgés au passage.
+        void generatedFiles.purgeOrphans(user).catch(() => undefined);
+        tools.push(
+          codeTool({
+            sandbox: deps.sandbox,
+            scanner: deps.scanner,
+            saveFile: (file) => generatedFiles.create(user, context.conversationId, file),
+            runs: context.codeRuns,
+          }),
+        );
+      }
       if (permitted.has("save_to_knowledge") && deps.knowledge && agent && canManageAgent(user, agent)) {
         tools.push(
           knowledgeWriteTool({
@@ -844,6 +901,39 @@ export function createAppServer(deps: AppDependencies) {
         );
       }
       return tools;
+    }
+
+    /**
+     * Outils MCP de l'agent : serveurs approuvés qu'il a choisis, outils dont
+     * l'empreinte n'a pas changé. Jamais pour une conversation confidentielle :
+     * les arguments partiraient vers un service tiers.
+     */
+    async function mcpTools(
+      request: FastifyRequest,
+      user: AuthenticatedUser,
+      agent: Agent | null,
+      selection: ModelSelection | undefined,
+      permitted: Set<ToolId>,
+      confidential: boolean,
+      signal: AbortSignal,
+    ): Promise<AgentTool[]> {
+      if (!deps.mcp || !agent?.mcpServers.length || !permitted.has("mcp") || confidential || !models.supportsTools?.(selection)) return [];
+      const store = deps.mcp.store;
+      const servers = (await Promise.all(agent.mcpServers.map((id) => store.connection(user, id)))).filter((server) => server !== null);
+      const audit = (eventType: string, server: { id: string }, details: Record<string, string>, outcome?: "denied" | "failure") =>
+        void kit
+          .record(request, user, { eventType, targetType: "mcp_server", targetId: server.id, ...(outcome ? { outcome } : {}), details: { ...details, agentId: agent.id } })
+          .catch(() => undefined);
+      return mcpToolsFor(
+        servers,
+        {
+          // Outil modifié par le serveur depuis l'approbation : bloqué, et signalé.
+          changed: (server, tool) => audit("mcp.tool_changed", server, { tool }, "denied"),
+          unavailable: (server) => audit("mcp.server_unavailable", server, {}, "failure"),
+          called: (server, tool, outcome) => audit("mcp.tool_call", server, { tool }, outcome === "failure" ? "failure" : undefined),
+        },
+        { signal, ...(deps.mcp.fetcher ? { fetcher: deps.mcp.fetcher } : {}) },
+      );
     }
 
     // ---- Exécution durable (runs) --------------------------------------------
@@ -1021,16 +1111,35 @@ export function createAppServer(deps: AppDependencies) {
 
       let plan: KnowledgePlan = mode.start?.plan ?? { mode: "none" };
       const saver = checkpointerFor(user);
+      let runTrace: RunTrace | undefined;
       try {
         const conversation = await conversationStore.get(user, run.conversationId);
         if (!conversation) throw new RunFailure("Not found");
         const agent = run.request.agentId && agents ? await agents.get(user, run.request.agentId) : null;
         const selection = run.request.selection;
+        // Base confidentielle : aucun contenu dans les traces, aucune recherche web.
+        const confidential = (await activeBases(user, conversation, agent)).some((base) => base.confidential);
+        // Trace de ce passage du run ; une base confidentielle n'y laisse jamais de contenu.
+        runTrace = tracer.startRun({
+          runId: run.id,
+          conversationId: run.conversationId,
+          userId: user.userId,
+          organizationId: user.organizationId,
+          kind: run.request.kind,
+          provider,
+          model: selection ? `${selection.provider}:${selection.model}` : provider,
+          agent: agent ? { id: agent.id, name: agent.name } : undefined,
+          resumed: !mode.start,
+          confidential,
+          question: mode.start ? run.request.content : undefined,
+        });
         // Reprise : le modèle doit toujours être autorisé (l'admin a pu changer d'avis).
         if (!mode.start && selection && !(await isModelPermitted(user, selection))) throw new RunFailure("Provider unavailable");
         const permitted = await permittedFor(user, agent);
 
         let input: RunInput = mode.start?.input ?? { history: [], message: "", images: [] };
+        // Transcription déjà produite (reprise) : sources et pages lues retrouvées.
+        let earlier: ChatTurn[] = [];
         if (!mode.start) {
           const values = (await saver.getTuple({ configurable: { thread_id: run.id } }))?.checkpoint.channel_values as
             | { turns?: ChatTurn[]; response?: string }
@@ -1038,10 +1147,20 @@ export function createAppServer(deps: AppDependencies) {
           if (!values) throw new RunFailure("Not found");
           // Texte déjà produit avant la pause ou la panne (l'étape en cours sera rejouée).
           progress.text = values.response ?? "";
-          plan = await resumePlan(user, conversation, agent, selection, provider, values.turns ?? [], permitted);
+          earlier = values.turns ?? [];
+          plan = await resumePlan(user, conversation, agent, selection, provider, earlier, permitted);
           input = { history: [], message: "", images: [] };
         }
-        const tools = agentTools(request, user, agent, selection, plan, permitted);
+        // Une seule numérotation [n] pour la base et le web, sur toute la réponse.
+        const citations = plan.mode === "agent" ? plan.citations : new CitationRegistry().seed(earlier);
+        const tools = agentTools(request, user, agent, selection, plan, permitted, {
+          confidential,
+          citations,
+          web: new WebSession(run.request.content).seed(earlier),
+          conversationId: run.conversationId,
+          codeRuns: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "run_code").length },
+        });
+        tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
 
         const result = await runnerFor(selection)(
           {
@@ -1068,6 +1187,7 @@ export function createAppServer(deps: AppDependencies) {
               else progress.steps[index] = event;
               emit({ type: "step", step: event });
             },
+            trace: runTrace,
             durable: {
               checkpointer: saver,
               threadId: run.id,
@@ -1083,19 +1203,29 @@ export function createAppServer(deps: AppDependencies) {
           progress.pending = result.pending;
           await runs.pause(user, run.id, instance, progress);
           observe("paused");
+          runTrace.end({ status: "paused", usage: result.usage });
           for (const approval of result.pending) emit({ type: "approval", approval });
           emit({ type: "paused" });
           return;
         }
 
         observe("success");
-        const sources = plan.mode === "agent" || plan.mode === "inline" ? knowledgeSources(plan, result.content) : (run.request.sources ?? []);
+        runTrace.end({ status: "done", output: result.content, usage: result.usage });
+        const sources =
+          plan.mode === "inline"
+            ? knowledgeSources(plan, result.content)
+            : citations.size
+              ? citations.citations(result.content)
+              : (run.request.sources ?? []);
         const payload = await completeRun(request, user, run, result.content, sources, {
           usage: result.usage,
           model: result.model,
           partial: false,
           steps: result.steps ?? 0,
         });
+        // Fichiers produits par le code : rattachés à la réponse enregistrée.
+        const fileIds = generatedFileIds(result.turns ?? []);
+        if (payload && fileIds.length) await generatedFiles.attach(user, run.conversationId, payload.assistantMessage.id, fileIds);
         await runs.finish(user, run.id);
         await saver.deleteThread(run.id);
         emit(payload ? { type: "done", payload } : { type: "error", error: "Not found" });
@@ -1104,6 +1234,7 @@ export function createAppServer(deps: AppDependencies) {
       } catch (error) {
         if (controller.signal.aborted) {
           observe("aborted");
+          runTrace?.end({ status: stopReason === "cancel" ? "cancelled" : "interrupted" });
           // Arrêt demandé : réponse partielle gardée. Bail perdu ou arrêt du
           // serveur : rien n'est effacé, une instance reprendra le run.
           if (stopReason === "cancel") {
@@ -1114,6 +1245,7 @@ export function createAppServer(deps: AppDependencies) {
           return;
         }
         observe(error instanceof ModelRefusalError ? "refused" : isRateLimit(error) ? "rate_limited" : "error");
+        runTrace?.end({ status: "error", error });
         request.log.error({ err: error }, "Échec du run d'agent");
         await runs.finish(user, run.id).catch(() => undefined);
         await saver.deleteThread(run.id).catch(() => undefined);
@@ -1265,6 +1397,10 @@ export function createAppServer(deps: AppDependencies) {
     recovery.unref();
     // Arrêt du serveur : les runs locaux s'interrompent sans rien effacer ; leur
     // bail expire et ils seront repris (ici au redémarrage, ou par une autre instance).
+    api.addHook("onClose", async () => {
+      // Traces en attente envoyées avant l'arrêt.
+      await tracer.shutdown().catch(() => undefined);
+    });
     api.addHook("preClose", async () => {
       clearInterval(recovery);
       for (const local of localRuns.values()) local.stop("shutdown");
@@ -1380,6 +1516,38 @@ export function createAppServer(deps: AppDependencies) {
           details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: knowledgeDetail(plan) },
         },
       });
+    });
+
+    // ---- Fichiers produits par l'interpréteur de code -------------------------
+
+    const fileParams = z.object({ id: conversationIdSchema, fileId: z.uuid() });
+
+    api.get("/conversations/:id/files", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = runParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      return { files: await generatedFiles.list(user, params.data.id) };
+    });
+
+    /**
+     * Contenu d'un fichier produit. Seules les images matricielles s'affichent ;
+     * tout le reste (SVG compris, qui peut contenir du script) se télécharge.
+     * CSP « sandbox » : ouvert directement, rien ne s'exécute dans l'origine de Snowfall.
+     */
+    api.get("/conversations/:id/files/:fileId", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = fileParams.safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      const file = await generatedFiles.content(user, params.data.id, params.data.fileId);
+      if (!file) return reply.code(404).send({ error: "Not found" });
+      const inline = file.mediaType === "image/png" || file.mediaType === "image/jpeg";
+      reply.header("Content-Type", file.mediaType);
+      reply.header("Content-Security-Policy", "default-src 'none'; sandbox");
+      reply.header("X-Content-Type-Options", "nosniff");
+      reply.header("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+      return reply.send(file.bytes);
     });
 
     // ---- Routes des runs ------------------------------------------------------
@@ -1605,7 +1773,12 @@ export function createAppServer(deps: AppDependencies) {
       ]);
       if (!allowed || !permitted.includes(parsed.data.provider)) return null;
       // Outils : seulement parmi ceux de l'organisation (revérifié à chaque réponse).
-      return { ...parsed.data, tools: parsed.data.tools.filter((tool) => organizationTools.includes(tool)) };
+      const tools = parsed.data.tools.filter((tool) => organizationTools.includes(tool));
+      // Serveurs MCP : seulement des serveurs approuvés de l'organisation.
+      const approved = tools.includes("mcp") && deps.mcp
+        ? new Set((await deps.mcp.store.list(user)).filter((server) => server.status === "approved").map((server) => server.id))
+        : new Set<string>();
+      return { ...parsed.data, tools, mcpServers: parsed.data.mcpServers.filter((id) => approved.has(id)) };
     }
 
     const view = (user: AuthenticatedUser, agent: Agent) => ({
@@ -1618,7 +1791,9 @@ export function createAppServer(deps: AppDependencies) {
         eventType,
         targetType: "agent",
         targetId: agent.id,
-        ...(agent.provider ? { details: { provider: agent.provider, model: agent.model ?? "", tools: (agent.tools ?? []).join(",") } } : {}),
+        ...(agent.provider
+          ? { details: { provider: agent.provider, model: agent.model ?? "", tools: (agent.tools ?? []).join(","), mcpServers: agent.mcpServers?.length ?? 0 } }
+          : {}),
       });
 
     api.get("/agents", async (request, reply) => {
@@ -1969,6 +2144,10 @@ export function createProductionServer() {
     rerankMinScore: config.knowledge.rerank?.minScore ?? 0,
     rerankCandidates: config.knowledge.rerank?.candidates ?? 10,
   });
+  // Recherche web : SearXNG interne (il sort lui-même par le proxy de sortie).
+  const webSearch = config.webSearchUrl ? new SearxngClient(config.webSearchUrl) : undefined;
+  // Interpréteur de code : bac à sable sans réseau, par socket Unix.
+  const sandbox = config.sandboxSocket ? new UnixSocketSandbox(config.sandboxSocket) : undefined;
 
   const app = createAppServer({
     models,
@@ -1976,6 +2155,13 @@ export function createProductionServer() {
     runs: new PostgresRunStore(pool, keyring),
     // Compaction : résumés chiffrés, calculés par le modèle de la conversation.
     summaries: new PostgresSummaryStore(pool, keyring),
+    ...(webSearch ? { webSearch } : {}),
+    ...(sandbox ? { sandbox } : {}),
+    // Serveurs MCP : sortie par le proxy (HTTPS_PROXY), domaines dans infra/egress/mcp-domains.txt.
+    ...(config.mcpEnabled ? { mcp: { store: new PostgresMcpServerStore(pool, keyring) } } : {}),
+    generatedFiles: new PostgresGeneratedFileStore(pool, keyring),
+    // Traces vers Langfuse auto-hébergé, si configuré.
+    ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),
     summarize: createSummarizer((selection) => models.runner(selection)),
     checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
@@ -2018,6 +2204,8 @@ export function createProductionServer() {
   if (config.audit.siem) sinks.push(new HttpAuditForwarder(config.audit.siem, app.log));
   auditRef.current = new FanoutAuditLog(new PostgresAuditLog(pool, app.log), sinks);
   knowledgeLog.current = app.log;
+  // Conservation des traces limitée (rétention de Langfuse réservée à son édition payante).
+  if (config.tracing) startTraceRetention(config.tracing, app.log);
 
   // Échec franc au démarrage si des migrations manquent, plutôt que des 500 plus tard.
   app.addHook("onReady", async () => {

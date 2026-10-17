@@ -30,14 +30,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools };
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers };
       agents.set(id, agent);
       return agent;
     },
@@ -85,6 +85,7 @@ function setup(
     /** Modèle capable d'appeler des outils (RAG agentique). */
     tools?: boolean;
     runChat?: ChatRunner;
+    webSearch?: boolean;
   } = {},
 ) {
   let current = alice;
@@ -129,6 +130,7 @@ function setup(
     audit,
     ...(options.rewriteQuery ? { rewriteQuery: options.rewriteQuery } : {}),
     ...(options.scanner ? { scanner: options.scanner } : {}),
+    ...(options.webSearch ? { webSearch: { search: async () => [] } } : {}),
     runChat:
       options.runChat ??
       (async (input, runOptions) => {
@@ -263,6 +265,37 @@ describe("Bases de connaissances : routes", () => {
     // Aucun extrait injecté d'office : c'est l'agent qui a cherché.
     assert.ok(!seen[0]!.message.includes("<knowledge>"));
     assert.deepEqual(done(answer.body).assistantMessage.sources.map((source: { n: number; name: string }) => [source.n, source.name]), [[2, "teletravail.md"]]);
+  });
+
+  it("recherche web : proposée à l'agent qui l'a choisie, jamais dans une conversation confidentielle", async (t) => {
+    const offered: string[][] = [];
+    const { app, knowledge } = setup({
+      tools: true,
+      webSearch: true,
+      settings: { tools: ["search_knowledge", "web_search"] },
+      runChat: async (input) => {
+        offered.push((input.tools ?? []).map((tool) => tool.name).sort());
+        return { content: "ok", model: "fake" };
+      },
+    });
+    t.after(() => app.close());
+    const agent = (
+      await app.inject(json("POST", "/agents", { name: "Veille", avatar: alien, instructions: "", provider: "local", model: "llama", tools: ["search_knowledge", "web_search"] }))
+    ).json().agent as Agent;
+    await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "notes.md", "# Notes\n\nRéunion du lundi."));
+    await knowledge.idle();
+    const conversation = (await app.inject(json("POST", "/conversations", { agentId: agent.id }))).json().conversation;
+    await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Quoi de neuf ?" }));
+
+    // Base passée en confidentiel : la requête partirait vers les moteurs publics.
+    assert.equal((await app.inject(json("PATCH", `/agents/${agent.id}/knowledge`, { confidential: true }))).statusCode, 200);
+    await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Et maintenant ?" }));
+
+    // Sans agent : jamais (choix explicite d'un agent requis).
+    const plain = (await app.inject(json("POST", "/conversations", {}))).json().conversation;
+    await app.inject(json("POST", `/conversations/${plain.id}/messages`, { content: "Bonjour" }));
+
+    assert.deepEqual(offered, [["read_webpage", "search_knowledge", "web_search"], ["search_knowledge"], []]);
   });
 
   it("un membre lit la base d'un agent qu'il n'a pas créé, sans pouvoir la modifier", async (t) => {

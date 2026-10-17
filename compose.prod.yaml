@@ -124,8 +124,11 @@ services:
     tmpfs: ["/tmp"]
     # secret_id AppRole : fichier monté en lecture seule, jamais en variable.
     secrets: [vault_secret_id]
+    # Groupe du socket du bac à sable (interpréteur de code).
+    group_add: ["10010"]
     volumes:
       - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
+      - snowfall_sandbox_socket:/run/sandbox
     environment:
       NODE_ENV: production
       APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
@@ -136,8 +139,14 @@ services:
       NODE_USE_ENV_PROXY: "1"
       HTTPS_PROXY: http://egress:3128
       HTTP_PROXY: http://egress:3128
-      NO_PROXY: localhost,127.0.0.1,db,keycloak,clamav,vault,egress
+      NO_PROXY: localhost,127.0.0.1,db,keycloak,clamav,vault,egress,searxng
       EGRESS_PROXY_URL: http://egress:3128
+      # Recherche web (profil « web-search ») : http://searxng:8080 ; vide = indisponible.
+      WEB_SEARCH_URL: ${WEB_SEARCH_URL:-}
+      # Interpréteur de code (profil « code ») : /run/sandbox/sandbox.sock ; vide = indisponible.
+      SANDBOX_SOCKET: ${SANDBOX_SOCKET:-}
+      # Serveurs MCP (approuvés par les admins ; domaines dans infra/egress/mcp-domains.txt).
+      MCP_ENABLED: ${MCP_ENABLED:-false}
       # Antivirus obligatoire : un fichier non analysable est refusé.
       ANTIVIRUS: clamav
       CLAMAV_HOST: clamav
@@ -249,6 +258,53 @@ services:
       - ./infra/egress/squid.conf:/etc/squid/squid.conf:ro
       - ./infra/egress/allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
       - ./infra/egress/knowledge-domains.txt:/etc/squid/knowledge-domains.txt:ro
+      - ./infra/egress/search-domains.txt:/etc/squid/search-domains.txt:ro
+      - ./infra/egress/mcp-domains.txt:/etc/squid/mcp-domains.txt:ro
+
+  # ---- Interpréteur de code des agents (profil « code ») ---------------------
+  # Aucun réseau : l'API lui parle par un socket Unix (volume partagé, réservé
+  # au groupe 10010). Chaque exécution : utilisateur dédié, dossier neuf, limites
+  # CPU/mémoire/processus/fichiers, tout tué à la fin. init (tini) récupère les
+  # processus orphelins. En production, gVisor isole aussi du noyau :
+  # SANDBOX_RUNTIME=runsc (runtime installé sur l'hôte). Activer côté API :
+  # SANDBOX_SOCKET=/run/sandbox/sandbox.sock.
+  sandbox:
+    build: { context: apps/sandbox }
+    profiles: ["code"]
+    runtime: ${SANDBOX_RUNTIME:-runc}
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL, CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    logging: *logging
+    tmpfs:
+      - /work:size=256m,mode=0711
+      - /tmp:size=16m,mode=0700
+      - /dev/shm:size=16m,mode=0700
+    volumes:
+      - snowfall_sandbox_socket:/run/sandbox
+
+  # ---- Recherche web des agents (profil « web-search ») ----------------------
+  # Métamoteur privé : l'API l'interroge en JSON sur le réseau interne ; lui
+  # seul sort, par le proxy, et seulement vers les moteurs listés
+  # (infra/egress/search-domains.txt). Activer côté API : WEB_SEARCH_URL=http://searxng:8080.
+  searxng:
+    <<: *hardened
+    image: searxng/searxng:2026.10.2-19ffbcd30@sha256:c642712fcedcdaa78fac44f71eada86aff510745826ba1bd1a368211fea2ce7f
+    profiles: ["web-search"]
+    networks:
+      backend: { ipv4_address: 172.31.0.20 }
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+    tmpfs: ["/tmp", "/var/cache/searxng"]
+    volumes:
+      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
 
   # ---- IA locale (profil « local-ai ») ---------------------------------------
   # Text Embeddings Inference (Hugging Face), CPU. Premier démarrage : les
@@ -435,6 +491,7 @@ services:
       - ./infra/tls/web:/etc/nginx/tls:ro
 
 volumes:
+  snowfall_sandbox_socket:
   snowfall_clamav_db:
   snowfall_openbao_data:
   snowfall_prometheus_data:

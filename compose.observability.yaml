@@ -1,0 +1,183 @@
+# Observabilité des agents : Langfuse auto-hébergé, alimenté en traces
+# OpenTelemetry par l'API. Facultatif : ajouter ce fichier pour l'activer.
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml -f compose.observability.yaml up -d
+#
+# Initialisation unique (secrets, stockage, projet, clés) : infra/langfuse/bootstrap.sh
+#
+# Tout reste sur le réseau interne (aucun accès à Internet, télémétrie de
+# Langfuse coupée). Interface sur la boucle locale uniquement (tunnel SSH, VPN).
+# Conservation : 30 jours, appliquée par l'API (TRACE_RETENTION_DAYS).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    tag: "{{.Name}}"
+    max-size: "20m"
+    max-file: "5"
+
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: *logging
+
+x-langfuse-env: &langfuse-env
+  # Aucune donnée envoyée à l'éditeur, aucune fonction expérimentale.
+  TELEMETRY_ENABLED: "false"
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+  NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:3010}
+  CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+  CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+  CLICKHOUSE_USER: langfuse
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: langfuse-redis
+  REDIS_PORT: "6379"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: garage
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-s3:3900
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: garage
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-s3:3900
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+  # Inscription libre fermée : comptes créés par l'administrateur.
+  AUTH_DISABLE_SIGNUP: "true"
+
+services:
+  # L'API envoie ses traces à Langfuse (réseau interne, hors proxy de sortie).
+  api:
+    environment:
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?Define LANGFUSE_PUBLIC_KEY (infra/langfuse/bootstrap.sh)}
+      LANGFUSE_SECRET_KEY_FILE: /run/secrets/langfuse_secret_key
+      TRACE_CONTENT: ${TRACE_CONTENT:-masked}
+      TRACE_RETENTION_DAYS: ${TRACE_RETENTION_DAYS:-30}
+      NO_PROXY: localhost,127.0.0.1,db,keycloak,clamav,vault,egress,searxng,langfuse-web
+    secrets: [vault_secret_id, langfuse_secret_key]
+
+  # Base de Langfuse, séparée de celle de Snowfall (aucun accès croisé).
+  langfuse-db:
+    <<: *hardened
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    networks: [backend]
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_DB: langfuse
+      POSTGRES_PASSWORD_FILE: /run/secrets/langfuse_db_password
+    secrets: [langfuse_db_password]
+    volumes:
+      - snowfall_langfuse_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langfuse-clickhouse:
+    <<: *hardened
+    image: clickhouse/clickhouse-server:26.3.25.2-alpine@sha256:b98c45e9a77d49ff062960a9cbbd0aea54768edd905170c8f5b28d39fd6379fc
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, IPC_LOCK, SYS_NICE]
+    networks: [backend]
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    env_file: ["${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse-clickhouse.env"]
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - snowfall_langfuse_clickhouse:/var/lib/clickhouse
+      - snowfall_langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      # 127.0.0.1 : « localhost » vise IPv6, désactivé sur le réseau interne.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      start_period: 120s
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  langfuse-redis:
+    <<: *hardened
+    image: redis:8.2.10-alpine@sha256:b51665e66f00759be7c3152ad5ac3c66fb2f619c13ef62dea7cc1f9914524635
+    read_only: true
+    # Juste de quoi préparer /data puis passer à l'utilisateur redis (non root).
+    cap_add: [CHOWN, SETGID, SETUID]
+    networks: [backend]
+    # Mot de passe dans un fichier de configuration (jamais dans la ligne de commande).
+    command: ["redis-server", "/run/secrets/langfuse_redis_conf"]
+    secrets: [langfuse_redis_conf]
+    volumes:
+      - snowfall_langfuse_redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$(sed -n 's/^requirepass //p' /run/secrets/langfuse_redis_conf)\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Stockage objet S3 (Garage) : événements bruts et médias des traces.
+  langfuse-s3:
+    <<: *hardened
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    read_only: true
+    networks: [backend]
+    secrets: [garage_rpc_secret, garage_admin_token]
+    volumes:
+      - ./infra/langfuse/garage.toml:/etc/garage.toml:ro
+      - snowfall_langfuse_s3_meta:/var/lib/garage/meta
+      - snowfall_langfuse_s3_data:/var/lib/garage/data
+
+  langfuse-worker:
+    <<: *hardened
+    image: langfuse/langfuse-worker:4.49.0@sha256:40df08a1d15ecfa9542f1fd3b481f6d1afa16404a512e1ff51bc85b72144cedd
+    networks: [backend]
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      langfuse-clickhouse: { condition: service_healthy }
+      langfuse-redis: { condition: service_healthy }
+      langfuse-s3: { condition: service_started }
+    environment: *langfuse-env
+    env_file: ["${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse.env"]
+
+  langfuse-web:
+    <<: *hardened
+    image: langfuse/langfuse:4.49.0@sha256:a9d1951e9e6cc1b5ad48bca3aefd31358a54fde4f84b9681f8ace2ff076c0c03
+    networks: [backend, default]
+    ports:
+      - "127.0.0.1:3010:3000"
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      langfuse-clickhouse: { condition: service_healthy }
+      langfuse-redis: { condition: service_healthy }
+      langfuse-s3: { condition: service_started }
+    environment:
+      <<: *langfuse-env
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-s3:3900
+      # Next.js écoute sinon sur la seule adresse liée au nom du conteneur (port publié injoignable).
+      HOSTNAME: 0.0.0.0
+    env_file: ["${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse.env"]
+
+volumes:
+  snowfall_langfuse_db:
+  snowfall_langfuse_clickhouse:
+  snowfall_langfuse_clickhouse_logs:
+  snowfall_langfuse_redis:
+  snowfall_langfuse_s3_meta:
+  snowfall_langfuse_s3_data:
+
+# Générés par infra/langfuse/bootstrap.sh (non versionnés).
+secrets:
+  langfuse_secret_key:
+    file: ${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse_secret_key
+  langfuse_db_password:
+    file: ${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse_db_password
+  langfuse_redis_conf:
+    file: ${SNOWFALL_SECRETS_DIR:-./infra/secrets}/langfuse-redis.conf
+  garage_rpc_secret:
+    file: ${SNOWFALL_SECRETS_DIR:-./infra/secrets}/garage_rpc_secret
+  garage_admin_token:
+    file: ${SNOWFALL_SECRETS_DIR:-./infra/secrets}/garage_admin_token

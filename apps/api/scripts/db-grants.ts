@@ -45,6 +45,8 @@ const privileges: Record<string, string[]> = {
   agent_checkpoint_writes: ["SELECT", "INSERT", "DELETE"],
   // agent_run_leases : aucun droit, lue seulement via snowfall_stale_runs().
   conversation_summaries: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  generated_files: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  mcp_servers: ["SELECT", "INSERT", "UPDATE", "DELETE"],
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via

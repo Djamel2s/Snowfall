@@ -814,3 +814,80 @@ export const conversationSummaries = pgTable.withRLS(
     tenantPolicy("conversation_summaries_tenant", table.organizationId, table.userId),
   ],
 );
+
+// ---- Fichiers produits par l'interpréteur de code ---------------------------
+// Graphiques, CSV… créés par le bac à sable : analysés par l'antivirus, chiffrés,
+// rattachés à la réponse qui les a produits (orphelins purgés après 24 h).
+export const GENERATED_FILE_MAX_BYTES = 5 * 1024 * 1024;
+export const generatedFileMediaTypes = [
+  "image/png",
+  "image/jpeg",
+  "image/svg+xml",
+  "text/csv",
+  "text/plain",
+  "text/markdown",
+  "application/json",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/pdf",
+] as const;
+
+export const generatedFiles = pgTable.withRLS(
+  "generated_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    // Réponse qui l'a produit ; NULL pendant la réponse (purgé après 24 h sinon).
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    mediaType: text("media_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    name: text("name").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("generated_files_conversation_idx").on(table.conversationId, table.createdAt),
+    index("generated_files_message_idx").on(table.messageId),
+    foreignKey({
+      name: "generated_files_conversation_owner_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check(
+      "generated_files_media_type_check",
+      sql.raw(`media_type IN (${generatedFileMediaTypes.map((type) => `'${type}'`).join(", ")})`),
+    ),
+    check("generated_files_size_check", sql.raw(`size_bytes BETWEEN 1 AND ${GENERATED_FILE_MAX_BYTES}`)),
+    tenantPolicy("generated_files_owner", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Serveurs MCP approuvés par l'organisation ------------------------------
+// Ajoutés par un administrateur ; leurs outils ne sont proposés qu'après
+// approbation, et seulement tant que leur empreinte (nom, description, schéma)
+// n'a pas changé. Adresse, jeton et liste approuvée : chiffrés.
+export const mcpServers = pgTable.withRLS(
+  "mcp_servers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    token: text("token"),
+    // Outils approuvés : [{ name, description, inputSchema, access, fingerprint }].
+    tools: text("tools"),
+    status: text("status").notNull().default("pending"),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("mcp_servers_organization_idx").on(table.organizationId),
+    check("mcp_servers_status_check", sql`${table.status} IN ('pending', 'approved', 'disabled')`),
+    check("mcp_servers_name_check", sql`length(${table.name}) BETWEEN 1 AND 60`),
+    tenantPolicy("mcp_servers_tenant", table.organizationId),
+  ],
+);

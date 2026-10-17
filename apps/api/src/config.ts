@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { VaultAuthSettings } from "./crypto/vault.js";
 import type { ModelSelection, ProviderId } from "./llm/types.js";
@@ -92,6 +93,20 @@ const envSchema = z.object({
   METRICS_PORT: z.coerce.number().int().min(0).max(65_535).default(9464),
   METRICS_HOST: z.string().default("127.0.0.1"),
   METRICS_TOKEN: z.string().optional(),
+  // Recherche web des agents : SearXNG auto-hébergé (ex. http://searxng:8080). Absent : indisponible.
+  WEB_SEARCH_URL: z.union([z.url(), z.literal("")]).optional(),
+  // Interpréteur de code : socket Unix du bac à sable (ex. /run/sandbox/sandbox.sock). Absent : indisponible.
+  SANDBOX_SOCKET: z.string().optional(),
+  // Serveurs d'outils MCP (ajoutés et approuvés par les admins). Désactivé par défaut.
+  MCP_ENABLED: z.enum(["true", "false"]).default("false"),
+  // Traces des agents (OpenTelemetry → Langfuse auto-hébergé). Absent : aucune trace.
+  LANGFUSE_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
+  LANGFUSE_PUBLIC_KEY: z.string().optional(),
+  LANGFUSE_SECRET_KEY: z.string().optional(),
+  LANGFUSE_SECRET_KEY_FILE: z.string().optional(),
+  // Contenu des traces : masqué (données personnelles retirées) ou aucun.
+  TRACE_CONTENT: z.enum(["masked", "none"]).default("masked"),
+  TRACE_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
 });
 
 export type AppConfig = {
@@ -135,6 +150,10 @@ export type AppConfig = {
   antivirus: { host: string; port: number; timeoutMs: number } | undefined;
   egressProxy: string | undefined;
   metrics: { host: string; port: number; token: string | undefined } | undefined;
+  tracing: { baseUrl: string; publicKey: string; secretKey: string; content: "masked" | "none"; retentionDays: number } | undefined;
+  webSearchUrl: string | undefined;
+  sandboxSocket: string | undefined;
+  mcpEnabled: boolean;
   knowledge: {
     embeddingModels: { mistral: string; openai: string; google: string; local: string | undefined };
     localEmbedding: { baseUrl: string; apiKey: string } | undefined;
@@ -201,6 +220,22 @@ export function loadKmsConfig(env: NodeJS.ProcessEnv = process.env): { masterKey
             key: e.VAULT_TRANSIT_KEY,
           }
         : { provider: "local" },
+  };
+}
+
+/** Traces : base Langfuse et clés du projet ; secret lu de préférence dans un fichier (secret Docker). */
+function tracingConfig(e: z.infer<typeof envSchema>): AppConfig["tracing"] {
+  if (!e.LANGFUSE_BASE_URL) return undefined;
+  const secretKey = e.LANGFUSE_SECRET_KEY_FILE ? readFileSync(e.LANGFUSE_SECRET_KEY_FILE, "utf8").trim() : e.LANGFUSE_SECRET_KEY;
+  if (!e.LANGFUSE_PUBLIC_KEY || !secretKey) {
+    throw new Error("LANGFUSE_BASE_URL exige LANGFUSE_PUBLIC_KEY et LANGFUSE_SECRET_KEY_FILE (ou LANGFUSE_SECRET_KEY).");
+  }
+  return {
+    baseUrl: e.LANGFUSE_BASE_URL.replace(/\/$/, ""),
+    publicKey: e.LANGFUSE_PUBLIC_KEY,
+    secretKey,
+    content: e.TRACE_CONTENT,
+    retentionDays: e.TRACE_RETENTION_DAYS,
   };
 }
 
@@ -294,6 +329,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     egressProxy: e.EGRESS_PROXY_URL || undefined,
     // METRICS_PORT=0 désactive l'exposition.
     metrics: e.METRICS_PORT ? { host: e.METRICS_HOST, port: e.METRICS_PORT, token: e.METRICS_TOKEN || undefined } : undefined,
+    tracing: tracingConfig(e),
+    webSearchUrl: e.WEB_SEARCH_URL ? e.WEB_SEARCH_URL.replace(/\/$/, "") : undefined,
+    sandboxSocket: e.SANDBOX_SOCKET || undefined,
+    mcpEnabled: e.MCP_ENABLED === "true",
     knowledge: {
       embeddingModels: {
         mistral: e.EMBEDDING_MODEL_MISTRAL,

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { knownTools, toolIds } from "../agent/catalog.js";
+import { knownTools, toolIds, type ToolId } from "../agent/catalog.js";
 import { organizationRoles } from "../auth/auth.js";
 import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
@@ -19,6 +19,8 @@ export type WorkspaceDependencies = {
   configuredProviders: () => Promise<ProviderId[]>;
   /** Fournisseurs configurés pour les embeddings. */
   embeddingProviders?: () => EmbeddingProvider[];
+  /** Outils que la plateforme sait fournir (la recherche web exige SearXNG). */
+  platformTools?: () => ToolId[];
 };
 
 const uuidParams = z.object({ id: z.uuid() });
@@ -114,6 +116,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         settings: current,
         configuredProviders: configured,
         embeddingProviders: deps.embeddingProviders?.() ?? [],
+        platformTools: deps.platformTools?.() ?? [...toolIds],
       };
     });
 

@@ -1,4 +1,5 @@
-import { Annotation, Command, END, Send, START, StateGraph, interrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
+import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
+import type { AgentTrace } from "../observability/tracing.js";
 import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
 
 /** Image jointe, transmise en base64 aux modèles multimodaux. */
@@ -162,6 +163,8 @@ export type ChatRunner = (
     /** Validation humaine en mémoire (sans exécution durable). Absente : écritures refusées. */
     approve?: Approver;
     durable?: DurableOptions;
+    /** Traces (OpenTelemetry) : un span par appel au modèle et par outil. */
+    trace?: AgentTrace;
     signal?: AbortSignal;
   },
 ) => Promise<ChatResult>;
@@ -228,7 +231,7 @@ export function buildAgentGraph(
   model: ChatModel,
   tools: AgentTool[],
   maxSteps: number,
-  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver } = {},
+  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver; trace?: AgentTrace } = {},
 ) {
   const specs = tools.map(toolSpec);
   // Exécution durable : la validation est une pause du graphe, enregistrée.
@@ -252,21 +255,28 @@ export function buildAgentGraph(
         summary: state.summary,
         ...(offerTools ? { tools: specs } : {}),
       };
-      for await (const chunk of model.stream(request, config.signal)) {
-        if (chunk.type === "token") {
-          text += chunk.text;
-          config.writer?.({ token: chunk.text });
-        } else if (chunk.type === "reasoning") {
-          config.writer?.({ reasoning: chunk.text });
-        } else if (chunk.type === "tool_call") {
-          calls.push(chunk.call);
-        } else if (chunk.type === "provider_data") {
-          providerData = { ...providerData, ...chunk.data };
-        } else {
-          const { type: _type, ...counted } = chunk;
-          usage = counted;
+      const span = options.trace?.model({ step: state.steps });
+      try {
+        for await (const chunk of model.stream(request, config.signal)) {
+          if (chunk.type === "token") {
+            text += chunk.text;
+            config.writer?.({ token: chunk.text });
+          } else if (chunk.type === "reasoning") {
+            config.writer?.({ reasoning: chunk.text });
+          } else if (chunk.type === "tool_call") {
+            calls.push(chunk.call);
+          } else if (chunk.type === "provider_data") {
+            providerData = { ...providerData, ...chunk.data };
+          } else {
+            const { type: _type, ...counted } = chunk;
+            usage = counted;
+          }
         }
+      } catch (error) {
+        span?.end({ usage, output: text, error });
+        throw error;
       }
+      span?.end({ usage, output: text, toolCalls: calls.map((call) => call.name) });
 
       const turn: ChatTurn = {
         role: "assistant",
@@ -295,7 +305,16 @@ export function buildAgentGraph(
       const { call } = input;
       const signal = config.signal ?? new AbortController().signal;
       config.writer?.({ tool: { id: call.id, name: call.name, status: "running" } satisfies ToolEvent });
-      const result = await runTool(tools, call, signal, approve);
+      const span = options.trace?.tool({ name: call.name, callId: call.id, input: call.arguments });
+      let result: Awaited<ReturnType<typeof runTool>>;
+      try {
+        result = await runTool(tools, call, signal, approve);
+      } catch (error) {
+        // Pause pour validation : ce n'est pas une erreur (l'outil reprendra après la décision).
+        span?.end({ status: isGraphInterrupt(error) ? "waiting" : "error" });
+        throw error;
+      }
+      span?.end({ status: result.denied ? "denied" : result.isError ? "error" : "done", output: result.content });
       const status = result.denied ? "denied" : result.isError ? "error" : "done";
       config.writer?.({ tool: { id: call.id, name: call.name, status, summary: result.summary } satisfies ToolEvent });
       const turn: ChatTurn = {
@@ -329,6 +348,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
     const graph = buildAgentGraph(model, tools, maxSteps, {
       ...(options.approve ? { approve: options.approve } : {}),
       ...(durable ? { checkpointer: durable.checkpointer } : {}),
+      ...(options.trace ? { trace: options.trace } : {}),
     });
     const turns: ChatTurn[] = [
       ...(input.history ?? []),

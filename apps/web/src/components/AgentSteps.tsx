@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Ban, Check, LoaderCircle, PenLine, Search, ShieldCheck, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Ban, Check, FileSearch, Globe, LoaderCircle, PenLine, Plug, Search, ShieldCheck, SquareTerminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import type { AgentStep, ToolApproval } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
@@ -15,13 +15,34 @@ export default function AgentSteps({ steps, onDecide }: Props) {
   return (
     <ul className="agent-steps" aria-label={t('agent.steps')} aria-live="polite">
       {steps.map((step) => {
-        const Icon = step.name === 'search_knowledge' ? Search : step.name === 'save_to_knowledge' ? PenLine : Wrench
+        const Icon =
+          step.name === 'search_knowledge'
+            ? Search
+            : step.name === 'save_to_knowledge'
+              ? PenLine
+              : step.name === 'web_search'
+                ? Globe
+                : step.name === 'read_webpage'
+                  ? FileSearch
+                  : step.name === 'run_code'
+                    ? SquareTerminal
+                    : step.name.startsWith('mcp_')
+                      ? Plug
+                      : Wrench
         const label =
           step.name === 'search_knowledge'
             ? t('agent.searchKnowledge')
             : step.name === 'save_to_knowledge'
               ? t('agent.saveKnowledge')
-              : t('agent.tool', { name: step.name })
+              : step.name === 'web_search'
+                ? t('agent.webSearch')
+                : step.name === 'read_webpage'
+                  ? t('agent.readWebpage')
+                  : step.name === 'run_code'
+                    ? t('agent.runCode')
+                    : step.name.startsWith('mcp_')
+                      ? t('agent.mcpTool', { name: step.name.slice(4) })
+                      : t('agent.tool', { name: step.name })
         const waiting = step.status === 'running' && step.approval
         return (
           <li key={step.id} className={`agent-step agent-step-${step.status}`}>

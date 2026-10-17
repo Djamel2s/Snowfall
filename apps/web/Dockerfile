@@ -21,6 +21,7 @@ RUN apk upgrade --no-cache \
   && chown -R nginx:nginx /var/cache/nginx
 COPY infra/nginx/snowfall.conf /etc/nginx/conf.d/snowfall.conf
 COPY infra/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY infra/nginx/artifact-headers.conf /etc/nginx/snippets/artifact-headers.conf
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 USER nginx
 EXPOSE 8080 8443

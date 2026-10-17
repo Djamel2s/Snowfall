@@ -56,6 +56,8 @@ export const agentProfileSchema = z.object({
   instructions: z.string().trim().max(4000).default(""),
   /** Outils choisis par l'auteur, parmi ceux de l'organisation (vérifié à l'enregistrement). */
   tools: z.array(z.enum(toolIds)).max(toolIds.length).default(defaultAgentTools),
+  /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
+  mcpServers: z.array(z.uuid()).max(10).default([]),
 }).strict();
 
 export type AgentAvatar = z.infer<typeof avatarSchema>;

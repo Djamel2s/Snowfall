@@ -5,6 +5,9 @@ import type { ActiveBase, Citation, KnowledgeService, Passage } from "../knowled
 import { renderKnowledge } from "../knowledge/service.js";
 import { defineTool } from "./tools.js";
 
+/** Outils dont les résultats sont des sources numérotées [n]. */
+const CITING_TOOLS = new Set(["search_knowledge", "web_search", "read_webpage"]);
+
 /**
  * Numérotation des sources sur toute la réponse : si l'agent cherche trois
  * fois, un même passage garde son numéro et les [n] restent cohérents.
@@ -25,17 +28,22 @@ export class CitationRegistry {
 
   /**
    * Reprise d'un run : renumérote à l'identique à partir des passages gardés
-   * dans la transcription (résultats de search_knowledge).
+   * dans la transcription (résultats des outils qui citent leurs sources).
    */
   seed(turns: ChatTurn[]) {
     for (const turn of turns) {
-      if (turn.role !== "tool" || turn.name !== "search_knowledge" || !Array.isArray(turn.data)) continue;
+      if (turn.role !== "tool" || !CITING_TOOLS.has(turn.name) || !Array.isArray(turn.data)) continue;
       for (const passage of turn.data as Passage[]) {
         const key = `${passage.sourceId}:${passage.text.slice(0, 200)}`;
         if (!this.passages.has(key)) this.passages.set(key, passage);
       }
     }
     return this;
+  }
+
+  /** Sources numérotées pendant la réponse. */
+  get size() {
+    return this.passages.size;
   }
 
   /** Sources réellement citées ([n] dans la réponse), sinon toutes celles consultées. */

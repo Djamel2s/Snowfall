@@ -1,5 +1,6 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, Network, Shapes } from 'lucide-react'
+import { artifactKind, artifactTitle, useOpenArtifact, type ArtifactKind } from '../lib/artifacts'
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
 import { useI18n } from '../lib/i18n'
 import '../markdown.css'
@@ -32,15 +33,68 @@ function renderInline(nodes: Inline[]): ReactNode[] {
   })
 }
 
-function CodeBlock({ lang, text }: { lang: string; text: string }) {
+/**
+ * Artifact (page HTML, SVG, diagramme) : une carte à ouvrir dans le panneau,
+ * le code replié (déplié d'office si la question demandait le code).
+ */
+function ArtifactCard({ lang, text, kind, showCode }: { lang: string; text: string; kind: ArtifactKind; showCode: boolean }) {
+  const { t } = useI18n()
+  const openArtifact = useOpenArtifact()!
+  const [expanded, setExpanded] = useState(showCode)
+  const title = artifactTitle(kind, text)
+  const Icon = kind === 'mermaid' ? Network : kind === 'svg' ? Shapes : FileCode2
+  return (
+    <>
+      <div className="md-artifact">
+        <button type="button" className="md-artifact-open" title={t('artifact.open')} onClick={() => openArtifact({ kind, source: text, title })}>
+          <Icon size={16} />
+          <span>
+            <strong>{title}</strong>
+            <small>{t('artifact.open')}</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="md-artifact-code"
+          aria-expanded={expanded}
+          aria-label={t('artifact.code')}
+          title={t('artifact.code')}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <Code2 size={13} />
+          <ChevronDown size={12} className={expanded ? 'open' : ''} />
+        </button>
+      </div>
+      {expanded && <CodeBlock lang={lang} text={text} plain />}
+    </>
+  )
+}
+
+function CodeBlock({ lang, text, plain = false, showCode = false }: { lang: string; text: string; plain?: boolean; showCode?: boolean }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   const tokens = useMemo(() => tokenizeCode(text, lang), [text, lang])
+  // Page HTML, SVG ou diagramme : affichable dans le cadre isolé des artifacts.
+  const openArtifact = useOpenArtifact()
+  const kind = artifactKind(lang, text)
+  if (kind && openArtifact && !plain) return <ArtifactCard lang={lang} text={text} kind={kind} showCode={showCode} />
 
   return (
     <div className="md-code">
       <div className="md-code-header">
         <span>{lang || 'code'}</span>
+        {kind && openArtifact && !plain && (
+          <button
+            type="button"
+            className="md-code-preview"
+            aria-label={t('artifact.open')}
+            title={t('artifact.open')}
+            onClick={() => openArtifact({ kind, source: text, title: artifactTitle(kind, text) })}
+          >
+            <Eye size={13} />
+            {t('artifact.preview')}
+          </button>
+        )}
         <button
           type="button"
           aria-label={t('markdown.copyCode')}
@@ -66,7 +120,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   )
 }
 
-function renderBlocks(blocks: Block[]): ReactNode[] {
+function renderBlocks(blocks: Block[], showCode = false): ReactNode[] {
   return blocks.map((block, index) => {
     switch (block.type) {
       case 'heading': {
@@ -76,13 +130,13 @@ function renderBlocks(blocks: Block[]): ReactNode[] {
       case 'paragraph':
         return <p key={index}>{renderInline(block.children)}</p>
       case 'code':
-        return <CodeBlock key={index} lang={block.lang} text={block.text} />
+        return <CodeBlock key={index} lang={block.lang} text={block.text} showCode={showCode} />
       case 'hr':
         return <hr key={index} />
       case 'quote':
-        return <blockquote key={index}>{renderBlocks(block.children)}</blockquote>
+        return <blockquote key={index}>{renderBlocks(block.children, showCode)}</blockquote>
       case 'list': {
-        const items = block.items.map((item, itemIndex) => <li key={itemIndex}>{renderBlocks(item)}</li>)
+        const items = block.items.map((item, itemIndex) => <li key={itemIndex}>{renderBlocks(item, showCode)}</li>)
         return block.ordered ? (
           <ol key={index} start={block.start}>{items}</ol>
         ) : (
@@ -116,9 +170,10 @@ function renderBlocks(blocks: Block[]): ReactNode[] {
   })
 }
 
-function Markdown({ source }: { source: string }) {
+/** showCode : la question demandait le code, les artifacts s'affichent dépliés. */
+function Markdown({ source, showCode = false }: { source: string; showCode?: boolean }) {
   const blocks = useMemo(() => parseMarkdown(source), [source])
-  return <div className="markdown">{renderBlocks(blocks)}</div>
+  return <div className="markdown">{renderBlocks(blocks, showCode)}</div>
 }
 
 export default memo(Markdown)

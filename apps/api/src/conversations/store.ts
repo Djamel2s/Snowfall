@@ -13,7 +13,8 @@ export type MessageSource = {
   sourceId: string;
   name: string;
   url: string | null;
-  base: "agent" | "project";
+  /** web : page trouvée par la recherche web (sourceId = adresse). */
+  base: "agent" | "project" | "web";
   section?: string | null;
   page?: number | null;
 };
