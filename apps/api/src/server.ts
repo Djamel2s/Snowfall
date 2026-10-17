@@ -90,6 +90,7 @@ import {
 } from "./workspace/settings.js";
 import { createRouteKit } from "./routes/kit.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { meterOf, MemoryToolUsageStore, type OrganizationSettings, type ToolUsageStore } from "./workspace/settings.js";
 import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
 import { PostgresMcpServerStore } from "./mcp/store.js";
 import { publicAddressOnly } from "./mcp/client.js";
@@ -192,6 +193,10 @@ export type AppDependencies = {
   rewriteQuery?: QueryRewriter;
   /** Boucle d'agent : aller-retour modèle ↔ outils au maximum par réponse. */
   agentMaxSteps?: number;
+  /** Budget de tokens d'une réponse (toutes étapes) ; au-delà, plus d'outils. */
+  agentMaxTokens?: number;
+  /** Appels d'outils du mois (quotas des outils). Absent : en mémoire. */
+  toolUsage?: ToolUsageStore;
   /** Runs d'agent (exécution durable). Absent : en mémoire (développement, tests). */
   runs?: RunStore;
   /** Points de reprise du graphe, par propriétaire. Absent : en mémoire. */
@@ -226,10 +231,15 @@ const RUN_TIMING = {
   recoveryMs: 30_000,
   /** Validation sans réponse au-delà : refusée. */
   approvalTtlSeconds: 24 * 60 * 60,
+  /** Durée d'exécution active d'un passage (hors pauses) : au-delà, la réponse s'arrête, le partiel est gardé. */
+  maxActiveMs: 10 * 60 * 1000,
 };
 
 /** Entrée du modèle au lancement d'un run (le résumé de compaction part dans le prompt système). */
 type RunInput = { history: ChatTurn[]; message: string; images: ModelImage[]; summary?: string | undefined };
+
+/** Ajouté à une réponse coupée par la durée maximale. */
+const LIMIT_NOTICE = "Réponse interrompue : durée maximale d'une réponse atteinte.";
 
 /** Échec attendu d'un run (conversation supprimée, modèle retiré…) : message transmis tel quel. */
 class RunFailure extends Error {}
@@ -282,6 +292,7 @@ export function createAppServer(deps: AppDependencies) {
   const summaries = deps.summaries ?? new MemorySummaryStore();
   const tracer = deps.tracer ?? noopTracer;
   const generatedFiles = deps.generatedFiles ?? new MemoryGeneratedFileStore();
+  const toolUsage = deps.toolUsage ?? new MemoryToolUsageStore();
   /** Identifiant de cette instance (bail des runs qu'elle exécute). */
   const instance = `api-${randomUUID()}`;
   const localRuns = new Map<string, { stop: (reason: "cancel" | "lost" | "shutdown") => void }>();
@@ -695,6 +706,7 @@ export function createAppServer(deps: AppDependencies) {
       members: deps.members,
       preferences: deps.preferences,
       projects: deps.projects,
+      toolUsage,
       configuredProviders: async () =>
         (await models.catalog()).filter((provider) => provider.available).map((provider) => provider.id),
       ...(deps.embeddingProviders ? { embeddingProviders: deps.embeddingProviders } : {}),
@@ -937,6 +949,38 @@ export function createAppServer(deps: AppDependencies) {
       );
     }
 
+    /**
+     * Outil compté (code, web, MCP) : refusé au-delà du plafond mensuel de
+     * l'organisation, compté à chaque exécution. Le refus est un résultat lu par
+     * le modèle (il répond sans l'outil), et un événement d'audit.
+     */
+    function meteredTool(request: FastifyRequest, user: AuthenticatedUser, tool: AgentTool, limits: OrganizationSettings["toolLimits"]): AgentTool {
+      const meter = meterOf(tool.name);
+      if (!meter) return tool;
+      return {
+        ...tool,
+        async execute(args, context) {
+          const limit = limits[meter];
+          if (limit !== undefined && ((await toolUsage.toolUsage(user))[meter] ?? 0) >= limit) {
+            await kit.record(request, user, {
+              eventType: "quota.tool_exceeded",
+              outcome: "denied",
+              targetType: "organization",
+              targetId: user.organizationId,
+              details: { meter, limit },
+            });
+            return { content: `Quota mensuel de l'organisation atteint pour cet outil (${limit} appels). Réponds sans lui et dis-le à l'utilisateur.`, summary: "quota atteint" };
+          }
+          try {
+            return await tool.execute(args, context);
+          } finally {
+            // Compté même en cas d'échec : la ressource a été consommée.
+            await toolUsage.recordTool(user, meter).catch((error: unknown) => request.log.error({ err: error }, "Comptage d'outil impossible"));
+          }
+        },
+      };
+    }
+
     // ---- Exécution durable (runs) --------------------------------------------
     //
     // Une réponse est un run enregistré en base : la connexion HTTP ne fait que
@@ -1084,7 +1128,7 @@ export function createAppServer(deps: AppDependencies) {
       mode: { start?: { input: RunInput; plan: KnowledgePlan }; resume?: Record<string, boolean>; continue?: boolean },
     ) {
       const controller = new AbortController();
-      let stopReason: "cancel" | "lost" | "shutdown" | null = null;
+      let stopReason: "cancel" | "lost" | "shutdown" | "limit" | null = null;
       const stop = (reason: NonNullable<typeof stopReason>) => {
         stopReason ??= reason;
         controller.abort();
@@ -1109,6 +1153,9 @@ export function createAppServer(deps: AppDependencies) {
           .catch((error: unknown) => request.log.error({ err: error }, "Renouvellement du bail impossible"));
       }, RUN_RENEW_MS);
       lease.unref();
+      // Durée maximale d'un passage : la réponse s'arrête, comme sur « arrêter ».
+      const deadline = setTimeout(() => stop("limit"), timing.maxActiveMs);
+      deadline.unref();
 
       let plan: KnowledgePlan = mode.start?.plan ?? { mode: "none" };
       const saver = checkpointerFor(user);
@@ -1162,6 +1209,8 @@ export function createAppServer(deps: AppDependencies) {
           codeRuns: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "run_code").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
+        const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
+        const metered = tools.map((tool) => meteredTool(request, user, tool, limits));
 
         const result = await runnerFor(selection)(
           {
@@ -1170,7 +1219,7 @@ export function createAppServer(deps: AppDependencies) {
             images: input.images,
             instructions: agent?.instructions,
             summary: input.summary,
-            ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}),
+            ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: deps.agentMaxTokens } : {}),
           },
           {
             signal: controller.signal,
@@ -1236,10 +1285,20 @@ export function createAppServer(deps: AppDependencies) {
         if (controller.signal.aborted) {
           observe("aborted");
           runTrace?.end({ status: stopReason === "cancel" ? "cancelled" : "interrupted" });
-          // Arrêt demandé : réponse partielle gardée. Bail perdu ou arrêt du
-          // serveur : rien n'est effacé, une instance reprendra le run.
-          if (stopReason === "cancel") {
-            await cancelRun(request, user, run, progress.text, plan).catch((cause: unknown) => {
+          // Arrêt demandé ou durée maximale : réponse partielle gardée. Bail perdu
+          // ou arrêt du serveur : rien n'est effacé, une instance reprendra le run.
+          if (stopReason === "limit") {
+            await kit.record(request, user, {
+              eventType: "agent.run_limit",
+              outcome: "denied",
+              targetType: "conversation",
+              targetId: run.conversationId,
+              details: { limit: "duration", seconds: Math.round(timing.maxActiveMs / 1000) },
+            });
+          }
+          if (stopReason === "cancel" || stopReason === "limit") {
+            const text = stopReason === "limit" && progress.text.trim() ? `${progress.text}\n\n_${LIMIT_NOTICE}_` : progress.text;
+            await cancelRun(request, user, run, text, plan).catch((cause: unknown) => {
               request.log.error({ err: cause }, "Échec d'enregistrement de la réponse partielle");
             });
           }
@@ -1265,6 +1324,7 @@ export function createAppServer(deps: AppDependencies) {
         });
       } finally {
         clearInterval(lease);
+        clearTimeout(deadline);
         localRuns.delete(run.id);
       }
     }
@@ -2178,6 +2238,9 @@ export function createProductionServer() {
     embeddingProviders: () => embeddings.available(),
     rewriteQuery: createQueryRewriter((selection) => models.runner(selection)),
     agentMaxSteps: config.llm.agentMaxSteps,
+    agentMaxTokens: config.llm.agentMaxTokens,
+    runTiming: { maxActiveMs: config.llm.agentMaxSeconds * 1000 },
+    toolUsage: settingsStore,
     ...(scanner ? { scanner } : {}),
     metrics,
     members: new PostgresMemberStore(pool),

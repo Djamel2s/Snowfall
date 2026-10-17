@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { getSession, logout as endSession } from './auth/session'
 import {
   api,
@@ -6,7 +6,6 @@ import {
   type AttachmentMeta,
   type AgentStep,
   type RunSnapshot,
-  type GeneratedFile,
   approvalStep,
   isPaused,
   type KnowledgeOwnerKind,
@@ -33,7 +32,12 @@ import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import ArtifactPanel from './components/ArtifactPanel'
-import { ArtifactContext, artifactsIn, wantsCode, type Artifact, type OpenedArtifact } from './lib/artifacts'
+import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
+import { useArtifactPanel } from './hooks/useArtifactPanel'
+import { useReasoning } from './hooks/useReasoning'
+import { useGeneratedFiles } from './hooks/useGeneratedFiles'
+import { usePinnedConversations } from './hooks/usePinnedConversations'
+import { migrateLegacyProjects } from './lib/legacy-projects'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -71,7 +75,6 @@ const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduc
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 const ACCEPT = '.pdf,.docx,.txt,.md,.csv,.json,image/png,image/jpeg,image/webp'
 const DOCUMENT_MAX = 10 * 1024 * 1024
-const LEGACY_PROJECTS_KEY = 'snowfall:projects'
 
 function Snowfall() {
   return (
@@ -119,6 +122,8 @@ function App() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(true)
   const [loadedId, setLoadedId] = useState<string | null>(null)
+  // Conversations créées ici : rien à charger depuis le serveur (sinon le message en cours d'envoi serait écrasé).
+  const freshIds = useRef(new Set<string>())
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -133,35 +138,14 @@ function App() {
   const [paused, setPaused] = useState(false)
   // Réflexion du modèle : en direct, puis rattachée à la réponse (cette session
   // seulement : elle n'est jamais enregistrée).
-  // Artifact affiché à côté de la conversation (page HTML, SVG, diagramme).
-  const [artifact, setArtifact] = useState<OpenedArtifact | null>(null)
-  const closeArtifact = useCallback(() => setArtifact(null), [])
-  // Chaque ouverture est un panneau neuf : jamais de mode « Exécuter » hérité d'un autre artifact.
-  const openings = useRef(0)
-  const openArtifact = useCallback((next: Artifact) => setArtifact({ ...next, opening: ++openings.current }), [])
+  const { artifact, openArtifact, closeArtifact } = useArtifactPanel()
   // Copie des conversations lisible à la fin d'une réponse (ouverture de son artifact).
   const conversationsRef = useRef({ conversations, activeId })
   useEffect(() => {
     conversationsRef.current = { conversations, activeId }
   }, [conversations, activeId])
-  const [reasoning, setReasoning] = useState('')
-  const reasoningRef = useRef('')
-  const [reasoningByMessage, setReasoningByMessage] = useState<Record<string, string>>({})
-  // Fichiers produits par l'interpréteur de code, par conversation.
-  const [generatedFiles, setGeneratedFiles] = useState<Record<string, GeneratedFile[]>>({})
-  const refreshFiles = (conversationId: string) =>
-    api
-      .listGeneratedFiles(conversationId)
-      .then((files) => setGeneratedFiles((current) => ({ ...current, [conversationId]: files })))
-      .catch(() => undefined)
-  const onReasoning = (text: string) => {
-    reasoningRef.current += text
-    setReasoning(reasoningRef.current)
-  }
-  const showReasoning = (text: string) => {
-    reasoningRef.current = text
-    setReasoning(text)
-  }
+  const { reasoning, reasoningByMessage, onReasoning, showReasoning, keepReasoning } = useReasoning()
+  const { generatedFiles, refreshFiles } = useGeneratedFiles()
   // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
   const [regenerating, setRegenerating] = useState(false)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
@@ -217,31 +201,12 @@ function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>('chats')
-  const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('snowfall:pinned-conversations')
-      return saved ? (JSON.parse(saved) as string[]) : []
-    } catch {
-      return []
-    }
-  })
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('snowfall:pinned-conversations', JSON.stringify(pinnedIds))
-    } catch {
-      // Épingles non conservées : sans gravité.
-    }
-  }, [pinnedIds])
+  const { pinnedIds, togglePinned } = usePinnedConversations()
 
   // Animations réduites à la demande, en plus de la préférence système.
   useEffect(() => {
     document.documentElement.classList.toggle('reduce-motion', preferences.reduceMotion === 'on')
   }, [preferences.reduceMotion])
-
-  function togglePinned(id: string) {
-    setPinnedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [id, ...current]))
-  }
 
   function fail(cause: unknown, fallback: Parameters<typeof t>[0]) {
     setError(cause instanceof Error ? cause.message : t(fallback))
@@ -302,6 +267,7 @@ function App() {
     if (!activeId) return
 
     const id = activeId
+    if (freshIds.current.delete(id)) return
     let cancelled = false
 
     async function loadMessages() {
@@ -391,12 +357,13 @@ function App() {
     api.savePreferences(next).catch((cause) => fail(cause, 'error.send'))
   }
 
-  async function newChat(agent?: Agent) {
-    if (creating) return
+  /** keepInput : création au premier envoi, le message tapé est gardé. */
+  async function newChat(agent?: Agent, options: { keepInput?: boolean } = {}): Promise<Conversation | null> {
+    if (creating) return null
 
     abortRef.current?.abort()
     setError('')
-    setInput('')
+    if (!options.keepInput) setInput('')
     setSidebarOpen(false)
     setCreating(true)
 
@@ -422,11 +389,15 @@ function App() {
           return api.createConversation(base)
         })
       const conversation = toConversation(created)
+      freshIds.current.add(conversation.id)
       setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)])
+      setLoadedId(conversation.id)
       setActiveId(conversation.id)
       requestAnimationFrame(() => inputRef.current?.focus())
+      return conversation
     } catch (cause) {
       fail(cause, 'error.createConversation')
+      return null
     } finally {
       setCreating(false)
     }
@@ -652,8 +623,10 @@ function App() {
         return
       }
       // Réponse terminée (outcome : son identifiant) : la réflexion reste consultable.
-      const thought = reasoningRef.current
-      if (outcome && thought) setReasoningByMessage((current) => ({ ...current, [outcome]: thought }))
+      if (outcome) keepReasoning(outcome)
+      // La réponse enregistrée remplace tout de suite le flux : sinon les deux
+      // s'affichent le temps des rafraîchissements ci-dessous.
+      resetStreaming()
       // Fichiers produits par le code pendant cette réponse.
       void refreshFiles(conversationId)
       // Synchronise l'ordre et les titres depuis le serveur.
@@ -787,11 +760,13 @@ function App() {
 
   async function sendMessage() {
     const message = input.trim()
-    const conversation = activeConversation
     const ready = activeFiles.filter((file) => file.status === 'ready' && file.attachment)
     const uploading = activeFiles.some((file) => file.status === 'uploading')
 
-    if ((!message && ready.length === 0) || uploading || sending || !conversation || messagesLoading) return
+    if ((!message && ready.length === 0) || uploading || sending || messagesLoading || !canWrite) return
+    // Aucune conversation ouverte (écran d'accueil) : elle est créée au premier envoi.
+    const conversation = activeConversation ?? (await newChat(undefined, { keepInput: true }))
+    if (!conversation) return
 
     const conversationId = conversation.id
     const attachments = ready.map((file) => file.attachment!)
@@ -933,7 +908,7 @@ function App() {
     (input.trim().length > 0 || activeFiles.some((file) => file.status === 'ready')) &&
     !uploading &&
     !sending &&
-    !!activeConversation &&
+    !creating &&
     !messagesLoading &&
     canWrite
 
@@ -1354,7 +1329,7 @@ function App() {
                   aria-autocomplete="list"
                   rows={1}
                   aria-label={t('chat.messageLabel')}
-                  disabled={!activeConversation || messagesLoading || !canWrite}
+                  disabled={messagesLoading || !canWrite}
                 />
                 <div className="composer-actions">
                   {sending ? (
@@ -1388,51 +1363,6 @@ function App() {
     </main>
     </ArtifactContext.Provider>
   )
-}
-
-let legacyMigration: Promise<void> | null = null
-
-/**
- * Reprise unique des projets autrefois conservés dans le navigateur : créés
- * côté serveur (chiffrés, RLS) puis retirés du stockage local. Mémorisée au
- * niveau du module pour ne jamais s'exécuter deux fois (StrictMode).
- */
-function migrateLegacyProjects() {
-  legacyMigration ??= (async () => {
-    const legacy = readLegacyProjects()
-    if (legacy.length === 0) return
-    if ((await api.listProjects()).length === 0) {
-      const known = new Set((await api.listConversations()).map((item) => item.id))
-      for (const old of legacy) {
-        const created = await api.createProject(old.name)
-        for (const conversationId of old.conversationIds.filter((id) => known.has(id))) {
-          await api.updateConversation(conversationId, { projectId: created.id }).catch(() => undefined)
-        }
-      }
-    }
-    try {
-      localStorage.removeItem(LEGACY_PROJECTS_KEY)
-    } catch {
-      // Rien à nettoyer.
-    }
-  })().catch(() => undefined)
-  return legacyMigration
-}
-
-/** Projets autrefois enregistrés dans le navigateur (avant leur passage côté serveur). */
-function readLegacyProjects(): { name: string; conversationIds: string[] }[] {
-  try {
-    const saved = JSON.parse(localStorage.getItem(LEGACY_PROJECTS_KEY) ?? '[]') as unknown
-    if (!Array.isArray(saved)) return []
-    return saved
-      .filter(
-        (item): item is { name: string; conversationIds: string[] } =>
-          typeof item?.name === 'string' && Array.isArray(item?.conversationIds),
-      )
-      .map((item) => ({ name: item.name.slice(0, 80), conversationIds: item.conversationIds.filter((id) => typeof id === 'string') }))
-  } catch {
-    return []
-  }
 }
 
 export default App

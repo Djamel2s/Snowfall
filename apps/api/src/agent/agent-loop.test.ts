@@ -103,6 +103,20 @@ describe("Boucle d'agent", () => {
     assert.equal(result.content, "Voici ce que j'ai.");
   });
 
+  it("budget de tokens dépassé : plus d'outils, le modèle conclut (coût d'une réponse borné)", async () => {
+    let n = 0;
+    const { model, requests } = scripted([
+      (request) =>
+        request.tools
+          ? [call(`c${++n}`, "weather", { city: "Lyon" }), { type: "usage", inputTokens: 3_000, outputTokens: 100 }]
+          : [{ type: "token", text: "Je conclus." }, { type: "usage", inputTokens: 3_000, outputTokens: 50 }],
+    ]);
+    const result = await createChatRunner(model)({ message: "Boucle !", tools: [weather], maxSteps: 10, maxTokens: 5_000 });
+    // 2 appels avec outils (3 100 puis 6 200 tokens), puis conclusion sans outils.
+    assert.deepEqual(requests.map((request) => Boolean(request.tools)), [true, true, false]);
+    assert.equal(result.content, "Je conclus.");
+  });
+
   it("exécute les appels d'une étape en parallèle, en refusant l'excès", async () => {
     let running = 0;
     let peak = 0;

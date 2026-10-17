@@ -154,6 +154,11 @@ export type ChatRunner = (
     tools?: AgentTool[] | undefined;
     /** Nombre maximal d'aller-retour modèle ↔ outils. */
     maxSteps?: number | undefined;
+    /**
+     * Budget de tokens (entrée + sortie, toutes étapes) : une fois dépassé, le
+     * modèle est rappelé SANS outils et doit conclure. Borne le coût d'une réponse.
+     */
+    maxTokens?: number | undefined;
   },
   options?: {
     onToken?: (text: string) => void;
@@ -172,6 +177,7 @@ export type ChatRunner = (
 /** Appels d'outils exécutés en parallèle par étape (au-delà, refusés). */
 export const MAX_TOOL_CALLS_PER_STEP = 8;
 export const DEFAULT_MAX_STEPS = 6;
+export const DEFAULT_MAX_TOKENS = 400_000;
 
 /** Modèle de développement : aucune donnée ne sort de la machine. */
 export const echoModel: ChatModel = {
@@ -231,8 +237,9 @@ export function buildAgentGraph(
   model: ChatModel,
   tools: AgentTool[],
   maxSteps: number,
-  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver; trace?: AgentTrace } = {},
+  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver; trace?: AgentTrace; maxTokens?: number } = {},
 ) {
+  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
   const specs = tools.map(toolSpec);
   // Exécution durable : la validation est une pause du graphe, enregistrée.
   const approve: Approver | undefined = options.checkpointer
@@ -245,7 +252,9 @@ export function buildAgentGraph(
       let usage: TokenUsage | undefined;
       let providerData: Record<string, unknown> | undefined;
       const calls: ToolCall[] = [];
-      const offerTools = specs.length > 0 && model.supportsTools && state.steps < maxSteps;
+      // Plus d'outils au-delà des étapes OU du budget de tokens : le modèle conclut.
+      const spent = (state.usage?.inputTokens ?? 0) + (state.usage?.outputTokens ?? 0);
+      const offerTools = specs.length > 0 && model.supportsTools && state.steps < maxSteps && spent < maxTokens;
 
       const request: ChatRequest = {
         history: [],
@@ -346,6 +355,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
     const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;
     const durable = options.durable;
     const graph = buildAgentGraph(model, tools, maxSteps, {
+      ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
       ...(options.approve ? { approve: options.approve } : {}),
       ...(durable ? { checkpointer: durable.checkpointer } : {}),
       ...(options.trace ? { trace: options.trace } : {}),

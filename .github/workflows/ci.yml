@@ -84,6 +84,7 @@ jobs:
           persist-credentials: false
       - run: docker build -f apps/api/Dockerfile --target runtime -t snowfall-api:ci .
       - run: docker build -f apps/web/Dockerfile -t snowfall-web:ci .
+      - run: docker build -t snowfall-sandbox:ci apps/sandbox
       # Vulnérabilités connues des images (système et dépendances embarquées).
       - name: Scan de l'image API
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -99,6 +100,17 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+      - name: Scan de l'image du bac à sable
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: snowfall-sandbox:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      # Le bac à sable durci comme en production, attaqué : réseau, identité,
+      # socket de l'API, écriture, ressources, survie, fuite entre exécutions.
+      - name: Batterie d'attaques du bac à sable
+        run: bash scripts/sandbox-attack.sh
       # Mauvaises configurations (Dockerfiles, compose) et secrets dans le dépôt.
       - name: Scan de configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -107,6 +119,25 @@ jobs:
           scan-ref: .
           severity: CRITICAL,HIGH
           exit-code: "1"
+
+  # Tests d'écran : l'interface dans un vrai navigateur (bureau et mobile),
+  # l'API remplacée par des réponses fictives.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -w @snowfall/web playwright install --with-deps chromium
+      - run: npm run e2e -w @snowfall/web
+        env:
+          CI: "true"
 
   secrets:
     runs-on: ubuntu-latest

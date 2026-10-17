@@ -2,8 +2,9 @@
 # Bac à sable d'exécution de code (Python) pour les agents.
 #   docker build -t snowfall-sandbox apps/sandbox
 # Lancé SANS réseau (network_mode: none), système de fichiers en lecture seule,
-# dossier de travail en tmpfs. En production : runtime gVisor (runsc) si
-# disponible, qui isole aussi le noyau (SANDBOX_RUNTIME=runsc).
+# dossier de travail en tmpfs. En production : runtime gVisor (runsc) EXIGÉ,
+# qui isole aussi du noyau de l'hôte (le serveur refuse de démarrer sans lui
+# quand SANDBOX_REQUIRE_GVISOR=true, valeur de compose.prod.yaml).
 FROM python:3.13.15-slim-trixie@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
 
 # Bibliothèques d'analyse figées ; aucun outil réseau ni compilateur dans l'image.

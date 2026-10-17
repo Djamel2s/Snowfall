@@ -7,7 +7,7 @@ import { providerIds, type ProviderId } from "../llm/types.js";
 import type { ProjectStore } from "../projects/store.js";
 import { MemberRuleError, type MemberStore } from "../workspace/members.js";
 import { locales, type PreferencesStore } from "../workspace/preferences.js";
-import type { SettingsStore } from "../workspace/settings.js";
+import { toolMeters, type SettingsStore, type ToolUsageStore } from "../workspace/settings.js";
 import type { RouteKit } from "./kit.js";
 
 export type WorkspaceDependencies = {
@@ -21,6 +21,8 @@ export type WorkspaceDependencies = {
   embeddingProviders?: () => EmbeddingProvider[];
   /** Outils que la plateforme sait fournir (la recherche web exige SearXNG). */
   platformTools?: () => ToolId[];
+  /** Appels d'outils du mois (quotas des outils). */
+  toolUsage?: ToolUsageStore | undefined;
 };
 
 const uuidParams = z.object({ id: z.uuid() });
@@ -44,6 +46,7 @@ const settingsSchema = z.object({
     .max(200)
     .optional(),
   tools: z.array(z.enum(toolIds)).max(toolIds.length).optional(),
+  toolLimits: z.partialRecord(z.enum(toolMeters), z.number().int().positive().max(10_000_000)).optional(),
 }).strict();
 
 const preferencesSchema = z.object({
@@ -89,10 +92,10 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
     api.get("/usage", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
-      const [usage, current] = await Promise.all([settings.usage(user), settings.get(user)]);
+      const [usage, current, tools] = await Promise.all([settings.usage(user), settings.get(user), deps.toolUsage?.toolUsage(user) ?? {}]);
       return {
-        usage,
-        limits: { monthly: current.monthlyTokenLimit, providers: current.providerTokenLimits },
+        usage: { ...usage, tools },
+        limits: { monthly: current.monthlyTokenLimit, providers: current.providerTokenLimits, tools: current.toolLimits },
       };
     });
   }
@@ -146,6 +149,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         linksEnabled: body.data.linksEnabled ?? current.linksEnabled,
         linkDomains: body.data.linkDomains ? [...new Set(body.data.linkDomains)] : current.linkDomains,
         tools: body.data.tools ? knownTools(body.data.tools) : current.tools,
+        toolLimits: body.data.toolLimits ?? current.toolLimits,
       });
       await kit.record(request, user, {
         eventType: "organization.settings_update",
@@ -158,6 +162,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
           linksEnabled: saved.linksEnabled,
           linkDomains: saved.linkDomains.length,
           tools: saved.tools.join(","),
+          toolLimits: toolMeters.map((meter) => `${meter}:${saved.toolLimits[meter] ?? "-"}`).join(","),
         },
       });
       return { settings: saved };

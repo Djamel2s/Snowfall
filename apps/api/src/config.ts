@@ -27,6 +27,9 @@ const envSchema = z.object({
   LOCAL_LLM_TOOLS: z.enum(["true", "false"]).default("false"),
   // Boucle d'agent : aller-retour modèle ↔ outils au maximum par réponse.
   AGENT_MAX_STEPS: z.coerce.number().int().min(1).max(20).default(6),
+  // Plafonds par réponse : tokens (toutes étapes) et durée d'exécution active (hors pauses de validation).
+  AGENT_MAX_TOKENS: z.coerce.number().int().min(10_000).max(5_000_000).default(400_000),
+  AGENT_MAX_SECONDS: z.coerce.number().int().min(30).max(3_600).default(600),
   // "fournisseur:modèle" des conversations sans agent, ex. "mistral:mistral-small-latest".
   LLM_DEFAULT_MODEL: z
     .string()
@@ -131,6 +134,8 @@ export type AppConfig = {
     localApiKey: string | undefined;
     localTools: boolean;
     agentMaxSteps: number;
+    agentMaxTokens: number;
+    agentMaxSeconds: number;
     defaultSelection: ModelSelection | undefined;
     maxOutputTokens: number;
     timeoutMs: number;
@@ -319,6 +324,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       localApiKey: e.LOCAL_LLM_API_KEY || undefined,
       localTools: e.LOCAL_LLM_TOOLS === "true",
       agentMaxSteps: e.AGENT_MAX_STEPS,
+      agentMaxTokens: e.AGENT_MAX_TOKENS,
+      agentMaxSeconds: e.AGENT_MAX_SECONDS,
       defaultSelection,
       maxOutputTokens: e.LLM_MAX_OUTPUT_TOKENS,
       timeoutMs: e.LLM_TIMEOUT_MS,

@@ -540,6 +540,61 @@ describe("Exécution durable : runs", () => {
     assert.ok(db.events.some((event) => event.eventType === "mcp.tool_call"));
   });
 
+  it("quota d'outils : au-delà du plafond mensuel, l'exécution est refusée (et tracée), le modèle répond sans", async (t) => {
+    const runs: string[] = [];
+    const sandbox: CodeSandbox = { run: async (code) => (runs.push(code), { exitCode: 0, timedOut: false, durationMs: 5, stdout: "42\n", stderr: "", files: [] }) };
+    const calculator: ChatModel = {
+      id: "calculator",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        const last = request.turns?.at(-1);
+        if (last?.role === "tool") {
+          yield { type: "token", text: last.content.includes("Quota") ? "Quota atteint, je réponds sans calcul." : "Résultat : 42." };
+          return;
+        }
+        yield { type: "tool_call", call: { id: `py-${request.turns?.length}`, name: "run_code", arguments: { code: "print(6*7)" } } };
+      },
+    };
+    const db = sharedDatabase();
+    const api = await instance(db, { model: calculator, sandbox, settings: { tools: ["code_interpreter"], toolLimits: { code: 1 } } });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["code_interpreter"]);
+
+    const answer = async (content: string) =>
+      ((await events(await api.post(`/conversations/${conversationId}/messages`, { content }))).at(-1)!.data as { assistantMessage: { content: string } }).assistantMessage.content;
+    assert.equal(await answer("Calcule 6 × 7"), "Résultat : 42.");
+    assert.equal(await answer("Et encore ?"), "Quota atteint, je réponds sans calcul.");
+    assert.equal(runs.length, 1);
+    assert.ok(db.events.some((event) => event.eventType === "quota.tool_exceeded" && event.outcome === "denied"));
+    // L'usage du mois est visible des membres.
+    const usage = (await (await api.get("/usage")).json()) as { usage: { tools: Record<string, number> }; limits: { tools: Record<string, number> } };
+    assert.deepEqual([usage.usage.tools, usage.limits.tools], [{ code: 1 }, { code: 1 }]);
+  });
+
+  it("durée maximale d'une réponse : arrêtée, la partie déjà écrite est gardée avec un avertissement", async (t) => {
+    const slow: ChatModel = {
+      id: "slow",
+      supportsTools: true,
+      async *stream(_request, signal) {
+        yield { type: "token", text: "Début de réponse." };
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 5_000);
+          signal?.addEventListener("abort", () => (clearTimeout(timer), reject(new Error("aborted"))), { once: true });
+        });
+        yield { type: "token", text: " Jamais affiché." };
+      },
+    };
+    const db = sharedDatabase();
+    const api = await instance(db, { model: slow, timing: { maxActiveMs: 200 } });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["search_knowledge"]);
+    const seen = await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Longue question" }));
+    const done = seen.at(-1)!;
+    assert.equal(done.event, "done");
+    assert.match((done.data as { assistantMessage: { content: string } }).assistantMessage.content, /^Début de réponse\.\n\n_Réponse interrompue : durée maximale/);
+    assert.ok(db.events.some((event) => event.eventType === "agent.run_limit"));
+  });
+
   it("l'outil d'écriture n'est proposé que si l'organisation, l'agent et les droits le permettent", async (t) => {
     const offered: string[][] = [];
     const runChat: ChatRunner = async (input) => {

@@ -32,6 +32,7 @@ const privileges: Record<string, string[]> = {
   audit_events: ["INSERT"],
   organization_settings: ["SELECT", "INSERT", "UPDATE"],
   token_usage: ["SELECT", "INSERT", "UPDATE"],
+  tool_usage: ["SELECT", "INSERT", "UPDATE"],
   projects: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   user_preferences: ["SELECT", "INSERT", "UPDATE"],

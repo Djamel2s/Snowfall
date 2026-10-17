@@ -266,13 +266,16 @@ services:
   # Aucun réseau : l'API lui parle par un socket Unix (volume partagé, réservé
   # au groupe 10010). Chaque exécution : utilisateur dédié, dossier neuf, limites
   # CPU/mémoire/processus/fichiers, tout tué à la fin. init (tini) récupère les
-  # processus orphelins. En production, gVisor isole aussi du noyau :
-  # SANDBOX_RUNTIME=runsc (runtime installé sur l'hôte). Activer côté API :
-  # SANDBOX_SOCKET=/run/sandbox/sandbox.sock.
+  # processus orphelins. gVisor (runtime « runsc », à installer sur l'hôte)
+  # isole aussi du noyau : il est EXIGÉ, le serveur refuse de démarrer sans lui.
+  # Vérifier sur l'hôte : SANDBOX_RUNTIME=runsc scripts/sandbox-attack.sh
+  # (« Isolation : gvisor »). Activer côté API : SANDBOX_SOCKET=/run/sandbox/sandbox.sock.
   sandbox:
     build: { context: apps/sandbox }
     profiles: ["code"]
-    runtime: ${SANDBOX_RUNTIME:-runc}
+    runtime: ${SANDBOX_RUNTIME:-runsc}
+    environment:
+      SANDBOX_REQUIRE_GVISOR: ${SANDBOX_REQUIRE_GVISOR:-true}
     init: true
     network_mode: none
     read_only: true

@@ -17,7 +17,47 @@ export type OrganizationSettings = {
   linkDomains: string[];
   /** Outils d'agent disponibles dans l'organisation. */
   tools: ToolId[];
+  /** Plafonds mensuels d'appels d'outils, par catégorie ; absent = illimité. */
+  toolLimits: Partial<Record<ToolMeter, number>>;
 };
+
+/**
+ * Catégories d'outils comptées : leur coût n'apparaît pas dans les tokens
+ * (calcul dans le bac à sable, requêtes au moteur de recherche, service tiers).
+ */
+export const toolMeters = ["code", "web", "mcp"] as const;
+export type ToolMeter = (typeof toolMeters)[number];
+
+/** Catégorie d'un outil exposé au modèle (null : non compté). */
+export function meterOf(toolName: string): ToolMeter | null {
+  if (toolName === "run_code") return "code";
+  if (toolName === "web_search" || toolName === "read_webpage") return "web";
+  if (toolName.startsWith("mcp_")) return "mcp";
+  return null;
+}
+
+/** Appels d'outils du mois, pour toute l'organisation. */
+export interface ToolUsageStore {
+  toolUsage(tenant: TenantContext): Promise<Partial<Record<ToolMeter, number>>>;
+  recordTool(tenant: TenantContext, meter: ToolMeter): Promise<void>;
+}
+
+/** En mémoire : développement sans base, tests. */
+export class MemoryToolUsageStore implements ToolUsageStore {
+  private readonly counts = new Map<string, number>();
+  async toolUsage(tenant: TenantContext) {
+    const usage: Partial<Record<ToolMeter, number>> = {};
+    for (const meter of toolMeters) {
+      const value = this.counts.get(`${tenant.organizationId}:${currentPeriod()}:${meter}`);
+      if (value) usage[meter] = value;
+    }
+    return usage;
+  }
+  async recordTool(tenant: TenantContext, meter: ToolMeter) {
+    const key = `${tenant.organizationId}:${currentPeriod()}:${meter}`;
+    this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+  }
+}
 
 export const defaultSettings: OrganizationSettings = {
   allowedProviders: [...providerIds],
@@ -27,6 +67,7 @@ export const defaultSettings: OrganizationSettings = {
   linksEnabled: true,
   linkDomains: [],
   tools: defaultOrganizationTools,
+  toolLimits: {},
 };
 
 export type UsageTotals = { inputTokens: number; outputTokens: number };
@@ -85,6 +126,7 @@ type SettingsRow = {
   links_enabled: boolean;
   link_domains: string[];
   enabled_tools: string[];
+  tool_limits: Record<string, unknown>;
 };
 
 function fromRow(row: SettingsRow | undefined): OrganizationSettings {
@@ -102,6 +144,12 @@ function fromRow(row: SettingsRow | undefined): OrganizationSettings {
     linksEnabled: row.links_enabled,
     linkDomains: row.link_domains,
     tools: knownTools(row.enabled_tools),
+    toolLimits: Object.fromEntries(
+      toolMeters.flatMap((meter) => {
+        const value = row.tool_limits?.[meter];
+        return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? [[meter, value]] : [];
+      }),
+    ),
   };
 }
 
@@ -110,13 +158,13 @@ export function currentPeriod(now = new Date()) {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
 }
 
-export class PostgresSettingsStore implements SettingsStore {
+export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
   constructor(private readonly pool: Pool) {}
 
   private async read(client: PoolClient, tenant: TenantContext) {
     const result = await client.query<SettingsRow>(
       `SELECT allowed_providers, monthly_token_limit, provider_token_limits,
-              embedding_provider, links_enabled, link_domains, enabled_tools
+              embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits
        FROM organization_settings WHERE organization_id = $1`,
       [tenant.organizationId],
     );
@@ -132,8 +180,8 @@ export class PostgresSettingsStore implements SettingsStore {
       await client.query(
         `INSERT INTO organization_settings
            (organization_id, allowed_providers, monthly_token_limit, provider_token_limits,
-            embedding_provider, links_enabled, link_domains, enabled_tools, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+            embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
          ON CONFLICT (organization_id) DO UPDATE SET
            allowed_providers = EXCLUDED.allowed_providers,
            monthly_token_limit = EXCLUDED.monthly_token_limit,
@@ -142,6 +190,7 @@ export class PostgresSettingsStore implements SettingsStore {
            links_enabled = EXCLUDED.links_enabled,
            link_domains = EXCLUDED.link_domains,
            enabled_tools = EXCLUDED.enabled_tools,
+           tool_limits = EXCLUDED.tool_limits,
            updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
         [
@@ -153,6 +202,7 @@ export class PostgresSettingsStore implements SettingsStore {
           settings.linksEnabled,
           settings.linkDomains,
           settings.tools,
+          settings.toolLimits,
           tenant.userId,
         ],
       );
@@ -210,6 +260,30 @@ export class PostgresSettingsStore implements SettingsStore {
         [tenant.organizationId, currentPeriod()],
       );
       return result.rows.map((row) => ({ userId: row.user_id, tokens: Number(row.tokens) }));
+    });
+  }
+
+  toolUsage(tenant: TenantContext) {
+    return withTenant(this.pool, tenant, async (client) => {
+      const result = await client.query<{ meter: ToolMeter; calls: string }>(
+        `SELECT meter, sum(calls) AS calls FROM tool_usage
+         WHERE organization_id = $1 AND period = $2
+         GROUP BY meter`,
+        [tenant.organizationId, currentPeriod()],
+      );
+      return Object.fromEntries(result.rows.map((row) => [row.meter, Number(row.calls)])) as Partial<Record<ToolMeter, number>>;
+    });
+  }
+
+  recordTool(tenant: TenantContext, meter: ToolMeter) {
+    return withTenant(this.pool, tenant, async (client) => {
+      await client.query(
+        `INSERT INTO tool_usage (organization_id, user_id, meter, period, calls)
+         VALUES ($1, $2, $3, $4, 1)
+         ON CONFLICT (organization_id, period, meter, user_id) DO UPDATE SET
+           calls = tool_usage.calls + 1, updated_at = now()`,
+        [tenant.organizationId, tenant.userId, meter, currentPeriod()],
+      );
     });
   }
 

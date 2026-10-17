@@ -1,6 +1,6 @@
-﻿# Snowfall — Security Baseline
+# Snowfall — Security Baseline
 
-Status: Initial baseline — controls require implementation and evidence.
+Status: Baseline with implemented controls (§11, last extended 2026-10-17) — each control still needs an owner and a review date.
 Owner: Snowfall engineering
 Review: Before production and after material architecture changes.
 
@@ -138,6 +138,31 @@ IdP-side revocation, logout).
 | Monitoring | Prometheus (API metrics on an internal port with a bearer token; bounded labels only: route templates, provider, audit event type; no user, tenant or content), PostgreSQL exporter with a `pg_monitor`-only role, Alertmanager (e-mail, secret from file), Loki fed by Grafana Alloy reading Docker log files read-only (no Docker socket), Grafana on loopback only (no anonymous access, no sign-up, no external snapshots, no telemetry). Alerts on availability, error rate, latency, model failures, malware, scanner outage, cross-tenant access bursts, CSRF, authentication failures, denied writes, SSRF attempts, confidential-knowledge misuse, missing or failed backups, egress denials and KMS refusals. All configurations validated with promtool, amtool, Loki and Alloy, and the pipeline verified live. |
 | Local AI | Embeddings (`BAAI/bge-m3`) and reranking (`BAAI/bge-reranker-v2-m3`) served by Text Embeddings Inference on the internal network, models cached in a volume and served offline: required for confidential knowledge bases, nothing leaves the platform. Retrieval quality measured with `npm run knowledge:eval` through the production code path, on the evaluation set or the organization's own documents: recall@3 0.84 (keywords) → 0.96 (hybrid with bge-m3) → 1.00 (with reranking of 10 candidates) on the fictitious set. |
 
+### Agent platform controls (2026-10-17)
+
+Evidence: `apps/api/src/**/*.test.ts` (unit, route and PostgreSQL integration
+tests, including attack paths), the sandbox attack battery
+(`scripts/sandbox-attack.sh`, run in CI), browser tests (`apps/web/e2e`, desktop
+and mobile, run in CI), the agent evaluation set (`npm run agent:eval`), and two
+adversarial code reviews whose findings were all fixed and covered by tests
+(see `docs/learning/09-mcp.md` and `10-evaluations.md`). Threat model:
+[THREAT_MODEL.md](THREAT_MODEL.md). DPIA draft: [AIPD.md](AIPD.md).
+
+| Control | Implementation |
+|---|---|
+| Tool authorization | Three layers, all deny-by-default: platform (a tool exists only if its service is configured), organization (admin enables it), agent (author selects it). A tool absent from one layer is never offered to the model. Write tools require a preview, and each call needs the user's approval *after* argument validation (what is approved is exactly what runs). |
+| Untrusted content | Every tool result, retrieved passage, attachment, web page, MCP result and compaction summary is wrapped in a dedicated tag declared untrusted by the platform prompt. Tag stripping is repeated until stable (`security/neutralize.ts`): nested payloads such as `</sou<source>rce>` cannot rebuild a closing tag. Results cannot grant tools or rights. |
+| Durable runs | A response is a run persisted in the database; HTTP connections only observe it (SSE). Graph checkpoints, pending writes, progress and approvals are encrypted with the organization DEK, under FORCE RLS. A lease (30 s, renewed) lets another instance resume after a crash; approvals expire after 24 h (refused). Only the run's owner can see or decide an approval. |
+| Per-response limits | Steps (`AGENT_MAX_STEPS`), at most 8 tool calls per step, token budget across steps (`AGENT_MAX_TOKENS`; tools are withdrawn once exceeded and the model must conclude), active duration (`AGENT_MAX_SECONDS`; the run stops, the partial answer is kept with a notice, `agent.run_limit` audited). |
+| Tool quotas | Monthly per-organization caps for code runs, web searches/page reads and MCP calls (`tool_limits`), counted in `tool_usage` (FORCE RLS, per member and month). A call over the cap is refused, returned to the model as a result, and audited (`quota.tool_exceeded`). Counted even when the tool fails. Soft cap under concurrency (a few calls may exceed). |
+| Web search | Self-hosted SearXNG, reached only through the egress proxy and only towards listed engines. Not offered in confidential conversations; opt-in per organization. `read_webpage` only opens URLs returned by a search of the same response or typed by the user (prevents exfiltration through crafted URLs); safe fetch (SSRF rules, antivirus, isolated extraction). |
+| Code interpreter | Dedicated container without network (`network_mode: none`), reached by a Unix socket restricted to the API's group. Each run: dedicated UID per slot, fresh private directory, rlimits (CPU, 1.5 GB, 64 processes, files), empty environment, `umask 077`, `/tmp` and `/dev/shm` closed, read-only system, 4 capabilities, `no-new-privileges`, `init`; every process of the slot UID killed at the end. Produced files: allow-listed types, size caps, no symlinks, antivirus, encrypted at rest; only PNG/JPEG displayed, everything else downloaded with a `sandbox` CSP. **gVisor (`runsc`) is required in production**: the server refuses to start without it (`SANDBOX_REQUIRE_GVISOR=true`). The 15-check attack battery (network, DNS, identity, secrets, API socket, writes outside the directory, `/work` listing, memory and fork bombs, infinite loop, detached process, leaks between runs, symlinks) runs in CI; the image is scanned by Trivy. |
+| Artifacts | HTML, SVG and Mermaid rendered in an iframe `sandbox="allow-scripts"` without `allow-same-origin` (opaque origin: no cookies, storage, API or parent access), served with its own CSP (`connect-src 'none'`). Preview mode adds `script-src 'none'`; scripts run only on explicit user action, never inherited across artifacts (panel recreated per opening). Mermaid bundled into the frame (no network). The parent accepts only messages from its own frame; a rendered SVG is only downloaded, never displayed by the app. |
+| MCP | Disabled by default (`MCP_ENABLED`); in production refused without the egress proxy, and each server domain must also be opened in `mcp-domains.txt`. Only admins add servers (HTTPS, public address; without proxy, every resolved address is checked). The admin reviews each tool (description, parameter descriptions) and approves the **fingerprint of what was reviewed** (SHA-256 of name, title, description and schema); a change between review and approval is refused (409, audited). The fingerprint is re-checked at every response: a changed tool is blocked (`mcp.tool_changed`). Read/write is decided by the admin; writes need user approval; tool names carry a server-id fragment (stable, no cross-server substitution after a pause); colliding names are all dropped; non-object schemas refused; results truncated then wrapped. URL, token and approved tools encrypted at rest (FORCE RLS); the token is never returned to the UI or audit. Never offered in confidential conversations. |
+| Observability | OpenTelemetry GenAI spans exported to a self-hosted Langfuse on the internal network. Personal data masked; no content at all for confidential conversations (`TRACE_CONTENT=masked|none`); traces deleted after 30 days by the API (Langfuse retention is an enterprise feature). Reasoning is streamed but never persisted. |
+| Agent quality | Retrieval evaluation in CI; agent evaluation harness running the production loop on a fictitious corpus (RAG, write tools, prompt-injection and exfiltration cases, web); technical errors excluded from rates; regression detection against a baseline. |
+| UI verification | Browser tests (Playwright, desktop and mobile) on key journeys: settings by role, sending from the welcome screen, streamed answer, artifact auto-open in preview mode inside the sandboxed frame, download. |
+
 ## 12. Known gaps
 
 - `SNOWFALL_MASTER_KEY` still protects session secrets and the login transaction
@@ -164,6 +189,21 @@ IdP-side revocation, logout).
   subprocessors.
 - Monitoring, alerting, incident response and periodic restore tests require
   owners and evidence.
+- Prompt injection: defences are structural (untrusted tags, no tool granted by
+  content, approvals, URL allow-list for page reads, MCP fingerprints); there is
+  **no detection layer** yet, and the evaluation set has only three injection cases.
+- MCP uses one token per server for the whole organization, not per-user OAuth
+  (decided limit for now): actions on the remote service are not attributed to
+  the individual user there.
+- gVisor detection relies on its fixed simulated kernel version; it must be
+  verified on the production host (`SANDBOX_RUNTIME=runsc scripts/sandbox-attack.sh`
+  must report `Isolation : gvisor`). If the check fails, the sandbox refuses to
+  start (fail-closed). CI runs the attack battery with `runc`.
+- Tool quotas are soft under concurrency (checked, then counted).
+- Browser tests use a mocked API: end-to-end tests against a real Keycloak and
+  API are manual.
+- No external penetration test yet; the DPIA (`AIPD.md`) is a draft to be
+  completed and signed by the data controller.
 
 ## 13. Change control
 

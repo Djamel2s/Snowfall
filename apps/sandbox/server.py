@@ -56,6 +56,21 @@ MEDIA_TYPES = {
     ".pdf": "application/pdf",
 }
 
+# gVisor (runtime « runsc ») intercepte les appels système : le code exécuté ne
+# parle jamais directement au noyau de l'hôte. Son noyau simulé se reconnaît à
+# une version fixe. En production, le serveur refuse de démarrer sans lui.
+GVISOR_KERNEL = "#1 SMP Sun Jan 10 15:06:54 PST 2016"
+REQUIRE_GVISOR = os.environ.get("SANDBOX_REQUIRE_GVISOR", "false").lower() == "true"
+
+
+def isolation():
+    try:
+        with open("/proc/version", encoding="ascii", errors="replace") as handle:
+            return "gvisor" if GVISOR_KERNEL in handle.read() else "native"
+    except OSError:
+        return "native"
+
+
 # Emplacements libres (un utilisateur chacun) ; tous pris : refus immédiat.
 FREE = list(RUNNER_UIDS)
 FREE_LOCK = threading.Lock()
@@ -260,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self.reply(200, {"status": "ok"})
+            return self.reply(200, {"status": "ok", "isolation": ISOLATION})
         return self.reply(404, {"error": "not_found"})
 
     def do_POST(self):
@@ -297,7 +312,13 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
+ISOLATION = isolation()
+
+
 def main():
+    if REQUIRE_GVISOR and ISOLATION != "gvisor":
+        print("Refus de démarrer : gVisor exigé (SANDBOX_REQUIRE_GVISOR=true) mais absent. Lancer le conteneur avec le runtime runsc.", flush=True)
+        raise SystemExit(1)
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
     if os.path.exists(SOCKET_PATH):
         os.unlink(SOCKET_PATH)
@@ -305,7 +326,7 @@ def main():
     # Socket réservé au groupe de l'API : le code exécuté (autre utilisateur) ne peut pas s'y connecter.
     os.chown(SOCKET_PATH, 0, grp.getgrnam(SOCKET_GROUP).gr_gid)
     os.chmod(SOCKET_PATH, 0o660)
-    print(f"Bac à sable prêt sur {SOCKET_PATH}", flush=True)
+    print(f"Bac à sable prêt sur {SOCKET_PATH} (isolation : {ISOLATION})", flush=True)
     server.serve_forever()
 
 

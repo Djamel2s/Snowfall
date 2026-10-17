@@ -160,8 +160,10 @@ export type Usage = {
     total: UsageTotals
     byProvider: Partial<Record<ProviderId | 'echo', UsageTotals>>
     mine: UsageTotals
+    /** Appels d'outils du mois, pour l'organisation. */
+    tools?: Partial<Record<ToolMeter, number>>
   }
-  limits: { monthly: number | null; providers: Partial<Record<ProviderId, number>> }
+  limits: { monthly: number | null; providers: Partial<Record<ProviderId, number>>; tools?: Partial<Record<ToolMeter, number>> }
 }
 
 export type EmbeddingProvider = 'mistral' | 'openai' | 'google' | 'local'
@@ -176,7 +178,17 @@ export type OrganizationSettings = {
   linkDomains: string[]
   /** Outils que les agents de l'organisation peuvent utiliser. */
   tools: ToolId[]
+  /** Plafonds mensuels d'appels d'outils ; absent = illimité. */
+  toolLimits: Partial<Record<ToolMeter, number>>
 }
+
+/** Catégories d'outils comptées (code, web, MCP) et l'outil qui les active. */
+export const toolMeters = [
+  { id: 'code', tool: 'code_interpreter' },
+  { id: 'web', tool: 'web_search' },
+  { id: 'mcp', tool: 'mcp' },
+] as const satisfies readonly { id: string; tool: ToolId }[]
+export type ToolMeter = (typeof toolMeters)[number]['id']
 
 export type Organization = {
   organization: { id: string; name: string; sso?: { alias: string | null; defaultRole: 'member' | 'reader' } }

@@ -70,15 +70,23 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
         linksEnabled: false,
         linkDomains: ["docs.example.com"],
         tools: ["search_knowledge"],
+        toolLimits: { code: 50, web: 200 },
       });
       const saved = await settings.get(tenant(memberA));
       assert.deepEqual(saved.tools, ["search_knowledge"]);
+      assert.deepEqual(saved.toolLimits, { code: 50, web: 200 });
+      // Appels d'outils : comptés pour l'organisation, invisibles des autres.
+      await settings.recordTool(tenant(memberA), "code");
+      await settings.recordTool(tenant(adminA), "code");
+      await settings.recordTool(tenant(memberA), "web");
+      assert.deepEqual(await settings.toolUsage(tenant(adminA)), { code: 2, web: 1 });
       assert.deepEqual(saved.allowedProviders, ["mistral", "anthropic"]);
       assert.deepEqual(saved.providerTokenLimits, { anthropic: 2_000 });
       assert.equal(saved.embeddingProvider, "mistral");
       assert.equal(saved.linksEnabled, false);
       assert.deepEqual(saved.linkDomains, ["docs.example.com"]);
       assert.equal((await settings.get(tenant(memberB, orgB))).monthlyTokenLimit, null);
+      assert.deepEqual(await settings.toolUsage(tenant(memberB, orgB)), {});
     });
 
     it("la base refuse un fournisseur inconnu", async () => {

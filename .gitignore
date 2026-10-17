@@ -3,6 +3,9 @@ node_modules/
 dist/
 build/
 coverage/
+# Tests d'écran (Playwright) : résultats et rapports locaux.
+test-results/
+playwright-report/
 /backups/
 
 # Secrets et certificats de déploiement : jamais versionnés.

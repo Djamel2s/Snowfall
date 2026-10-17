@@ -379,6 +379,8 @@ export const organizationSettings = pgTable.withRLS(
       .array()
       .notNull()
       .default(sql`ARRAY['search_knowledge', 'save_to_knowledge']::text[]`),
+    // Plafonds mensuels d'appels d'outils par catégorie (code, web, mcp) ; absent = illimité.
+    toolLimits: jsonb("tool_limits").notNull().default({}),
     updatedBy: uuid("updated_by"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -403,7 +405,34 @@ export const organizationSettings = pgTable.withRLS(
     ),
     check("organization_settings_link_domains_check", sql`cardinality(${table.linkDomains}) <= 200`),
     check("organization_settings_tools_check", sql`cardinality(${table.enabledTools}) <= 50`),
+    check("organization_settings_tool_limits_check", sql`jsonb_typeof(${table.toolLimits}) = 'object'`),
     tenantPolicy("organization_settings_tenant", table.organizationId),
+  ],
+);
+
+// Appels d'outils agrégés par mois, catégorie et membre (quotas des outils :
+// l'exécution de code, la recherche web et MCP ont un coût hors des tokens).
+export const toolUsage = pgTable.withRLS(
+  "tool_usage",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Pas de clé étrangère, comme token_usage : un départ ne remet pas le compteur à zéro.
+    userId: uuid("user_id").notNull(),
+    meter: text("meter").notNull(),
+    period: date("period").notNull(),
+    calls: integer("calls").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.period, table.meter, table.userId] }),
+    check("tool_usage_meter_check", sql`${table.meter} IN ('code', 'web', 'mcp')`),
+    check("tool_usage_period_check", sql`${table.period} = date_trunc('month', ${table.period})::date`),
+    check("tool_usage_calls_check", sql`${table.calls} >= 0`),
+    tenantPolicy("tool_usage_tenant", table.organizationId),
   ],
 );
 

@@ -7,7 +7,7 @@ injectés par le gestionnaire (production).
 ## 1. Mise à jour d'une installation existante
 
 ```bash
-npm run db:migrate        # nouvelles tables, fonctions, droits du rôle applicatif
+npm run db:migrate        # nouvelles tables, fonctions, droits du rôle applicatif (dont tool_usage, mcp_servers…)
 npm run keycloak:sync     # réglages du realm déjà importé (SMTP, organisations,
                           # déconnexion back-channel, scope "organization")
 ```
@@ -219,3 +219,60 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   --questions <fichier.json> --embeddings http://<hôte>:<port>/v1 --rerank
   http://<hôte>:<port>` (questions : `[{"question": "...", "expected": "extrait
   attendu"}]`).
+
+## 15. Agents : limites et quotas
+
+- Par réponse : `AGENT_MAX_STEPS` (6), `AGENT_MAX_TOKENS` (400 000, toutes étapes :
+  au-delà, plus d'outils), `AGENT_MAX_SECONDS` (600 s d'exécution active, pauses de
+  validation exclues : au-delà, réponse arrêtée et partie écrite gardée).
+- Par organisation et par mois : Réglages → Organisation → Modèles et quotas
+  (tokens, et appels d'outils : code, web, MCP). Refus audités :
+  `quota.denied`, `quota.tool_exceeded`, `agent.run_limit`.
+
+## 16. Interpréteur de code (bac à sable, profil « code »)
+
+1. Installer gVisor sur l'hôte (paquet `runsc`), puis `sudo runsc install` et
+   redémarrer Docker. **gVisor est exigé** : sans lui, le bac à sable refuse de
+   démarrer (`SANDBOX_REQUIRE_GVISOR=true`, valeur par défaut de production).
+2. Vérifier sur l'hôte, avant d'ouvrir l'outil :
+   `SANDBOX_RUNTIME=runsc scripts/sandbox-attack.sh` → doit afficher
+   `Isolation : gvisor` et « tout est bloqué ».
+3. `docker compose -f compose.yaml -f compose.prod.yaml --profile code up -d sandbox`
+   puis, côté API : `SANDBOX_SOCKET=/run/sandbox/sandbox.sock`.
+4. Activer « Interpréteur de code » dans Réglages → Organisation → Outils et intégrations.
+
+## 17. Recherche web (profil « web-search »)
+
+- `docker compose ... --profile web-search up -d searxng`, puis côté API
+  `WEB_SEARCH_URL=http://searxng:8080`.
+- Moteurs autorisés : `infra/egress/search-domains.txt` (SearXNG ne sort que vers eux).
+- Activer « Recherche web » par organisation. Jamais proposée aux conversations
+  avec une base confidentielle.
+
+## 18. Serveurs MCP
+
+- `MCP_ENABLED=true`. En production, l'API refuse de démarrer sans le proxy de
+  sortie (`HTTPS_PROXY` et `NODE_USE_ENV_PROXY=1`).
+- Ouvrir le domaine de chaque serveur dans `infra/egress/mcp-domains.txt`
+  (second verrou, en plus de l'approbation par l'administrateur), puis
+  redémarrer le proxy.
+- Dans Snowfall : Réglages → Organisation → Outils et intégrations → Serveurs MCP :
+  ajouter, examiner (description et paramètres), approuver outil par outil.
+- Un outil modifié par le serveur est bloqué (`mcp.tool_changed`) jusqu'à une
+  nouvelle approbation.
+
+## 19. Traces des agents (Langfuse auto-hébergé)
+
+- `docker compose -f compose.yaml -f compose.prod.yaml -f compose.observability.yaml up -d`
+  (amorçage : `infra/langfuse/bootstrap.sh`).
+- API : `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY_FILE`,
+  `TRACE_CONTENT=masked` (ou `none`), `TRACE_RETENTION_DAYS=30`.
+- Les traces plus anciennes sont supprimées par l'API (la rétention de Langfuse
+  est réservée à son édition payante).
+
+## 20. Évaluer les agents
+
+- `npm run agent:eval -w @snowfall/api -- --model <fournisseur:modèle> --repeat 3 --out ref.json`
+  pour une référence, puis `--baseline ref.json` après un changement de prompt,
+  d'outil ou de modèle (code de sortie 1 en cas de régression). Coût : 2 à 4
+  appels par cas.
