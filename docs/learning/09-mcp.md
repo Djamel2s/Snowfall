@@ -53,6 +53,32 @@ est une surface d'attaque**.
 dans un état précis**. L'empreinte transforme « je fais confiance à ce service »
 en « je fais confiance à *ce texte-là* ».
 
+### Ce que la relecture adverse a trouvé (et qu'on a corrigé)
+
+Une relecture par plusieurs agents, chaque point contre-vérifié par un
+sceptique, a trouvé des trous que les tests ne voyaient pas :
+
+| Trou | Correction |
+|---|---|
+| `</mcp_<mcp_result>result>` : en retirant la balise intérieure, on **reconstituait** une vraie balise fermante | nettoyage répété jusqu'à ce que le texte ne change plus (aussi pour le web, la compaction, le résumé) |
+| L'approbation relisait les outils sur le serveur au moment du clic : un serveur pouvait montrer un outil sain à l'examen, puis un outil piégé à l'approbation | l'admin approuve **l'empreinte de ce qu'il a lu** ; si le serveur l'a changé entre-temps, rien n'est approuvé (409 + audit) |
+| Le **titre** de l'outil, lu par le modèle, n'était pas dans l'empreinte | empreinte = nom + titre + description + schéma |
+| Deux serveurs « CRM » (prod et recette) donnaient le même nom d'outil ; le gagnant dépendait du réseau, et une écriture validée pouvait partir sur l'autre serveur à la reprise | nom = `mcp_<serveur>_<id>_<outil>` : unique et stable |
+| Sans proxy de sortie, rien n'empêchait de viser le réseau interne par un nom DNS | production : MCP refusé sans proxy ; sinon chaque nom est résolu et doit viser une adresse publique |
+
+**Retiens :** une empreinte ne protège que ce qu'elle couvre, et seulement si elle
+couvre **ce que l'humain a réellement vu**. D'où l'affichage, à l'examen, des
+paramètres et de leurs descriptions, que le modèle lit aussi.
+
+Une **seconde** passe, qui contre-vérifiait les correctifs eux-mêmes, a encore
+trouvé le même défaut de balise imbriquée dans **trois autres blocs de données**
+(passages de la base, documents joints, reformulation de la question). La règle
+est désormais commune (`security/neutralize.ts`) et testée pour chaque bloc. Elle
+a aussi trouvé : deux outils d'un même serveur au même nom après simplification
+(aucun n'est proposé), des appels parallèles sur une session expirée, et un
+résultat géant qui bloquait le serveur (tronqué avant nettoyage).
+**Retiens :** un correctif se vérifie, lui aussi.
+
 ## 4. Pourquoi deux verrous (admin + proxy) ?
 
 L'admin d'une organisation connaît ses besoins ; l'exploitant de la plateforme

@@ -1,6 +1,7 @@
 import type { ChatRunner, ChatTurn } from "../graph/chat-graph.js";
 import type { ModelSelection } from "../llm/types.js";
 import type { UsageTotals } from "../workspace/settings.js";
+import { stripTags } from "../security/neutralize.js";
 
 /**
  * Reformulation de la question pour la recherche : « Et pour les stagiaires ? »
@@ -48,7 +49,7 @@ export function createQueryRewriter(runnerFor: (selection?: ModelSelection) => C
   return async ({ selection, history, message, signal }) => {
     const turns = history
       .slice(-TURNS)
-      .map((turn) => `${turn.role === "user" ? "Utilisateur" : "Assistant"} : ${clip(turn.content.replace(/<\/?conversation>/gi, ""), TURN_CHARS)}`);
+      .map((turn) => `${turn.role === "user" ? "Utilisateur" : "Assistant"} : ${clip(stripTags(turn.content, /<\/?\s*conversation\s*>/gi), TURN_CHARS)}`);
     const timeout = AbortSignal.timeout(TIMEOUT_MS);
     const result = await runnerFor(selection)(
       {

@@ -5,6 +5,7 @@ import { withTenant, type TenantContext } from "../db/tenant.js";
 import type { ChatRunner, TokenUsage } from "../graph/chat-graph.js";
 import type { ModelSelection } from "../llm/types.js";
 import type { StoredMessage } from "./store.js";
+import { stripTags } from "../security/neutralize.js";
 
 // Compaction : au lieu de couper l'historique à N messages (le modèle oublie
 // tout le début), les échanges anciens sont RÉSUMÉS. Le modèle reçoit :
@@ -94,7 +95,7 @@ export type Summarizer = (input: {
 }) => Promise<{ summary: string; model: string; usage?: TokenUsage | undefined } | null>;
 
 /** Balises du transcript neutralisées : un message ne peut pas en sortir. */
-const neutralize = (text: string) => text.replace(/<\/?\s*(transcript|previous_summary)\s*>/gi, "");
+const neutralize = (text: string) => stripTags(text, /<\/?\s*(transcript|previous_summary)\s*>/gi);
 
 /**
  * Résumé par le modèle de la conversation : les données ne vont nulle part où

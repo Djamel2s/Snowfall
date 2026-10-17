@@ -6,6 +6,9 @@ export type ArtifactKind = 'html' | 'svg' | 'mermaid'
 
 export type Artifact = { kind: ArtifactKind; source: string; title: string }
 
+/** Artifact ouvert dans le panneau : numéro unique par ouverture (panneau et cadre recréés). */
+export type OpenedArtifact = Artifact & { opening: number }
+
 /** Bloc de code → artifact, selon son langage (```html, ```svg, ```mermaid). */
 export function artifactKind(lang: string, text: string): ArtifactKind | null {
   if (lang === 'html' || lang === 'htm') return 'html'

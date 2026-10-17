@@ -1136,3 +1136,17 @@
 
 .mcp-add input[type='url'],
 .mcp-add input[type='password'] { flex: 1 1 100%; }
+.mcp-tool-params {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 14px;
+  color: #8796ad;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mcp-tool-params code { color: #c4d4ea; font-size: 10px; }

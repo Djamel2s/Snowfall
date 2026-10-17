@@ -12,6 +12,8 @@ export type ProviderSettings = {
   timeoutMs: number;
   /** Serveur local : le modèle sait appeler des outils (LOCAL_LLM_TOOLS). */
   tools?: boolean;
+  /** Gemini 3 et suivants : niveau de réflexion imposé (GOOGLE_THINKING_LEVEL). Absent : celui du modèle. */
+  thinkingLevel?: "minimal" | "low" | "medium" | "high" | undefined;
 };
 
 export type ModelSelection = { provider: ProviderId; model: string };

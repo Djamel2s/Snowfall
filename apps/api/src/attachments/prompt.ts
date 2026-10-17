@@ -1,6 +1,7 @@
 import type { ChatTurn, ModelImage } from "../graph/chat-graph.js";
 import type { StoredMessage } from "../conversations/store.js";
 import type { ModelAttachment } from "./store.js";
+import { stripTags } from "../security/neutralize.js";
 
 /** Texte de documents transmis au modèle pour une requête (tous tours confondus). */
 export const DOCUMENT_CHAR_BUDGET = 150_000;
@@ -35,7 +36,7 @@ function renderTurn(
       : attachment.text;
     budget.chars -= Math.min(attachment.text.length, allowed);
     // Le texte reste une donnée : les balises éventuelles du document sont neutralisées.
-    const safe = text.replace(/<\/?document\b[^>]*>/gi, "");
+    const safe = stripTags(text, /<\/?\s*document\b[^>]*>/gi);
     documents.push(`<document name="${escapeAttribute(attachment.name)}">\n${safe || "[document sans texte lisible]"}\n</document>`);
   }
 

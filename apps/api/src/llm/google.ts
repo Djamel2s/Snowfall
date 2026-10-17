@@ -38,6 +38,9 @@ const RETRYABLE = new Set([429, 500, 503]);
 // Réflexion (résumée) demandée pour l'afficher, sauf aux anciennes générations qui ne raisonnent pas.
 // Liste d'exclusion : les alias (gemini-flash-latest…) et les nouveaux modèles sont couverts.
 const NO_THINKING = /^gemini-(1\.|2\.0)/;
+// Niveau de réflexion (thinkingLevel) : Gemini 3 et suivants seulement (2.5 utilise un budget).
+// Utile pour les modèles « lite », qui ne réfléchissent pas par défaut.
+const THINKING_LEVEL = /^gemini-([3-9]|\d{2,})/;
 
 async function request(path: string, init: RequestInit, apiKey: string, attempts = 3): Promise<Response> {
   for (let attempt = 1; ; attempt++) {
@@ -135,26 +138,38 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
 
     async *stream(chat, signal) {
       const timeout = AbortSignal.timeout(settings.timeoutMs);
-      const response = await request(
-        // L'identifiant vient de la liste blanche ; encodé par sécurité.
-        `models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
-        {
-          method: "POST",
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-          body: JSON.stringify({
-            // Début de requête stable (prompt système, puis historique) : le cache implicite de Gemini s'applique.
-            systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary) }] },
-            contents: toGeminiContents(conversationTurns(chat)),
-            ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
-            generationConfig: {
-              maxOutputTokens: settings.maxOutputTokens,
-              temperature: 0.3,
-              ...(NO_THINKING.test(model) ? {} : { thinkingConfig: { includeThoughts: true } }),
-            },
-          }),
-        },
-        settings.apiKey,
-      );
+      const level = settings.thinkingLevel && THINKING_LEVEL.test(model) ? settings.thinkingLevel : undefined;
+      const send = (thinkingLevel: typeof level) =>
+        request(
+          // L'identifiant vient de la liste blanche ; encodé par sécurité.
+          `models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+          {
+            method: "POST",
+            signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+            body: JSON.stringify({
+              // Début de requête stable (prompt système, puis historique) : le cache implicite de Gemini s'applique.
+              systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary) }] },
+              contents: toGeminiContents(conversationTurns(chat)),
+              ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
+              generationConfig: {
+                maxOutputTokens: settings.maxOutputTokens,
+                temperature: 0.3,
+                ...(NO_THINKING.test(model)
+                  ? {}
+                  : {
+                      thinkingConfig: { includeThoughts: true, ...(thinkingLevel ? { thinkingLevel } : {}) },
+                    }),
+              },
+            }),
+          },
+          settings.apiKey,
+        );
+      // Un niveau imposé peut être refusé par certains modèles (tous n'acceptent pas
+      // « minimal » ou « medium ») : la réponse se fait alors avec le niveau du modèle.
+      const response = await send(level).catch((error: unknown) => {
+        if (level && error instanceof Error && error.message === "GOOGLE_400") return send(undefined);
+        throw error;
+      });
       if (!response.body) throw new Error("GOOGLE_EMPTY_STREAM");
 
       let usage: GeminiChunk["usageMetadata"];

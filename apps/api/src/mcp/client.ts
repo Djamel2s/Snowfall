@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { validateUrl } from "../knowledge/safe-fetch.js";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { isPublicAddress, validateUrl } from "../knowledge/safe-fetch.js";
 
 // Client MCP minimal (Model Context Protocol), transport « Streamable HTTP » :
 // JSON-RPC 2.0 en POST, réponse en JSON ou en flux SSE. Seuls les outils sont
@@ -27,21 +29,43 @@ export type McpToolDefinition = {
   readOnlyHint: boolean;
 };
 
-export type McpServerSettings = { url: string; token?: string | undefined };
+export type McpServerSettings = {
+  url: string;
+  token?: string | undefined;
+  /**
+   * Vérifie, avant chaque requête, que le nom résout vers des adresses publiques.
+   * En production la sortie passe par le proxy (qui résout et refuse lui-même
+   * les adresses internes, DNS rebinding compris) ; sans proxy, ce contrôle
+   * évite au moins de viser directement le réseau interne.
+   */
+  checkAddress?: ((hostname: string) => Promise<void>) | undefined;
+};
+
+/** Contrôle DNS par défaut quand aucun proxy de sortie n'est configuré. */
+export async function publicAddressOnly(hostname: string) {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  const addresses = isIP(host)
+    ? [{ address: host }]
+    : await lookup(host, { all: true, verbatim: true }).catch(() => {
+        throw new McpError("invalid_url");
+      });
+  if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address))) throw new McpError("invalid_url");
+}
 
 /**
- * Empreinte d'un outil : nom, description et schéma, sérialisés de façon stable.
+ * Empreinte d'un outil : nom, titre, description et schéma (tout ce que lit le
+ * modèle), sérialisés de façon stable.
  * Si un serveur change ce qu'un outil fait (ou dit faire) après approbation,
  * l'empreinte change et l'outil est bloqué jusqu'à une nouvelle approbation.
  */
-export function toolFingerprint(tool: Pick<McpToolDefinition, "name" | "description" | "inputSchema">) {
+export function toolFingerprint(tool: Pick<McpToolDefinition, "name" | "title" | "description" | "inputSchema">) {
   const stable = (value: unknown): unknown =>
     Array.isArray(value)
       ? value.map(stable)
       : value && typeof value === "object"
         ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable((value as Record<string, unknown>)[key])]))
         : value;
-  return createHash("sha256").update(JSON.stringify(stable({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))).digest("hex");
+  return createHash("sha256").update(JSON.stringify(stable({ name: tool.name, title: tool.title ?? null, description: tool.description, inputSchema: tool.inputSchema }))).digest("hex");
 }
 
 /**
@@ -109,32 +133,55 @@ export class McpClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
+  /** Envoie une requête ; renvoie aussi la session utilisée (pour savoir laquelle a expiré). */
   private async post(body: Record<string, unknown>, signal?: AbortSignal) {
     const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const session = this.session;
+    if (this.settings.checkAddress) {
+      // Contrôle DNS soumis au même délai et à la même annulation que la requête.
+      const stop = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      await Promise.race([
+        this.settings.checkAddress(new URL(this.settings.url).hostname),
+        new Promise<never>((_resolve, reject) => stop.addEventListener("abort", () => reject(new McpError("timeout")), { once: true })),
+      ]);
+    }
     try {
-      return await this.fetcher(this.settings.url, {
+      const response = await this.fetcher(this.settings.url, {
         method: "POST",
         redirect: "error",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
           "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
-          ...(this.session ? { "Mcp-Session-Id": this.session } : {}),
+          ...(session ? { "Mcp-Session-Id": session } : {}),
           ...(this.settings.token ? { Authorization: `Bearer ${this.settings.token}` } : {}),
         },
         body: JSON.stringify(body),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
+      return { response, session };
     } catch (error) {
       if (timeout.aborted) throw new McpError("timeout");
       throw error;
     }
   }
 
-  private async request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  private async request(method: string, params: Record<string, unknown>, signal?: AbortSignal, retried = false): Promise<unknown> {
     if (method !== "initialize") await this.initialize(signal);
     const id = this.nextId++;
-    const response = await this.post({ jsonrpc: "2.0", id, method, params }, signal);
+    const { response, session: sent } = await this.post({ jsonrpc: "2.0", id, method, params }, signal);
+    // Session expirée (serveur redémarré…) : le protocole demande d'en ouvrir une nouvelle.
+    // Avec des appels parallèles, seul le premier à voir l'expiration la réinitialise ;
+    // les autres attendent la nouvelle poignée de main et rejouent leur requête.
+    // (Un 404 sur session signifie que le serveur n'a PAS traité la requête : rejouer ne double rien.)
+    if (response.status === 404 && sent && method !== "initialize" && !retried) {
+      await response.body?.cancel();
+      if (this.session === sent) {
+        this.session = null;
+        this.ready = null;
+      }
+      return this.request(method, params, signal, true);
+    }
     if (!response.ok) {
       await response.body?.cancel();
       throw new McpError("http_error");
@@ -156,7 +203,7 @@ export class McpClient {
         signal,
       );
       const notified = await this.post({ jsonrpc: "2.0", method: "notifications/initialized" }, signal);
-      await notified.body?.cancel();
+      await notified.response.body?.cancel();
     })().catch((error: unknown) => {
       this.ready = null;
       throw error;
@@ -174,9 +221,10 @@ export class McpClient {
         nextCursor?: unknown;
       };
       for (const tool of result.tools ?? []) {
-        if (typeof tool.name !== "string" || !tool.inputSchema || typeof tool.inputSchema !== "object") continue;
+        // Nom trop long : on l'ignore plutôt que de le tronquer (le serveur ne reconnaîtrait pas le nom coupé).
+        if (typeof tool.name !== "string" || tool.name.length > 128 || !tool.inputSchema || typeof tool.inputSchema !== "object") continue;
         tools.push({
-          name: tool.name.slice(0, 128),
+          name: tool.name,
           ...(typeof tool.title === "string" ? { title: tool.title.slice(0, 200) } : {}),
           description: typeof tool.description === "string" ? tool.description.slice(0, 2_000) : "",
           inputSchema: tool.inputSchema as Record<string, unknown>,

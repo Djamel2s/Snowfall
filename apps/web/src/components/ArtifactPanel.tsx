@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Code2, Download, Eye, Play, X } from 'lucide-react'
-import { artifactFileName, type Artifact } from '../lib/artifacts'
+import { artifactFileName, type OpenedArtifact } from '../lib/artifacts'
 import { useI18n } from '../lib/i18n'
 import { repairMermaid } from '../lib/mermaid-repair'
 
-type Props = { artifact: Artifact; onClose: () => void }
+type Props = { artifact: OpenedArtifact; onClose: () => void }
 
 /**
  * Panneau d'artifact : le contenu produit par le modèle s'affiche dans une
@@ -17,7 +17,8 @@ export default function ArtifactPanel({ artifact, onClose }: Props) {
   const [mode, setMode] = useState<'preview' | 'run' | 'code'>('preview')
   const frameRef = useRef<HTMLIFrameElement>(null)
   // Nouveau cadre à chaque contenu ou mode : rien ne persiste d'un rendu à l'autre.
-  const frameKey = `${artifact.kind}:${artifact.source.length}:${artifact.source.slice(0, 64)}:${mode}`
+  // Panneau recréé à chaque ouverture (clé dans App) ; cadre neuf à chaque changement de mode.
+  const frameKey = `${artifact.opening}:${mode}`
   // Diagramme : image SVG rendue par le cadre (téléchargée telle quelle, jamais affichée ici).
   const [rendered, setRendered] = useState<{ source: string; svg: string } | null>(null)
   const svg = rendered?.source === artifact.source ? rendered.svg : null

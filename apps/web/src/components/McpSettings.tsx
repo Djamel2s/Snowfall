@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Check, ListChecks, Plus, Trash2 } from 'lucide-react'
-import { api, type McpDiscoveredTool, type McpServer } from '../lib/api'
+import { api, ApiError, type McpDiscoveredTool, type McpServer } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
 type Choice = { selected: boolean; access: 'read' | 'write' }
@@ -53,32 +53,42 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
     })
   }
 
+  /** Outils publiés par le serveur, relus ; les choix déjà faits sont gardés. */
+  async function load(server: McpServer, previous: Record<string, Choice> = {}) {
+    const discovered = await api.discoverMcpTools(server.id)
+    setTools(discovered)
+    // Par défaut : rien de coché ; écriture, sauf outil déjà approuvé en lecture.
+    setChoices(
+      Object.fromEntries(
+        discovered.map((tool) => {
+          const approved = server.tools.find((item) => item.name === tool.name)
+          return [tool.name, previous[tool.name] ?? { selected: Boolean(approved), access: approved?.access ?? 'write' }]
+        }),
+      ),
+    )
+    setOpen(server.id)
+  }
+
   function examine(server: McpServer) {
     if (open === server.id) {
       setOpen(null)
       return
     }
-    void act(async () => {
-      const discovered = await api.discoverMcpTools(server.id)
-      setTools(discovered)
-      // Par défaut : rien de coché ; écriture, sauf outil déjà approuvé en lecture.
-      setChoices(
-        Object.fromEntries(
-          discovered.map((tool) => {
-            const approved = server.tools.find((item) => item.name === tool.name)
-            return [tool.name, { selected: Boolean(approved), access: approved?.access ?? 'write' }]
-          }),
-        ),
-      )
-      setOpen(server.id)
-    })
+    void act(() => load(server))
   }
 
   function approve(server: McpServer) {
     const selected = tools.filter((tool) => tool.supported && choices[tool.name]?.selected)
     void act(async () => {
-      replace(await api.approveMcpServer(server.id, selected.map((tool) => ({ name: tool.name, access: choices[tool.name]!.access }))))
-      setOpen(null)
+      try {
+        replace(await api.approveMcpServer(server.id, selected.map((tool) => ({ name: tool.name, access: choices[tool.name]!.access, fingerprint: tool.fingerprint }))))
+        setOpen(null)
+      } catch (cause) {
+        if (!(cause instanceof ApiError && cause.status === 409)) throw cause
+        // Le serveur a modifié un outil pendant l'examen : nouvelle version affichée, à relire.
+        await load(server, choices)
+        onError(t('mcp.changed'))
+      }
     })
   }
 
@@ -159,6 +169,17 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
                       </label>
                       {/* Description du serveur : texte brut, c'est elle que l'empreinte fige. */}
                       {tool.description && <p className="mcp-tool-description">{tool.description}</p>}
+                      {/* Paramètres : le modèle lit aussi leurs descriptions, l'admin doit les voir. */}
+                      {Object.entries(tool.inputSchema.properties ?? {}).length > 0 && (
+                        <ul className="mcp-tool-params">
+                          {Object.entries(tool.inputSchema.properties ?? {}).map(([name, property]) => (
+                            <li key={name}>
+                              <code>{name}</code>
+                              {typeof property?.description === 'string' && property.description ? ` — ${property.description}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       <select
                         aria-label={tool.name}
                         value={choice.access}

@@ -495,11 +495,12 @@ describe("Exécution durable : runs", () => {
           yield { type: "token", text: last.content.includes("VPN-12") ? "Ticket VPN-12 créé." : "Rien n'a été créé." };
           return;
         }
-        if (!request.tools?.some((tool) => tool.name === "mcp_jira_create_ticket")) {
+        const create = request.tools?.find((tool) => /^mcp_jira_[a-z0-9]{6}_create_ticket$/.test(tool.name));
+        if (!create) {
           yield { type: "token", text: "Je ne peux pas créer de ticket." };
           return;
         }
-        yield { type: "tool_call", call: { id: "t1", name: "mcp_jira_create_ticket", arguments: { title: "VPN en panne" } } };
+        yield { type: "tool_call", call: { id: "t1", name: create.name, arguments: { title: "VPN en panne" } } };
       },
     };
     const db = sharedDatabase();
@@ -509,7 +510,8 @@ describe("Exécution durable : runs", () => {
     // L'admin ajoute le serveur et approuve son outil en écriture.
     api.as(carol);
     const server = ((await (await api.post("/organization/mcp-servers", { name: "Jira", url: fake.url })).json()) as { server: { id: string } }).server;
-    assert.equal((await api.post(`/organization/mcp-servers/${server.id}/approve`, { tools: [{ name: "create_ticket", access: "write" }] })).status, 200);
+    const reviewed = ((await (await api.post(`/organization/mcp-servers/${server.id}/discover`, {})).json()) as { tools: { fingerprint: string }[] }).tools[0]!;
+    assert.equal((await api.post(`/organization/mcp-servers/${server.id}/approve`, { tools: [{ name: "create_ticket", access: "write", fingerprint: reviewed.fingerprint }] })).status, 200);
     // Alice confie le serveur à son agent (un identifiant inconnu est écarté).
     api.as(alice);
     const agent = ((await (

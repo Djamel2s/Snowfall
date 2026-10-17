@@ -15,6 +15,7 @@ import { ScannerUnavailableError, type MalwareScanner } from "../security/antivi
 import type { Reranker } from "./rerank.js";
 import { contextHeader, KeywordIndex, reciprocalRankFusion, vectorSearch, type SearchHit } from "./search.js";
 import { KnowledgeLimitError, type KnowledgeBase, type KnowledgeStore, type LoadedBase } from "./store.js";
+import { stripTags } from "../security/neutralize.js";
 
 /** Texte extrait par source (au-delà, tronqué). */
 export const MAX_SOURCE_CHARS = 2_000_000;
@@ -474,7 +475,7 @@ export function renderKnowledge(passages: Passage[]) {
       ...(passage.section ? [`section="${escapeAttribute(passage.section)}"`] : []),
       ...(passage.page ? [`page="${passage.page}"`] : []),
     ].join(" ");
-    return `<source ${attributes}>\n${passage.text.replace(/<\/?(knowledge|source)\b[^>]*>/gi, "")}\n</source>`;
+    return `<source ${attributes}>\n${stripTags(passage.text, /<\/?\s*(knowledge|source)\b[^>]*>/gi)}\n</source>`;
   });
   return `<knowledge>\n${blocks.join("\n\n")}\n</knowledge>`;
 }

@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { McpClient, McpError, validateMcpUrl } from "../mcp/client.js";
+import { McpClient, McpError, toolFingerprint, validateMcpUrl, type McpServerSettings } from "../mcp/client.js";
 import type { McpServerRecord, McpServerStore } from "../mcp/store.js";
-import { approvedSnapshot, exposedName, schemaValidator } from "../mcp/tools.js";
+import { approvedSnapshot, clashingNames, exposedName, schemaValidator, validToolName } from "../mcp/tools.js";
 import type { RouteKit } from "./kit.js";
 
 // Serveurs MCP de l'organisation. Seul un administrateur ajoute un serveur,
@@ -14,6 +14,8 @@ export type McpDependencies = {
   /** Tests seulement : faux serveur MCP local en HTTP. */
   allowLocal?: boolean;
   fetcher?: typeof fetch;
+  /** Contrôle des adresses résolues, quand aucun proxy de sortie n'est configuré. */
+  checkAddress?: McpServerSettings["checkAddress"];
 };
 
 const idParams = z.object({ id: z.uuid() });
@@ -25,7 +27,12 @@ const createSchema = z.object({
 }).strict();
 
 const approveSchema = z.object({
-  tools: z.array(z.object({ name: z.string().min(1).max(128), access: z.enum(["read", "write"]) }).strict()).min(1).max(100),
+  // Empreinte de la définition EXAMINÉE (renvoyée par /discover) : on approuve ce
+  // que l'admin a lu, pas ce que le serveur renverrait au moment du clic.
+  tools: z
+    .array(z.object({ name: z.string().min(1).max(128), access: z.enum(["read", "write"]), fingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).strict())
+    .min(1)
+    .max(100),
 }).strict();
 
 const statusSchema = z.object({ enabled: z.boolean() }).strict();
@@ -55,7 +62,7 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
   const connect = async (user: Parameters<McpServerStore["connection"]>[0], id: string) => {
     const server = await store.connection(user, id);
     if (!server) return null;
-    return { server, client: new McpClient({ url: server.url, token: server.token ?? undefined }, deps.fetcher) };
+    return { server, client: new McpClient({ url: server.url, token: server.token ?? undefined, checkAddress: deps.checkAddress }, deps.fetcher) };
   };
 
   // Tous les membres : les auteurs d'agents choisissent parmi les serveurs approuvés.
@@ -102,6 +109,7 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     if (!connection) return reply.code(404).send({ error: "Not found" });
     try {
       const tools = await connection.client.listTools();
+      const clashes = clashingNames(connection.server, tools.map((tool) => tool.name));
       return {
         tools: tools.map((tool) => ({
           name: tool.name,
@@ -110,7 +118,10 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
           // Indication du serveur, non fiable : l'administrateur décide.
           readOnlyHint: tool.readOnlyHint,
           // Schéma trop gros ou illisible, ou nom inutilisable : non proposable.
-          supported: schemaValidator(tool.inputSchema) !== null && /^[a-z][a-z0-9_]{0,63}$/.test(exposedName(connection.server.name, tool.name)),
+          // Le schéma est lu par le modèle (descriptions des paramètres comprises) : l'admin le voit aussi.
+          inputSchema: tool.inputSchema,
+          supported: schemaValidator(tool.inputSchema) !== null && validToolName(exposedName(connection.server, tool.name)) && !clashes.has(tool.name),
+          fingerprint: toolFingerprint(tool),
           approved: connection.server.tools.some((approved) => approved.name === tool.name),
         })),
       };
@@ -137,10 +148,26 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     } catch (error) {
       return reply.code(502).send({ error: "MCP server unavailable", reason: error instanceof McpError ? error.code : "network" });
     }
+    // Mêmes règles qu'à l'examen : nom exposable, aucun conflit de nom entre outils approuvés.
+    const names = body.data.tools.map((choice) => choice.name);
+    if (new Set(names).size !== names.length || clashingNames(connection.server, names).size || names.some((name) => !validToolName(exposedName(connection.server, name)))) {
+      return reply.code(400).send({ error: "Invalid request", reason: "tool_name" });
+    }
     const snapshots = [];
     for (const choice of body.data.tools) {
       const definition = live.find((tool) => tool.name === choice.name);
       if (!definition || !schemaValidator(definition.inputSchema)) return reply.code(400).send({ error: "Invalid request", reason: "unknown_tool" });
+      // Le serveur a changé l'outil depuis l'examen : rien n'est approuvé, l'admin doit relire.
+      if (toolFingerprint(definition) !== choice.fingerprint) {
+        await kit.record(request, user, {
+          eventType: "mcp.tool_changed",
+          outcome: "denied",
+          targetType: "mcp_server",
+          targetId: connection.server.id,
+          details: { tool: definition.name, stage: "approval" },
+        });
+        return reply.code(409).send({ error: "Conflict", reason: "tool_changed" });
+      }
       snapshots.push(approvedSnapshot(definition, choice.access));
     }
     const server = await store.approve(user, params.data.id, snapshots);

@@ -206,6 +206,10 @@ export type McpDiscoveredTool = {
   readOnlyHint: boolean
   supported: boolean
   approved: boolean
+  /** Empreinte de la définition affichée : l'approbation échoue si le serveur l'a changée depuis. */
+  fingerprint: string
+  /** Schéma des paramètres : leurs descriptions sont lues par le modèle. */
+  inputSchema: { properties?: Record<string, { description?: unknown; type?: unknown }> }
 }
 
 export type Member = { userId: string; email: string; role: Role; joinedAt: string; monthlyTokens: number }
@@ -569,7 +573,7 @@ export const api = {
     (await request<{ server: McpServer }>('/organization/mcp-servers', json('POST', input))).server,
   discoverMcpTools: async (id: string) =>
     (await request<{ tools: McpDiscoveredTool[] }>(`/organization/mcp-servers/${id}/discover`, { method: 'POST' })).tools,
-  approveMcpServer: async (id: string, tools: { name: string; access: 'read' | 'write' }[]) =>
+  approveMcpServer: async (id: string, tools: { name: string; access: 'read' | 'write'; fingerprint: string }[]) =>
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}/approve`, json('POST', { tools }))).server,
   setMcpServerEnabled: async (id: string, enabled: boolean) =>
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}`, json('PATCH', { enabled }))).server,

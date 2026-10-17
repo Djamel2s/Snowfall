@@ -92,6 +92,7 @@ import { createRouteKit } from "./routes/kit.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
 import { PostgresMcpServerStore } from "./mcp/store.js";
+import { publicAddressOnly } from "./mcp/client.js";
 import { mcpToolsFor } from "./mcp/tools.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
@@ -932,7 +933,7 @@ export function createAppServer(deps: AppDependencies) {
           unavailable: (server) => audit("mcp.server_unavailable", server, {}, "failure"),
           called: (server, tool, outcome) => audit("mcp.tool_call", server, { tool }, outcome === "failure" ? "failure" : undefined),
         },
-        { signal, ...(deps.mcp.fetcher ? { fetcher: deps.mcp.fetcher } : {}) },
+        { signal, checkAddress: deps.mcp.checkAddress, ...(deps.mcp.fetcher ? { fetcher: deps.mcp.fetcher } : {}) },
       );
     }
 
@@ -1774,9 +1775,11 @@ export function createAppServer(deps: AppDependencies) {
       if (!allowed || !permitted.includes(parsed.data.provider)) return null;
       // Outils : seulement parmi ceux de l'organisation (revérifié à chaque réponse).
       const tools = parsed.data.tools.filter((tool) => organizationTools.includes(tool));
-      // Serveurs MCP : seulement des serveurs approuvés de l'organisation.
+      // Serveurs MCP : seulement des serveurs approuvés de l'organisation. Un serveur
+      // suspendu reste rattaché (il revient à sa réactivation) ; à l'exécution, seuls
+      // les serveurs approuvés à cet instant sont proposés.
       const approved = tools.includes("mcp") && deps.mcp
-        ? new Set((await deps.mcp.store.list(user)).filter((server) => server.status === "approved").map((server) => server.id))
+        ? new Set((await deps.mcp.store.list(user)).filter((server) => server.status !== "pending").map((server) => server.id))
         : new Set<string>();
       return { ...parsed.data, tools, mcpServers: parsed.data.mcpServers.filter((id) => approved.has(id)) };
     }
@@ -2098,7 +2101,9 @@ export function createProductionServer() {
   if (config.llm.mistralApiKey) providers.mistral = { apiKey: config.llm.mistralApiKey, ...llmLimits };
   if (config.llm.openaiApiKey) providers.openai = { apiKey: config.llm.openaiApiKey, ...llmLimits };
   if (config.llm.anthropicApiKey) providers.anthropic = { apiKey: config.llm.anthropicApiKey, ...llmLimits };
-  if (config.llm.googleApiKey) providers.google = { apiKey: config.llm.googleApiKey, ...llmLimits };
+  if (config.llm.googleApiKey) {
+    providers.google = { apiKey: config.llm.googleApiKey, ...llmLimits, thinkingLevel: config.llm.googleThinkingLevel };
+  }
   if (config.llm.localBaseUrl) {
     providers.local = {
       apiKey: config.llm.localApiKey ?? "local",
@@ -2158,7 +2163,10 @@ export function createProductionServer() {
     ...(webSearch ? { webSearch } : {}),
     ...(sandbox ? { sandbox } : {}),
     // Serveurs MCP : sortie par le proxy (HTTPS_PROXY), domaines dans infra/egress/mcp-domains.txt.
-    ...(config.mcpEnabled ? { mcp: { store: new PostgresMcpServerStore(pool, keyring) } } : {}),
+    // Sans proxy (développement) : chaque nom est résolu et doit viser une adresse publique.
+    ...(config.mcpEnabled
+      ? { mcp: { store: new PostgresMcpServerStore(pool, keyring), ...(process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY === "1" ? {} : { checkAddress: publicAddressOnly }) } }
+      : {}),
     generatedFiles: new PostgresGeneratedFileStore(pool, keyring),
     // Traces vers Langfuse auto-hébergé, si configuré.
     ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),

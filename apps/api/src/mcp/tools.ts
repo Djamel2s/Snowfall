@@ -2,6 +2,7 @@ import { z } from "zod";
 import { defineTool, type AgentTool } from "../agent/tools.js";
 import { McpClient, toolFingerprint, type McpServerSettings, type McpToolDefinition } from "./client.js";
 import type { ApprovedMcpTool, McpServerRecord } from "./store.js";
+import { stripTags } from "../security/neutralize.js";
 
 // Outils MCP confiés à un agent. Règles :
 // - seuls les outils APPROUVÉS par l'administrateur sont proposés ;
@@ -23,16 +24,33 @@ const slug = (text: string) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-/** Nom exposé au modèle : mcp_<serveur>_<outil>, 64 caractères au plus. */
-export function exposedName(server: string, tool: string) {
-  return `mcp_${slug(server).slice(0, 20) || "serveur"}_${slug(tool)}`.slice(0, 64).replace(/_+$/, "");
+/**
+ * Nom exposé au modèle : mcp_<serveur>_<id>_<outil>, 64 caractères au plus.
+ * Le fragment d'identifiant rend le nom unique ET stable : deux serveurs de même
+ * nom (« CRM » prod et recette) ne se disputent jamais un outil, et un appel
+ * validé avant une pause vise toujours le même serveur à la reprise.
+ */
+export function exposedName(server: { id: string; name: string }, tool: string) {
+  const id = server.id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase();
+  return `mcp_${slug(server.name).slice(0, 16).replace(/_+$/, "") || "serveur"}_${id}_${slug(tool)}`.slice(0, 64).replace(/_+$/, "");
 }
 
-/** Schéma JSON → validateur (refusé s'il est trop gros ou illisible). */
+/** Nom exposable : lettres minuscules, chiffres, « _ », comme l'exigent les fournisseurs. */
+export const validToolName = (name: string) => /^[a-z][a-z0-9_]{0,63}$/.test(name);
+
+/**
+ * Schéma JSON → validateur. Refusé s'il est trop gros, illisible, ou si ce n'est
+ * pas un objet : les fournisseurs exigent des paramètres de type « object »
+ * (sinon TOUTES les réponses de l'agent échoueraient, pas seulement cet outil).
+ */
 export function schemaValidator(schema: Record<string, unknown>): z.ZodType | null {
   if (JSON.stringify(schema).length > MAX_SCHEMA_CHARS) return null;
+  // Combinateurs à la racine : la conversion perd le type « object » (refusé par les fournisseurs).
+  if (schema.type !== "object" || ["oneOf", "anyOf", "allOf", "not"].some((key) => key in schema)) return null;
   try {
-    return z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+    const validator = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+    // Ce que recevra le fournisseur : doit rester un objet après conversion.
+    return (z.toJSONSchema(validator) as { type?: unknown }).type === "object" ? validator : null;
   } catch {
     return null;
   }
@@ -50,7 +68,9 @@ export function approvedSnapshot(definition: McpToolDefinition, access: "read" |
   };
 }
 
-const neutralize = (text: string) => text.replace(/<\/?\s*mcp_result\b[^>]*>/gi, "");
+/** Résultat gardé (au-delà, tronqué AVANT nettoyage : temps de traitement borné). */
+export const MAX_RESULT_CHARS = 50_000;
+const neutralize = (text: string) => stripTags(text.slice(0, MAX_RESULT_CHARS), /<\/?\s*mcp_result\b[^>]{0,200}>/gi);
 const attribute = (text: string) => text.replace(/[<>"&]/g, " ");
 
 export type McpToolEvents = {
@@ -69,21 +89,30 @@ export type McpToolEvents = {
 export async function mcpToolsFor(
   servers: (McpServerRecord & { token: string | null })[],
   events: McpToolEvents,
-  options: { signal?: AbortSignal | undefined; fetcher?: typeof fetch; client?: (settings: McpServerSettings) => McpClient } = {},
+  options: {
+    signal?: AbortSignal | undefined;
+    fetcher?: typeof fetch;
+    client?: (settings: McpServerSettings) => McpClient;
+    /** Contrôle des adresses résolues (sans proxy de sortie). */
+    checkAddress?: McpServerSettings["checkAddress"];
+  } = {},
 ): Promise<AgentTool[]> {
-  const tools: AgentTool[] = [];
   const names = new Set<string>();
-  await Promise.all(
+  // Serveurs interrogés en parallèle, mais outils assemblés dans l'ordre de la
+  // liste : le résultat ne dépend jamais de l'ordre d'arrivée des réponses.
+  const perServer = await Promise.all(
     servers
       .filter((server) => server.status === "approved" && server.tools.length)
-      .map(async (server) => {
-        const client = options.client?.({ url: server.url, token: server.token ?? undefined }) ?? new McpClient({ url: server.url, token: server.token ?? undefined }, options.fetcher);
+      .map(async (server): Promise<AgentTool[]> => {
+        const tools: AgentTool[] = [];
+        const settings = { url: server.url, token: server.token ?? undefined, checkAddress: options.checkAddress };
+        const client = options.client?.(settings) ?? new McpClient(settings, options.fetcher);
         let current: McpToolDefinition[];
         try {
           current = await client.listTools(options.signal);
         } catch {
           events.unavailable(server);
-          return;
+          return tools;
         }
         for (const approved of server.tools) {
           const live = current.find((tool) => tool.name === approved.name);
@@ -93,9 +122,8 @@ export async function mcpToolsFor(
             continue;
           }
           const parameters = schemaValidator(approved.inputSchema);
-          const name = exposedName(server.name, approved.name);
-          if (!parameters || names.has(name) || !/^[a-z][a-z0-9_]{0,63}$/.test(name)) continue;
-          names.add(name);
+          const name = exposedName(server, approved.name);
+          if (!parameters || !validToolName(name)) continue;
           tools.push(
             defineTool({
               name,
@@ -122,7 +150,20 @@ export async function mcpToolsFor(
             }) as AgentTool,
           );
         }
+        return tools;
       }),
   );
-  return tools;
+  // Deux outils réduits au même nom (« Get-User » et « get_user », troncature) : aucun n'est
+  // proposé. Garder « le premier » permettrait, à la reprise d'une pause, d'exécuter
+  // l'autre outil sous le nom que l'utilisateur a validé.
+  const all = perServer.flat();
+  for (const tool of all) names.add(names.has(tool.name) ? `!${tool.name}` : tool.name);
+  return all.filter((tool) => !names.has(`!${tool.name}`));
+}
+
+/** Noms exposés en conflit dans une liste d'outils (même nom après simplification). */
+export function clashingNames(server: { id: string; name: string }, tools: string[]) {
+  const seen = new Map<string, number>();
+  for (const tool of tools) seen.set(exposedName(server, tool), (seen.get(exposedName(server, tool)) ?? 0) + 1);
+  return new Set(tools.filter((tool) => (seen.get(exposedName(server, tool)) ?? 0) > 1));
 }

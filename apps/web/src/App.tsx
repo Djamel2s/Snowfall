@@ -33,7 +33,7 @@ import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import ArtifactPanel from './components/ArtifactPanel'
-import { ArtifactContext, artifactsIn, wantsCode, type Artifact } from './lib/artifacts'
+import { ArtifactContext, artifactsIn, wantsCode, type Artifact, type OpenedArtifact } from './lib/artifacts'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
@@ -134,8 +134,11 @@ function App() {
   // Réflexion du modèle : en direct, puis rattachée à la réponse (cette session
   // seulement : elle n'est jamais enregistrée).
   // Artifact affiché à côté de la conversation (page HTML, SVG, diagramme).
-  const [artifact, setArtifact] = useState<Artifact | null>(null)
+  const [artifact, setArtifact] = useState<OpenedArtifact | null>(null)
   const closeArtifact = useCallback(() => setArtifact(null), [])
+  // Chaque ouverture est un panneau neuf : jamais de mode « Exécuter » hérité d'un autre artifact.
+  const openings = useRef(0)
+  const openArtifact = useCallback((next: Artifact) => setArtifact({ ...next, opening: ++openings.current }), [])
   // Copie des conversations lisible à la fin d'une réponse (ouverture de son artifact).
   const conversationsRef = useRef({ conversations, activeId })
   useEffect(() => {
@@ -666,7 +669,7 @@ function App() {
       // Un seul artifact dans la réponse (et toujours sur cette conversation) : ouvert d'office.
       const answer = outcome ? conversationsRef.current.conversations.find((item) => item.id === conversationId)?.messages.find((item) => item.id === outcome) : undefined
       const found = answer ? artifactsIn(answer.content) : []
-      if (found.length === 1 && conversationsRef.current.activeId === conversationId) setArtifact(found[0]!)
+      if (found.length === 1 && conversationsRef.current.activeId === conversationId) openArtifact(found[0]!)
     } catch (cause) {
       if (cause instanceof Error && cause.name === 'AbortError') {
         // Arrêt volontaire : la réponse partielle est enregistrée côté serveur.
@@ -935,7 +938,7 @@ function App() {
     canWrite
 
   return (
-    <ArtifactContext.Provider value={setArtifact}>
+    <ArtifactContext.Provider value={openArtifact}>
     <main className={`snowfall-app ${artifact ? 'with-artifact' : ''}`}>
       <Snowfall />
 
@@ -1381,7 +1384,7 @@ function App() {
           </footer>
         </div>
       </section>
-      {artifact && <ArtifactPanel artifact={artifact} onClose={closeArtifact} />}
+      {artifact && <ArtifactPanel key={artifact.opening} artifact={artifact} onClose={closeArtifact} />}
     </main>
     </ArtifactContext.Provider>
   )

@@ -19,6 +19,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   GOOGLE_API_KEY: z.string().optional(),
+  // Gemini 3+ : niveau de réflexion imposé (les modèles « lite » ne réfléchissent pas par défaut). Vide : celui du modèle.
+  GOOGLE_THINKING_LEVEL: z.union([z.enum(["minimal", "low", "medium", "high"]), z.literal("")]).optional(),
   LOCAL_LLM_BASE_URL: z.union([z.url(), z.literal("")]).optional(),
   LOCAL_LLM_API_KEY: z.string().optional(),
   // Le modèle local sait appeler des outils (Ollama, vLLM avec un modèle compatible).
@@ -124,6 +126,7 @@ export type AppConfig = {
     openaiApiKey: string | undefined;
     anthropicApiKey: string | undefined;
     googleApiKey: string | undefined;
+    googleThinkingLevel: "minimal" | "low" | "medium" | "high" | undefined;
     localBaseUrl: string | undefined;
     localApiKey: string | undefined;
     localTools: boolean;
@@ -283,6 +286,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (production && e.KMS_PROVIDER === "vault" && !e.VAULT_ADDR!.startsWith("https://")) {
     throw new Error("VAULT_ADDR doit être en HTTPS en production.");
   }
+  // MCP : en production, les serveurs ne sont joints QUE par le proxy de sortie
+  // (liste de domaines, résolution DNS et refus des adresses internes chez lui).
+  if (production && e.MCP_ENABLED === "true" && (!env.HTTPS_PROXY || env.NODE_USE_ENV_PROXY !== "1")) {
+    throw new Error("MCP_ENABLED exige en production le proxy de sortie (HTTPS_PROXY et NODE_USE_ENV_PROXY=1).");
+  }
   if (production && e.SIEM_WEBHOOK_URL && !e.SIEM_WEBHOOK_URL.startsWith("https://")) {
     throw new Error("SIEM_WEBHOOK_URL doit être en HTTPS en production.");
   }
@@ -306,6 +314,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       openaiApiKey: e.OPENAI_API_KEY || undefined,
       anthropicApiKey: e.ANTHROPIC_API_KEY || undefined,
       googleApiKey: e.GOOGLE_API_KEY || undefined,
+      googleThinkingLevel: e.GOOGLE_THINKING_LEVEL || undefined,
       localBaseUrl: e.LOCAL_LLM_BASE_URL || undefined,
       localApiKey: e.LOCAL_LLM_API_KEY || undefined,
       localTools: e.LOCAL_LLM_TOOLS === "true",

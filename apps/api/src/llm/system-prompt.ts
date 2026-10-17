@@ -1,3 +1,5 @@
+import { stripTags } from "../security/neutralize.js";
+
 const PLATFORM_PROMPT = [
   "Tu es un assistant de la plateforme Snowfall, à usage professionnel.",
   "Réponds dans la langue de l'utilisateur, de façon précise et concise.",
@@ -33,7 +35,7 @@ const SUMMARY_RULE = [
 ].join(" ");
 
 /** Une balise ouvrante ou fermante glissée dans le résumé ne peut pas en sortir. */
-const neutralize = (text: string) => text.replace(/<\/?\s*conversation_summary\s*>/gi, "");
+const neutralize = (text: string) => stripTags(text, /<\/?\s*conversation_summary\s*>/gi);
 
 /**
  * Les règles de la plateforme passent toujours en premier ; les instructions

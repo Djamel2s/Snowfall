@@ -63,6 +63,25 @@ describe("Google Gemini", () => {
     assert.match(body.systemInstruction.parts[0].text, /Sois bref/);
   });
 
+  it("niveau de réflexion imposé : seulement aux modèles qui le comprennent (Gemini 3+)", async () => {
+    const levels: unknown[] = [];
+    for (const model of ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]) {
+      mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+      await collect(createGoogleModel(model, { ...settings, thinkingLevel: "low" }).stream({ history: [], message: "x" }));
+      levels.push(JSON.parse(String(calls.at(-1)!.init.body)).generationConfig.thinkingConfig);
+    }
+    // 2.5 : budget, pas de niveau ; 2.0 : aucune réflexion.
+    assert.deepEqual(levels, [{ includeThoughts: true, thinkingLevel: "low" }, { includeThoughts: true }, undefined]);
+  });
+
+  it("niveau de réflexion refusé par le modèle (HTTP 400) : nouvel essai sans niveau", async () => {
+    mockFetch(400, sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    const chunks = await collect(createGoogleModel("gemini-3-pro-preview", { ...settings, thinkingLevel: "minimal" }).stream({ history: [], message: "x" }));
+    assert.deepEqual(chunks, [{ type: "token", text: "ok" }]);
+    const configs = calls.map((call) => JSON.parse(String(call.init.body)).generationConfig.thinkingConfig);
+    assert.deepEqual(configs, [{ includeThoughts: true, thinkingLevel: "minimal" }, { includeThoughts: true }]);
+  });
+
   it("passe la clé en en-tête, jamais dans l'URL", async () => {
     mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
     await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" }));
