@@ -31,6 +31,7 @@ import MessageSources from './components/MessageSources'
 import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
+import BranchSwitcher from './components/BranchSwitcher'
 import ArtifactPanel from './components/ArtifactPanel'
 import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
 import { useArtifactPanel } from './hooks/useArtifactPanel'
@@ -41,6 +42,7 @@ import { migrateLegacyProjects } from './lib/legacy-projects'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
   mentionAt,
+  modelLabel,
   readLastChoice,
   resolveResponder,
   saveLastChoice,
@@ -498,6 +500,28 @@ function App() {
     }
   }
 
+  /**
+   * Copie d'un agent (le mien ou celui d'un collègue) : profil, modèle, outils.
+   * La base de connaissances n'est pas copiée : ses documents restent ceux de l'original.
+   */
+  async function duplicateAgent(agent: Agent) {
+    try {
+      const copy = await api.saveAgent({
+        name: `${agent.name.slice(0, 31)} ${t('agents.copySuffix')}`,
+        avatar: agent.avatar,
+        instructions: agent.instructions,
+        provider: agent.provider,
+        model: agent.model,
+        tools: agent.tools,
+        mcpServers: agent.mcpServers ?? [],
+      })
+      setAgents((current) => [...current, copy])
+      openAgentEditor(copy)
+    } catch (cause) {
+      fail(cause, 'studio.saveFailed')
+    }
+  }
+
   function openAgentEditor(agent: Agent | null) {
     setSidebarPanel('agents')
     setSidebarCollapsed(false)
@@ -840,6 +864,8 @@ function App() {
           ...current,
           messages: [...previous.slice(0, index), result.userMessage, result.assistantMessage],
         }))
+        // L'ancienne version reste consultable : relecture pour afficher ‹ 1/2 ›.
+        void refreshMessages(conversation.id).catch(() => undefined)
         return result.assistantMessage.id
       },
       () => updateConversation(conversation.id, (current) => ({ ...current, messages: previous })),
@@ -860,10 +886,24 @@ function App() {
           ...current,
           messages: [...current.messages.slice(0, -1), result.assistantMessage],
         }))
+        void refreshMessages(conversation.id).catch(() => undefined)
         return result.assistantMessage.id
       },
       () => undefined,
     )
+  }
+
+  /** Autre version d'un message : la conversation affiche sa branche. */
+  async function selectBranch(messageId: string) {
+    const conversation = activeConversation
+    if (!conversation || sending) return
+    setEditing(null)
+    try {
+      const messages = await api.selectBranch(conversation.id, messageId)
+      updateConversation(conversation.id, (current) => ({ ...current, messages }))
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
   }
 
   async function copyMessage(message: Message) {
@@ -961,6 +1001,9 @@ function App() {
         onCreateAgent={() => openAgentEditor(null)}
         onStartAgent={(agent) => void newChat(agent)}
         onEditAgent={openAgentEditor}
+        onDuplicateAgent={(agent) => void duplicateAgent(agent)}
+        agentModelLabel={(agent) => modelLabel(catalog.providers, { provider: agent.provider, model: agent.model })}
+        currentUserId={session.user.userId}
         agentEditor={studioAgent}
         onAgentEditorClose={() => setStudioAgent(undefined)}
         agentEditorNotice={studioNotice}
@@ -1140,6 +1183,7 @@ function App() {
 
                       {editing?.id !== message.id && (
                         <div className="message-actions">
+                          {message.branch && <BranchSwitcher branch={message.branch} disabled={sending} onSelect={(id) => void selectBranch(id)} />}
                           {message.role === 'assistant' ? (
                             <>
                               <button

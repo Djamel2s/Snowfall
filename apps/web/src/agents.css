@@ -440,66 +440,6 @@
 
 .project-draft button:disabled { cursor: not-allowed; opacity: .3; }
 
-/* ---- Liste d'agents (barre latérale) ---------------------------------- */
-
-.agent-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px 0;
-}
-
-.agent-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 4px 6px 4px 6px;
-  border-radius: 10px;
-  color: #dbe6f5;
-  transition: background .15s;
-}
-
-.agent-item:hover,
-.agent-item.active { background: var(--sidebar-hover); }
-
-.agent-item-main {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.agent-item-name { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
-.agent-item-main .provider-logo { opacity: .45; }
-
-.agent-item-edit {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #8291a9;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity .15s, background .15s;
-}
-
-.agent-item:hover .agent-item-edit,
-.agent-item-edit:focus-visible { opacity: 1; }
-.agent-item-edit:hover { background: rgba(255, 255, 255, .08); color: #fff; }
-
 /* ---- Chat avec agent --------------------------------------------------- */
 
 .topbar-agent {
@@ -974,4 +914,134 @@
   .message-avatar-alien .alien-head,
   .message-avatar-alien .alien-eyes,
   .message-avatar-alien .alien-ufo { animation: none; }
+}
+
+/* ---- Catalogue d'agents (barre latérale) ------------------------------- */
+
+.agent-catalog { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 10px; }
+
+.agent-catalog-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(183, 210, 244, .1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .03);
+  color: #7d8ca4;
+}
+
+.agent-catalog-search input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; color: #dbe6f5; font: inherit; font-size: 12px; }
+.agent-catalog-filter { display: grid; grid-template-columns: 1fr 1fr; }
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.agent-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  border: 1px solid rgba(183, 210, 244, .07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .025);
+  transition: background .15s, border-color .15s, transform .15s;
+}
+
+.agent-card:hover { border-color: rgba(158, 202, 255, .22); background: rgba(158, 202, 255, .05); }
+.agent-card.active { border-color: rgba(158, 202, 255, .45); background: rgba(158, 202, 255, .08); }
+
+.agent-card-main,
+.agent-card-new {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 8px 10px;
+  border: 0;
+  background: transparent;
+  color: #dbe6f5;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.agent-card-avatar { display: grid; width: 58px; height: 58px; place-items: center; }
+
+.agent-card-main strong,
+.agent-card-new strong {
+  display: -webkit-box;
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agent-card-model {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  color: #7d8ca4;
+  font-size: 10px;
+}
+
+.agent-card-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card-model .provider-logo { flex-shrink: 0; opacity: .7; }
+.agent-card-tools { display: inline-flex; gap: 5px; color: #5f708a; }
+
+.agent-card-actions {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity .15s;
+}
+
+.agent-card:hover .agent-card-actions,
+.agent-card:focus-within .agent-card-actions { opacity: 1; }
+
+.agent-card-actions button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(10, 17, 30, .85);
+  color: #9aabc3;
+  cursor: pointer;
+}
+
+.agent-card-actions button:hover { color: #fff; }
+
+.agent-card.agent-card-new { border: 1px dashed rgba(158, 202, 255, .22); border-radius: 14px; color: #8fa0b8; }
+.agent-card.agent-card-new:hover { border-color: rgba(158, 202, 255, .45); color: #dbe6f5; }
+.agent-card-plus {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(158, 202, 255, .08);
+  color: #9ecaff;
+}
+
+.agent-catalog-empty { margin: 4px 2px; color: #7d8ca4; font-size: 11.5px; }
+
+/* Écrans tactiles : actions toujours visibles (pas de survol). */
+@media (hover: none) {
+  .agent-card-actions { opacity: 1; }
+  .agent-card:has(.agent-card-actions button) .agent-card-main { padding-top: 30px; }
 }

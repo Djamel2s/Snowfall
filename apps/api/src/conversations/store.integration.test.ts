@@ -63,6 +63,37 @@ describe(
       assert.equal(await store.delete(b, conv.id), false);
     });
 
+    it("branches : modifier et régénérer ajoutent des versions, la branche affichée se choisit", async () => {
+      const conv = await store.create(a, "Branches");
+      await store.appendExchange(a, conv.id, "Q1", "R1");
+      const second = (await store.appendExchange(a, conv.id, "Q2", "R2"))!;
+      const edited = (await store.appendExchange(a, conv.id, "Q2 bis", "R2 bis", { replaceFromMessageId: second.userMessage.id }))!;
+      const regenerated = (await store.replaceLastAssistant(a, conv.id, edited.assistantMessage.id, "R2 ter"))!;
+
+      let view = (await store.getMessages(a, conv.id))!;
+      assert.deepEqual(view.map((message) => message.content), ["Q1", "R1", "Q2 bis", "R2 ter"]);
+      assert.deepEqual(view[2]!.branch, { index: 1, count: 2, siblings: [second.userMessage.id, edited.userMessage.id] });
+      assert.deepEqual(view[3]!.branch?.siblings, [edited.assistantMessage.id, regenerated.id]);
+      // Régénérer une réponse qui n'est plus la dernière affichée : refusé.
+      assert.equal(await store.replaceLastAssistant(a, conv.id, second.assistantMessage.id, "x"), null);
+
+      assert.equal(await store.selectBranch(a, conv.id, second.userMessage.id), true);
+      view = (await store.getMessages(a, conv.id))!;
+      assert.deepEqual(view.map((message) => message.content), ["Q1", "R1", "Q2", "R2"]);
+      // La suite continue la branche choisie.
+      await store.appendExchange(a, conv.id, "Q3", "R3");
+      assert.deepEqual((await store.getMessages(a, conv.id))!.map((message) => message.content), ["Q1", "R1", "Q2", "R2", "Q3", "R3"]);
+      // Un autre tenant ne peut ni choisir une branche ni voir les versions.
+      assert.equal(await store.selectBranch(b, conv.id, second.userMessage.id), false);
+      // Un message d'une autre conversation ne peut pas devenir parent (contrainte).
+      const other = await store.create(a, "Autre");
+      const otherMessage = (await store.appendExchange(a, other.id, "x", "y"))!.userMessage;
+      await assert.rejects(
+        withTenant(owner, a, (client) => client.query("UPDATE messages SET parent_id = $1 WHERE id = $2", [otherMessage.id, second.assistantMessage.id])),
+        /messages_parent_fk/,
+      );
+    });
+
     it("refuse de créer une conversation sans appartenance", async () => {
       await assert.rejects(
         store.create({ userId: alice, organizationId: orgB }, "intrus"),

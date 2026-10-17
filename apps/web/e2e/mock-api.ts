@@ -10,6 +10,26 @@ export type MockOptions = {
   platformTools?: string[]
   /** Réponse de l'assistant au prochain message (texte Markdown). */
   answer?: string
+  /** Agents de l'organisation. */
+  agents?: unknown[]
+  /** Conversation existante à deux versions : branche affichée, et celle obtenue en changeant de version. */
+  branches?: { title: string; shown: unknown[]; other: unknown[] }
+}
+
+/** Agent fictif (profil complet, comme le renvoie l'API). */
+export function fakeAgent(name: string, options: { mine?: boolean; tools?: string[]; color?: string; provider?: string; model?: string } = {}) {
+  return {
+    id: `agent-${name.toLowerCase().replace(/[^a-z]/g, '')}`,
+    name,
+    avatar: { kind: 'alien', color: options.color ?? 'sky', eyes: 'classic', accessory: 'none' },
+    instructions: `Tu es ${name}.`,
+    provider: options.provider ?? 'mistral',
+    model: options.model ?? 'mistral-small-latest',
+    tools: options.tools ?? ['search_knowledge'],
+    mcpServers: [],
+    createdBy: options.mine ? 'u-1' : 'u-2',
+    canEdit: Boolean(options.mine),
+  }
 }
 
 const now = '2026-10-17T08:00:00.000Z'
@@ -18,10 +38,15 @@ const ORG = '11111111-1111-4111-8111-111111111111'
 export async function mockApi(page: Page, options: MockOptions = {}) {
   const role = options.role ?? 'admin'
   const unknown: string[] = []
-  const conversations: { id: string; title: string; agentId: null; model: null; projectId: null; knowledge: { agent: boolean; project: boolean }; createdAt: string; updatedAt: string }[] = []
+  const conversations: { id: string; title: string; agentId: string | null; model: null; projectId: null; knowledge: { agent: boolean; project: boolean }; createdAt: string; updatedAt: string }[] = []
   const messages = new Map<string, { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[]>()
   let counter = 0
   const id = () => `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`
+  let branchShown = options.branches?.shown
+  if (options.branches) {
+    const conversationId = '00000000-0000-4000-8000-0000000000b1'
+    conversations.push({ id: conversationId, title: options.branches.title, agentId: null, model: null, projectId: null, knowledge: { agent: true, project: true }, createdAt: now, updatedAt: now })
+  }
 
   const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
@@ -39,7 +64,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'PUT /me/preferences') return json(route, { preferences: request.postDataJSON() })
     if (key === 'GET /conversations') return json(route, { conversations })
     if (key === 'GET /projects') return json(route, { projects: [] })
-    if (key === 'GET /agents') return json(route, { agents: [] })
+    if (key === 'GET /agents') return json(route, { agents: options.agents ?? [] })
+    if (key === 'POST /agents') {
+      const input = request.postDataJSON() as Record<string, unknown>
+      return json(route, { agent: { ...input, id: id(), createdBy: 'u-1', canEdit: true } }, 201)
+    }
     if (key === 'GET /models') {
       return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
     }
@@ -60,7 +89,8 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (key === 'GET /organization/mcp-servers') return json(route, { servers: [] })
     if (key === 'POST /conversations') {
-      const conversation = { id: id(), title: 'Nouvelle conversation', agentId: null, model: null, projectId: null, knowledge: { agent: true, project: true }, createdAt: now, updatedAt: now }
+      const body = (request.postDataJSON() ?? {}) as { agentId?: string }
+      const conversation = { id: id(), title: 'Nouvelle conversation', agentId: body.agentId ?? null, model: null, projectId: null, knowledge: { agent: true, project: true }, createdAt: now, updatedAt: now }
       conversations.unshift(conversation)
       messages.set(conversation.id, [])
       return json(route, { conversation }, 201)
@@ -68,6 +98,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     const conversationPath = /^\/conversations\/([^/]+)(\/.*)?$/.exec(path)
     if (conversationPath) {
       const [, conversationId, rest = ''] = conversationPath
+      if (options.branches && method === 'GET' && rest === '/messages') return json(route, { messages: branchShown })
+      if (options.branches && method === 'POST' && rest === '/branch') {
+        branchShown = branchShown === options.branches.shown ? options.branches.other : options.branches.shown
+        return json(route, { messages: branchShown })
+      }
       if (method === 'GET' && rest === '/messages') return json(route, { messages: messages.get(conversationId!) ?? [] })
       if (method === 'GET' && rest === '/files') return json(route, { files: [] })
       if (method === 'GET' && rest === '/run') return json(route, { run: null })

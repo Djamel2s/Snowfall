@@ -1,3 +1,4 @@
+import { activePath, latestLeaf, type BranchInfo, type BranchNode } from "./branches.js";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { decryptMeta, type AttachmentMeta } from "../attachments/store.js";
@@ -51,6 +52,8 @@ export type StoredMessage = {
   createdAt: string;
   attachments?: AttachmentMeta[];
   sources?: MessageSource[];
+  /** Versions de ce tour (modification, régénération) : présent seulement s'il y en a plusieurs. */
+  branch?: BranchInfo;
 };
 
 export type SearchHit = {
@@ -63,7 +66,10 @@ export type SearchHit = {
 export type ExchangeOptions = {
   /** Pièces jointes à rattacher au message utilisateur. */
   attachmentIds?: string[];
-  /** Modification : ce message utilisateur et tout ce qui suit sont remplacés. */
+  /**
+   * Modification : la nouvelle version devient une SŒUR de ce message (l'ancienne
+   * branche reste consultable). Ses pièces jointes passent à la nouvelle version.
+   */
   replaceFromMessageId?: string;
   /** Sources citées par la réponse. */
   sources?: MessageSource[];
@@ -103,7 +109,9 @@ export interface ConversationStore {
     assistantContent: string,
     options?: ExchangeOptions,
   ): Promise<{ userMessage: StoredMessage; assistantMessage: StoredMessage } | null>;
-  /** Régénération : remplace la dernière réponse si elle n'a pas changé entre-temps. */
+  /** Affiche une autre version d'un tour : la branche suit sa suite la plus récente. */
+  selectBranch(owner: ConversationOwner, conversationId: string, messageId: string): Promise<boolean>;
+  /** Régénération : nouvelle version de la dernière réponse (sœur), si elle n'a pas changé entre-temps. */
   replaceLastAssistant(
     owner: ConversationOwner,
     conversationId: string,
@@ -166,6 +174,8 @@ type MessageRow = {
 };
 
 const SEARCH_MAX_RESULTS = 30;
+/** Clé de tri des versions : horodatage à la microseconde, comparable comme texte. */
+const SORT_KEY = `to_char(created_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS "sortKey"`;
 
 /** Comparaison insensible à la casse et aux accents. */
 export function normalizeForSearch(value: string) {
@@ -468,20 +478,24 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
   ): Promise<StoredMessage[] | null> {
     return withTenant(this.pool, owner, async (client) => {
-      const exists = await client.query(
-        `SELECT 1 FROM conversations
+      const exists = await client.query<{ leaf: string | null }>(
+        `SELECT current_leaf_id AS leaf FROM conversations
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
         [conversationId, owner.userId, owner.organizationId],
       );
       if (!exists.rowCount) return null;
 
-      const result = await client.query<MessageRow>(
-        `SELECT id, role, content, sources, created_at AS "createdAt"
+      const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
+        `SELECT id, role, content, sources, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
          FROM messages
          WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
          ORDER BY created_at ASC, id ASC`,
         [conversationId, owner.userId, owner.organizationId],
       );
+      // Branche affichée : de la racine à la feuille retenue. Les autres versions ne sont pas déchiffrées.
+      const { path, branches } = activePath(all.rows.map((row) => ({ id: row.id, parentId: row.parentId, createdAt: row.sortKey })), exists.rows[0]!.leaf);
+      const rows = new Map(all.rows.map((row) => [row.id, row]));
+      const result = { rows: path.map((id) => rows.get(id)!) };
 
       const files = await client.query<AttachmentMeta & { name: string }>(
         `SELECT id, name, kind, media_type AS "mediaType", size_bytes AS size,
@@ -498,10 +512,11 @@ export class PostgresConversationStore implements ConversationStore {
       }
 
       const messages: StoredMessage[] = [];
-      for (const row of result.rows) {
+      for (const { parentId: _parent, sortKey: _key, ...row } of result.rows) {
         const message = await this.decryptMessage(client, owner, conversationId, row);
         const attachments = byMessage.get(row.id);
-        messages.push(attachments ? { ...message, attachments } : message);
+        const branch = branches.get(row.id);
+        messages.push({ ...message, ...(attachments ? { attachments } : {}), ...(branch ? { branch } : {}) });
       }
       return messages;
     });
@@ -527,7 +542,8 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
     role: MessageRole,
     content: string,
-    sources?: MessageSource[],
+    sources: MessageSource[] | undefined,
+    parentId: string | null,
   ) {
     const id = randomUUID();
     const encrypted = await this.keyring.encrypt(
@@ -541,10 +557,10 @@ export class PostgresConversationStore implements ConversationStore {
       : null;
     const result = await client.query<{ id: string; role: MessageRole; createdAt: string }>(
       `INSERT INTO messages
-         (id, conversation_id, user_id, organization_id, role, content, sources, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp())
+         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
        RETURNING id, role, created_at AS "createdAt"`,
-      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources],
+      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId],
     );
     const message: StoredMessage = { ...result.rows[0]!, content };
     if (sources?.length) message.sources = sources;
@@ -568,32 +584,32 @@ export class PostgresConversationStore implements ConversationStore {
       const current = conversation.rows[0];
       if (!current) return null;
 
+      // Parent du nouveau message : la fin de la branche affichée, ou, pour une
+      // modification, le parent du message modifié (la nouvelle version est sa sœur).
+      let parentId: string | null;
       if (options.replaceFromMessageId) {
-        // Modification : le message édité et toute la suite sont supprimés ;
-        // leurs pièces jointes redeviennent libres (message_id → NULL).
-        const deleted = await client.query(
-          `DELETE FROM messages m
-           USING messages edited
-           WHERE edited.id = $4 AND edited.role = 'user'
-             AND edited.conversation_id = $1 AND edited.user_id = $2 AND edited.organization_id = $3
-             AND m.conversation_id = $1 AND m.user_id = $2 AND m.organization_id = $3
-             AND (m.created_at, m.id) >= (edited.created_at, edited.id)`,
+        const edited = await client.query<{ parentId: string | null }>(
+          `SELECT parent_id AS "parentId" FROM messages
+           WHERE id = $4 AND role = 'user' AND conversation_id = $1 AND user_id = $2 AND organization_id = $3`,
           [conversationId, owner.userId, owner.organizationId, options.replaceFromMessageId],
         );
-        if (!deleted.rowCount) return null;
+        if (!edited.rowCount) return null;
+        parentId = edited.rows[0]!.parentId;
+      } else {
+        parentId = await this.currentLeaf(client, owner, conversationId);
       }
 
-      const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent);
-      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources);
+      const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent, undefined, parentId);
+      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id);
 
       if (options.attachmentIds?.length) {
         const linked = await client.query<AttachmentMeta & { name: string }>(
           `UPDATE attachments SET message_id = $5
-           WHERE id = ANY($4::uuid[]) AND message_id IS NULL
+           WHERE id = ANY($4::uuid[]) AND (message_id IS NULL OR message_id = $6)
              AND conversation_id = $1 AND user_id = $2 AND organization_id = $3
            RETURNING id, name, kind, media_type AS "mediaType", size_bytes AS size,
                      message_id AS "messageId", created_at AS "createdAt"`,
-          [conversationId, owner.userId, owner.organizationId, options.attachmentIds, userMessage.id],
+          [conversationId, owner.userId, owner.organizationId, options.attachmentIds, userMessage.id, options.replaceFromMessageId ?? null],
         );
         userMessage.attachments = [];
         for (const row of linked.rows) {
@@ -609,12 +625,51 @@ export class PostgresConversationStore implements ConversationStore {
       );
 
       await client.query(
-        `UPDATE conversations SET title = $4, updated_at = now()
+        `UPDATE conversations SET title = $4, current_leaf_id = $5, updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
-        [conversationId, owner.userId, owner.organizationId, title],
+        [conversationId, owner.userId, owner.organizationId, title, assistantMessage.id],
       );
 
       return { userMessage, assistantMessage };
+    });
+  }
+
+  /** Arbre des messages (identifiants seulement : rien n'est déchiffré). */
+  private async nodes(client: PoolClient, owner: ConversationOwner, conversationId: string) {
+    const result = await client.query<BranchNode>(
+      `SELECT id, parent_id AS "parentId", ${SORT_KEY.replace(' AS "sortKey"', ' AS "createdAt"')} FROM messages
+       WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3`,
+      [conversationId, owner.userId, owner.organizationId],
+    );
+    return result.rows;
+  }
+
+  /** Dernier message de la branche affichée (NULL : conversation vide). */
+  private async currentLeaf(client: PoolClient, owner: ConversationOwner, conversationId: string) {
+    const conversation = await client.query<{ leaf: string | null }>(
+      `SELECT current_leaf_id AS leaf FROM conversations
+       WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+      [conversationId, owner.userId, owner.organizationId],
+    );
+    const nodes = await this.nodes(client, owner, conversationId);
+    return activePath(nodes, conversation.rows[0]?.leaf ?? null).path.at(-1) ?? null;
+  }
+
+  async selectBranch(owner: ConversationOwner, conversationId: string, messageId: string) {
+    return withTenant(this.pool, owner, async (client) => {
+      const conversation = await client.query(
+        `SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2 AND organization_id = $3 FOR UPDATE`,
+        [conversationId, owner.userId, owner.organizationId],
+      );
+      if (!conversation.rowCount) return false;
+      const nodes = await this.nodes(client, owner, conversationId);
+      if (!nodes.some((node) => node.id === messageId)) return false;
+      await client.query(
+        `UPDATE conversations SET current_leaf_id = $4
+         WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+        [conversationId, owner.userId, owner.organizationId, latestLeaf(nodes, messageId)],
+      );
+      return true;
     });
   }
 
@@ -634,24 +689,21 @@ export class PostgresConversationStore implements ConversationStore {
       );
       if (!conversation.rowCount) return null;
 
-      const last = await client.query<{ id: string }>(
-        `SELECT id FROM messages
-         WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
-         ORDER BY created_at DESC, id DESC LIMIT 1`,
-        [conversationId, owner.userId, owner.organizationId],
+      // La conversation a bougé entre-temps (autre réponse, autre branche) : rien n'est ajouté.
+      if ((await this.currentLeaf(client, owner, conversationId)) !== previousAssistantId) return null;
+      const previous = await client.query<{ parentId: string | null }>(
+        `SELECT parent_id AS "parentId" FROM messages
+         WHERE id = $1 AND role = 'assistant' AND conversation_id = $2 AND user_id = $3 AND organization_id = $4`,
+        [previousAssistantId, conversationId, owner.userId, owner.organizationId],
       );
-      // La conversation a bougé entre-temps : on n'écrase rien.
-      if (last.rows[0]?.id !== previousAssistantId) return null;
+      if (!previous.rowCount) return null;
 
+      // Nouvelle version, sœur de l'ancienne : celle-ci reste consultable.
+      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId);
       await client.query(
-        "DELETE FROM messages WHERE id = $1 AND user_id = $2 AND organization_id = $3 AND role = 'assistant'",
-        [previousAssistantId, owner.userId, owner.organizationId],
-      );
-      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources);
-      await client.query(
-        `UPDATE conversations SET updated_at = now()
+        `UPDATE conversations SET current_leaf_id = $4, updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
-        [conversationId, owner.userId, owner.organizationId],
+        [conversationId, owner.userId, owner.organizationId, message.id],
       );
       return message;
     });

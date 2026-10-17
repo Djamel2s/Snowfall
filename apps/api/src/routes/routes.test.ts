@@ -240,6 +240,42 @@ describe("Membres et invitations", () => {
 });
 
 describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer", () => {
+  it("modifier crée une branche : l'ancienne version reste consultable (‹ 1/2 ›)", async (t) => {
+    const { app, store, calls } = setup();
+    t.after(() => app.close());
+    const conversation = await store.create(member);
+    await store.appendExchange(member, conversation.id, "Question 1", "Réponse 1");
+    await store.appendExchange(member, conversation.id, "Question 2", "Réponse 2");
+    const second = (await store.getMessages(member, conversation.id))![2]!;
+
+    await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Question 2 bis", editMessageId: second.id }));
+    const edited = (await store.getMessages(member, conversation.id))!;
+    assert.deepEqual(edited.map((message) => message.content), ["Question 1", "Réponse 1", "Question 2 bis", "ok"]);
+    assert.deepEqual(edited[2]!.branch, { index: 1, count: 2, siblings: [second.id, edited[2]!.id] });
+
+    // Retour à la version d'origine, avec sa suite.
+    const back = await app.inject(post(`/conversations/${conversation.id}/branch`, { messageId: second.id }));
+    assert.equal(back.statusCode, 200);
+    assert.deepEqual(back.json().messages.map((message: { content: string }) => message.content), ["Question 1", "Réponse 1", "Question 2", "Réponse 2"]);
+    // La réponse suivante continue la branche affichée.
+    await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Question 3" }));
+    assert.deepEqual(calls.at(-1)!.history?.map((turn) => turn.content), ["Question 1", "Réponse 1", "Question 2", "Réponse 2"]);
+
+    // Un message d'une autre conversation (ou inconnu) : refusé.
+    assert.equal((await app.inject(post(`/conversations/${conversation.id}/branch`, { messageId: crypto.randomUUID() }))).statusCode, 404);
+  });
+
+  it("régénérer garde l'ancienne réponse comme autre version", async (t) => {
+    const { app, store } = setup();
+    t.after(() => app.close());
+    const conversation = await store.create(member);
+    const first = await store.appendExchange(member, conversation.id, "Q1", "R1");
+    await app.inject(post(`/conversations/${conversation.id}/regenerate`));
+    const after = (await store.getMessages(member, conversation.id))!;
+    assert.deepEqual(after.map((message) => message.content), ["Q1", "ok"]);
+    assert.deepEqual(after[1]!.branch?.siblings, [first!.assistantMessage.id, after[1]!.id]);
+  });
+
   it("modifier un message remplace la suite et repart du contexte antérieur", async (t) => {
     const { app, store, calls } = setup();
     t.after(() => app.close());

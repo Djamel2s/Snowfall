@@ -1,4 +1,5 @@
 // Implémentations en mémoire pour les tests de routes (aucune base requise).
+import { activePath, latestLeaf } from "../conversations/branches.js";
 import type { AttachmentMeta } from "../attachments/store.js";
 import type { SessionStore } from "../auth/session-store.js";
 import type { TenantContext } from "../db/tenant.js";
@@ -19,7 +20,19 @@ export function createFakeConversationStore(): ConversationStore & {
   files: Map<string, AttachmentMeta>;
 } {
   const conversations = new Map<string, FakeConversation>();
-  const messages = new Map<string, StoredMessage[]>();
+  // Tous les messages (toutes branches), avec leur parent ; feuille affichée par conversation.
+  const messages = new Map<string, (StoredMessage & { parentId: string | null })[]>();
+  const leaves = new Map<string, string | null>();
+  const view = (id: string): StoredMessage[] => {
+    const all = messages.get(id) ?? [];
+    const { path, branches } = activePath(all, leaves.get(id) ?? null);
+    return path.map((messageId) => {
+      const { parentId: _parent, ...message } = all.find((item) => item.id === messageId)!;
+      const branch = branches.get(messageId);
+      return branch ? { ...message, branch } : message;
+    });
+  };
+  const leaf = (id: string) => view(id).at(-1)?.id ?? null;
   const files = new Map<string, AttachmentMeta>();
   let clock = Date.now();
   const now = () => new Date((clock += 1)).toISOString();
@@ -29,11 +42,12 @@ export function createFakeConversationStore(): ConversationStore & {
     return conversation?.owner.userId === owner.userId && conversation.owner.organizationId === owner.organizationId;
   };
   const summary = ({ owner: _owner, ...rest }: FakeConversation): ConversationSummary => rest;
-  const message = (role: StoredMessage["role"], content: string): StoredMessage => ({
+  const message = (role: StoredMessage["role"], content: string, parentId: string | null): StoredMessage & { parentId: string | null } => ({
     id: crypto.randomUUID(),
     role,
     content,
     createdAt: now(),
+    parentId,
   });
 
   return {
@@ -92,7 +106,13 @@ export function createFakeConversationStore(): ConversationStore & {
         });
     },
 
-    getMessages: async (owner, id) => (owns(owner, id) ? [...(messages.get(id) ?? [])] : null),
+    getMessages: async (owner, id) => (owns(owner, id) ? view(id) : null),
+
+    selectBranch: async (owner, id, messageId) => {
+      if (!owns(owner, id) || !(messages.get(id) ?? []).some((item) => item.id === messageId)) return false;
+      leaves.set(id, latestLeaf(messages.get(id)!, messageId));
+      return true;
+    },
 
     delete: async (owner, id) => {
       if (!owns(owner, id)) return false;
@@ -103,31 +123,37 @@ export function createFakeConversationStore(): ConversationStore & {
 
     appendExchange: async (owner, id, userContent, assistantContent, options = {}) => {
       if (!owns(owner, id)) return null;
-      let list = messages.get(id)!;
+      const list = messages.get(id)!;
+      let parentId = leaf(id);
       if (options.replaceFromMessageId) {
-        const index = list.findIndex((entry) => entry.id === options.replaceFromMessageId && entry.role === "user");
-        if (index === -1) return null;
-        list = list.slice(0, index);
-        messages.set(id, list);
+        const edited = list.find((entry) => entry.id === options.replaceFromMessageId && entry.role === "user");
+        if (!edited) return null;
+        parentId = edited.parentId;
       }
-      const userMessage = message("user", userContent);
+      const userMessage = message("user", userContent, parentId);
       const attached = (options.attachmentIds ?? []).map((fileId) => files.get(fileId)).filter((file) => !!file);
       if (attached.length) userMessage.attachments = attached.map((file) => ({ ...file, messageId: userMessage.id }));
-      const assistantMessage = message("assistant", assistantContent);
+      const assistantMessage: StoredMessage & { parentId: string | null } = message("assistant", assistantContent, userMessage.id);
       if (options.sources?.length) assistantMessage.sources = options.sources;
       list.push(userMessage, assistantMessage);
+      leaves.set(id, assistantMessage.id);
       conversations.get(id)!.updatedAt = now();
-      return { userMessage, assistantMessage };
+      const { parentId: _u, ...user } = userMessage;
+      const { parentId: _a, ...assistant } = assistantMessage;
+      return { userMessage: user, assistantMessage: assistant };
     },
 
     replaceLastAssistant: async (owner, id, previousAssistantId, content, sources) => {
       if (!owns(owner, id)) return null;
       const list = messages.get(id)!;
-      if (list.at(-1)?.id !== previousAssistantId) return null;
-      const replacement = message("assistant", content);
+      const previous = list.find((item) => item.id === previousAssistantId && item.role === "assistant");
+      if (leaf(id) !== previousAssistantId || !previous) return null;
+      const replacement: StoredMessage & { parentId: string | null } = message("assistant", content, previous.parentId);
       if (sources?.length) replacement.sources = sources;
-      list.splice(-1, 1, replacement);
-      return replacement;
+      list.push(replacement);
+      leaves.set(id, replacement.id);
+      const { parentId: _p, ...stored } = replacement;
+      return stored;
     },
   };
 }

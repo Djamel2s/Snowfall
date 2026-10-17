@@ -34,7 +34,11 @@ export type Message = {
   createdAt: string
   attachments?: AttachmentMeta[]
   sources?: MessageSource[]
+  /** Versions de ce tour (modification, régénération), s'il y en a plusieurs. */
+  branch?: MessageBranch
 }
+
+export type MessageBranch = { index: number; count: number; siblings: string[] }
 
 export type KnowledgeOwnerKind = 'agents' | 'projects'
 
@@ -495,6 +499,10 @@ export const api = {
     stream<{ userMessage?: Message; assistantMessage?: Message }>(`/conversations/${conversationId}/approvals/${approvalId}`, { approved }, options),
 
   /** Réponse en cours dans la conversation (reconnexion), ou null. */
+  /** Afficher une autre version d'un message : renvoie la branche affichée. */
+  selectBranch: async (conversationId: string, messageId: string) =>
+    (await request<{ messages: Message[] }>(`/conversations/${conversationId}/branch`, json('POST', { messageId }))).messages,
+
   getRun: async (conversationId: string) => (await request<{ run: ActiveRun | null }>(`/conversations/${conversationId}/run`)).run,
 
   /** Reprendre le fil d'une réponse en cours (avancement, puis la suite en direct). */

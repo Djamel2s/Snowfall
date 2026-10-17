@@ -21,9 +21,9 @@ import {
 } from 'lucide-react'
 import type { Agent, Preferences, Project, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
-import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AgentStudio from './AgentStudio'
 import SettingsPanel from './SettingsPanel'
+import AgentCatalog from './AgentCatalog'
 import KnowledgePanel from './KnowledgePanel'
 
 export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'settings'
@@ -75,6 +75,10 @@ type SidebarProps = {
   onCreateAgent?: () => void
   onStartAgent: (agent: Agent) => void
   onEditAgent: (agent: Agent) => void
+  onDuplicateAgent: (agent: Agent) => void
+  /** Nom court du modèle d'un agent, pour le catalogue. */
+  agentModelLabel: (agent: Agent) => string
+  currentUserId: string
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
 }
@@ -334,8 +338,8 @@ export default function Sidebar(props: SidebarProps) {
               onClick={() => {
                 // Changer de section ferme le créateur d'agent resté ouvert.
                 if (agentEditor !== undefined && id !== sidebarPanel) props.onAgentEditorClose()
+                // Le tiroir reste ouvert (mobile) : on veut voir la section choisie.
                 props.onSidebarPanelChange(id)
-                props.onSidebarOpenChange(false)
               }}
             >
               <Icon size={19} strokeWidth={1.8} />
@@ -586,50 +590,24 @@ export default function Sidebar(props: SidebarProps) {
                 <div className="projects-panel">
                   <div className="sidebar-section-label projects-heading">
                     <span>{t('sidebar.agentsTitle')}</span>
-                    <button
-                      className="projects-add-button"
-                      type="button"
-                      onClick={props.onCreateAgent}
-                      disabled={!props.onCreateAgent}
-                      aria-label={t('sidebar.createAgent')}
-                      title={t('sidebar.createAgent')}
-                    >
-                      <Plus size={15} />
-                    </button>
                   </div>
 
-                  {agents.length === 0 ? (
+                  {agents.length === 0 && !props.onCreateAgent ? (
                     <div className="projects-empty">
                       <Bot size={22} />
                       <strong>{t('sidebar.firstAgent')}</strong>
                     </div>
                   ) : (
-                    <div className="agent-list">
-                      {agents.map((agent) => (
-                        <div key={agent.id} className={`agent-item ${agent.id === activeAgentId ? 'active' : ''}`}>
-                          <button
-                            type="button"
-                            className="agent-item-main"
-                            title={agent.name}
-                            onClick={() => props.onStartAgent(agent)}
-                          >
-                            <AgentAvatar avatar={agent.avatar} size={30} />
-                            <span className="agent-item-name">{agent.name}</span>
-                            <ProviderLogo provider={agent.provider} size={12} />
-                          </button>
-                          {agent.canEdit && (
-                            <button
-                              type="button"
-                              className="agent-item-edit"
-                              aria-label={t('sidebar.editAgent', { name: agent.name })}
-                              onClick={() => props.onEditAgent(agent)}
-                            >
-                              <Pencil size={13} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <AgentCatalog
+                      agents={agents}
+                      activeAgentId={activeAgentId}
+                      currentUserId={props.currentUserId}
+                      modelLabel={props.agentModelLabel}
+                      onStart={props.onStartAgent}
+                      onEdit={props.onEditAgent}
+                      onDuplicate={props.onDuplicateAgent}
+                      onCreate={props.onCreateAgent}
+                    />
                   )}
                 </div>
               )}

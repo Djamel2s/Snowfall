@@ -189,6 +189,16 @@ hook dédié, quand une fonction de la phase 3 y touchera.
 
 ### Phase 3 — Confort LibreChat
 
+Fait le 17 octobre :
+- **Catalogue d'agents** : cartes (avatar, nom, modèle, outils), recherche,
+  filtre « les miens », duplication (la base de connaissances n'est pas copiée).
+- **Branches de conversation** : modifier ou régénérer crée une version ;
+  ‹ 1/2 › pour passer de l'une à l'autre.
+- Corrigé au passage, trouvé par les tests d'écran : sur mobile, choisir une
+  section dans la barre latérale refermait le tiroir.
+
+Suite :
+
 Dans l'ordre : branches de conversation → retour 👍👎 (relié aux traces et au banc)
 → partage interne → export/import → presets et paramètres → bibliothèque de
 prompts → conversation temporaire → mémoire → OCR local → catalogue d'agents.

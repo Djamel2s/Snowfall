@@ -742,6 +742,24 @@ export function createAppServer(deps: AppDependencies) {
       return { messages };
     });
 
+    // Branches : afficher une autre version d'un tour (modification, régénération).
+    api.post("/conversations/:id/branch", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      const body = z.object({ messageId: z.uuid() }).strict().safeParse(request.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+      // Pendant une réponse, la branche ne change pas sous ses pieds.
+      if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
+
+      if (!(await conversationStore.selectBranch(user, params.data.id, body.data.messageId))) {
+        return conversationNotFound(request, reply, user, params.data.id);
+      }
+      return { messages: await conversationStore.getMessages(user, params.data.id) };
+    });
+
     api.delete("/conversations/:id", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);

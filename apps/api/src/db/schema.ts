@@ -1,4 +1,4 @@
-﻿import {
+import {
   pgTable,
   uuid,
   text,
@@ -272,6 +272,8 @@ export const conversations = pgTable.withRLS(
     // Bases de connaissances consultées : celle de l'agent, celle du projet.
     useAgentKnowledge: boolean("use_agent_knowledge").notNull().default(true),
     useProjectKnowledge: boolean("use_project_knowledge").notNull().default(true),
+    // Branches : dernier message de la branche affichée (NULL : la plus récente).
+    currentLeafId: uuid("current_leaf_id"),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -319,6 +321,8 @@ export const messages = pgTable.withRLS(
     organizationId: uuid("organization_id").notNull(),
     userId: uuid("user_id").notNull(),
     role: text("role").notNull(),
+    // Message précédent dans la même branche (NULL : premier message).
+    parentId: uuid("parent_id"),
     content: text("content").notNull(),
     // Sources citées par une réponse (base de connaissances), JSON chiffré.
     sources: text("sources"),
@@ -345,6 +349,14 @@ export const messages = pgTable.withRLS(
       ],
     }).onDelete("cascade"),
     check("messages_role_check", sql`${table.role} IN ('user', 'assistant')`),
+    // Un parent est toujours un message de la MÊME conversation.
+    unique("messages_id_conversation_key").on(table.id, table.conversationId),
+    foreignKey({
+      name: "messages_parent_fk",
+      columns: [table.parentId, table.conversationId],
+      foreignColumns: [table.id, table.conversationId],
+    }).onDelete("cascade"),
+    index("messages_parent_idx").on(table.conversationId, table.parentId),
     tenantPolicy("messages_owner", table.organizationId, table.userId),
   ],
 );
