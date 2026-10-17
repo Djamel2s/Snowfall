@@ -194,6 +194,8 @@ Fait le 17 octobre :
   filtre « les miens », duplication (la base de connaissances n'est pas copiée).
 - **Branches de conversation** : modifier ou régénérer crée une version ;
   ‹ 1/2 › pour passer de l'une à l'autre.
+- **Retour 👍👎** sur les réponses : commentaire facultatif (chiffré) après 👎 ;
+  la note seule rejoint la trace de la réponse dans Langfuse.
 - Corrigé au passage, trouvé par les tests d'écran : sur mobile, choisir une
   section dans la barre latérale refermait le tiroir.
 

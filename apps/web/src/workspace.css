@@ -1215,3 +1215,51 @@
 .branch-switcher button:hover:not(:disabled) { background: rgba(255, 255, 255, .07); color: #e3f0ff; }
 .branch-switcher button:disabled { cursor: default; opacity: .35; }
 .branch-switcher span { min-width: 24px; text-align: center; }
+
+/* ---- Retour sur une réponse (👍👎) -------------------------------------- */
+
+.feedback-button.on { background: rgba(158, 202, 255, .12); color: #9ecaff; }
+.feedback-button.on svg { fill: rgba(158, 202, 255, .25); }
+
+.feedback-comment {
+  display: flex;
+  /* Sur sa propre ligne, sous les boutons. */
+  order: 10;
+  flex: 0 0 100%;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.feedback-comment input { max-width: 380px; }
+
+.feedback-comment input {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 12px;
+}
+
+.feedback-comment input:focus { border-color: rgba(185, 217, 255, .45); }
+
+.feedback-comment button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(185, 217, 255, .14);
+  color: #e3f0ff;
+  cursor: pointer;
+}
+
+.feedback-comment button:disabled { cursor: default; opacity: .4; }
+/* Le commentaire après 👎 passe sous les boutons. */
+.message-actions { flex-wrap: wrap; align-items: center; }

@@ -1,7 +1,8 @@
 import { context, SpanStatusCode, trace, type Attributes, type Span, type Tracer } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { BasicTracerProvider, BatchSpanProcessor, type SpanExporter } from "@opentelemetry/sdk-trace-base";
+import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator, type IdGenerator, type SpanExporter } from "@opentelemetry/sdk-trace-base";
+import { createHash } from "node:crypto";
 import type { TokenUsage } from "../graph/chat-graph.js";
 
 // Traces des agents, au standard OpenTelemetry (conventions « GenAI ») :
@@ -70,6 +71,11 @@ export interface RunTrace extends AgentTrace {
 
 export interface RunTracer {
   startRun(info: RunInfo): RunTrace;
+  /**
+   * Retour de l'utilisateur (👍 = 1, 👎 = 0, null : retiré) sur la trace d'un run.
+   * Seule la note part : jamais le commentaire. scoreId rend l'envoi idempotent.
+   */
+  score?(runId: string, scoreId: string, value: 1 | 0 | null): Promise<void>;
   /** Vide les traces en attente (arrêt du serveur). */
   shutdown(): Promise<void>;
 }
@@ -96,14 +102,51 @@ function fail(span: Span, error: unknown) {
   span.setStatus({ code: SpanStatusCode.ERROR, message: type });
 }
 
+/** Identifiant de trace déduit du run : un retour 👍👎 retrouve la trace de sa réponse. */
+export const traceIdOf = (runId: string) => createHash("sha256").update(`snowfall-run:${runId}`).digest("hex").slice(0, 32);
+
+/**
+ * Identifiants des spans : aléatoires, sauf l'identifiant de trace d'une
+ * réponse, fixé juste avant de créer sa span racine (appel synchrone).
+ */
+export class RunIdGenerator implements IdGenerator {
+  private readonly random = new RandomIdGenerator();
+  next: string | undefined;
+  generateTraceId() {
+    const id = this.next ?? this.random.generateTraceId();
+    this.next = undefined;
+    return id;
+  }
+  generateSpanId() {
+    return this.random.generateSpanId();
+  }
+}
+
 export class OtelRunTracer implements RunTracer {
   private readonly tracer: Tracer;
 
   constructor(
     private readonly provider: BasicTracerProvider,
     private readonly content: TraceContent,
+    private readonly ids?: RunIdGenerator,
+    private readonly scores?: { baseUrl: string; auth: string; fetcher: typeof fetch },
   ) {
     this.tracer = provider.getTracer("snowfall-agents");
+  }
+
+  async score(runId: string, scoreId: string, value: 1 | 0 | null) {
+    if (!this.scores) return;
+    const { baseUrl, auth, fetcher } = this.scores;
+    const response =
+      value === null
+        ? await fetcher(`${baseUrl}/api/public/scores/${encodeURIComponent(scoreId)}`, { method: "DELETE", headers: { Authorization: auth } })
+        : await fetcher(`${baseUrl}/api/public/scores`, {
+            method: "POST",
+            headers: { Authorization: auth, "Content-Type": "application/json" },
+            body: JSON.stringify({ id: scoreId, traceId: traceIdOf(runId), name: "user_feedback", value, dataType: "BOOLEAN" }),
+          });
+    await response.body?.cancel();
+    if (!response.ok && !(value === null && response.status === 404)) throw new Error(`LANGFUSE_${response.status}`);
   }
 
   startRun(info: RunInfo): RunTrace {
@@ -117,6 +160,8 @@ export class OtelRunTracer implements RunTracer {
       "snowfall.organization.id": info.organizationId,
     };
 
+    // Même trace pour tous les passages d'un run (reprise après validation ou panne).
+    if (this.ids) this.ids.next = traceIdOf(info.runId);
     const root = this.tracer.startSpan(`invoke_agent ${info.agent?.name ?? info.model}`, {
       attributes: {
         ...shared,
@@ -203,10 +248,16 @@ export class OtelRunTracer implements RunTracer {
 }
 
 /** Traces vers Langfuse (OTLP/HTTP, authentification Basic avec les clés du projet). */
-export function createLangfuseTracer(settings: { baseUrl: string; publicKey: string; secretKey: string; content: TraceContent }, exporter?: SpanExporter) {
+export function createLangfuseTracer(
+  settings: { baseUrl: string; publicKey: string; secretKey: string; content: TraceContent },
+  exporter?: SpanExporter,
+  fetcher: typeof fetch = fetch,
+) {
   const auth = Buffer.from(`${settings.publicKey}:${settings.secretKey}`).toString("base64");
+  const ids = new RunIdGenerator();
   const provider = new BasicTracerProvider({
     resource: resourceFromAttributes({ "service.name": "snowfall-api" }),
+    idGenerator: ids,
     spanProcessors: [
       new BatchSpanProcessor(
         exporter ??
@@ -217,7 +268,7 @@ export function createLangfuseTracer(settings: { baseUrl: string; publicKey: str
       ),
     ],
   });
-  return new OtelRunTracer(provider, settings.content);
+  return new OtelRunTracer(provider, settings.content, ids, { baseUrl: settings.baseUrl, auth: `Basic ${auth}`, fetcher });
 }
 
 /**

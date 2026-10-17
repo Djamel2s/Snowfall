@@ -38,6 +38,7 @@ const ORG = '11111111-1111-4111-8111-111111111111'
 export async function mockApi(page: Page, options: MockOptions = {}) {
   const role = options.role ?? 'admin'
   const unknown: string[] = []
+  const feedbackCalls: { messageId: string; rating: 'up' | 'down' | null; comment?: string }[] = []
   const conversations: { id: string; title: string; agentId: string | null; model: null; projectId: null; knowledge: { agent: boolean; project: boolean }; createdAt: string; updatedAt: string }[] = []
   const messages = new Map<string, { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[]>()
   let counter = 0
@@ -104,6 +105,12 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         return json(route, { messages: branchShown })
       }
       if (method === 'GET' && rest === '/messages') return json(route, { messages: messages.get(conversationId!) ?? [] })
+      const feedbackPath = /^\/messages\/([^/]+)\/feedback$/.exec(rest)
+      if (method === 'PUT' && feedbackPath) {
+        const body = request.postDataJSON() as { rating: 'up' | 'down' | null; comment?: string }
+        feedbackCalls.push({ messageId: feedbackPath[1]!, ...body })
+        return json(route, { feedback: body.rating ? body : null })
+      }
       if (method === 'GET' && rest === '/files') return json(route, { files: [] })
       if (method === 'GET' && rest === '/run') return json(route, { run: null })
       if (method === 'PATCH' && rest === '') return json(route, { conversation: conversations.find((item) => item.id === conversationId) })
@@ -123,5 +130,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown }
+  return { unknown, feedbackCalls }
 }

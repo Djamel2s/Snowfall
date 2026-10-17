@@ -323,6 +323,8 @@ export const messages = pgTable.withRLS(
     role: text("role").notNull(),
     // Message précédent dans la même branche (NULL : premier message).
     parentId: uuid("parent_id"),
+    // Run qui a produit la réponse : relie un retour 👍👎 à sa trace.
+    runId: uuid("run_id"),
     content: text("content").notNull(),
     // Sources citées par une réponse (base de connaissances), JSON chiffré.
     sources: text("sources"),
@@ -901,6 +903,36 @@ export const generatedFiles = pgTable.withRLS(
     ),
     check("generated_files_size_check", sql.raw(`size_bytes BETWEEN 1 AND ${GENERATED_FILE_MAX_BYTES}`)),
     tenantPolicy("generated_files_owner", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Retour des utilisateurs sur les réponses (👍👎) -------------------------
+// Une note par réponse, posée par l'auteur de la conversation ; commentaire
+// facultatif, chiffré. La note seule (jamais le commentaire) part vers les traces.
+export const messageFeedback = pgTable.withRLS(
+  "message_feedback",
+  {
+    messageId: uuid("message_id").primaryKey(),
+    conversationId: uuid("conversation_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    rating: integer("rating").notNull(),
+    comment: text("comment"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "message_feedback_message_fk",
+      columns: [table.messageId, table.conversationId],
+      foreignColumns: [messages.id, messages.conversationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "message_feedback_conversation_owner_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check("message_feedback_rating_check", sql`${table.rating} IN (-1, 1)`),
+    tenantPolicy("message_feedback_owner", table.organizationId, table.userId),
   ],
 );
 

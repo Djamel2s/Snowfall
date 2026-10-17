@@ -265,6 +265,29 @@ describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer
     assert.equal((await app.inject(post(`/conversations/${conversation.id}/branch`, { messageId: crypto.randomUUID() }))).statusCode, 404);
   });
 
+  it("retour 👍👎 : sur une réponse seulement, relu avec la conversation, audit sans commentaire", async (t) => {
+    const { app, store, events } = setup();
+    t.after(() => app.close());
+    const conversation = await store.create(member);
+    const exchange = (await store.appendExchange(member, conversation.id, "Q", "R"))!;
+    const put = (messageId: string, payload: unknown) => ({ ...post(`/conversations/${conversation.id}/messages/${messageId}/feedback`, payload), method: "PUT" as const });
+
+    const down = await app.inject(put(exchange.assistantMessage.id, { rating: "down", comment: "Source fausse : voir contrat Martin" }));
+    assert.equal(down.statusCode, 200);
+    assert.deepEqual((await store.getMessages(member, conversation.id))![1]!.feedback, { rating: "down", comment: "Source fausse : voir contrat Martin" });
+    // Le commentaire (peut contenir des données) n'est jamais dans l'audit.
+    const audited = events.find((event) => event.eventType === "message.feedback")!;
+    assert.deepEqual(audited.details, { rating: "down", comment: true });
+    assert.ok(!JSON.stringify(events).includes("Martin"));
+
+    assert.equal((await app.inject(put(exchange.assistantMessage.id, { rating: null }))).statusCode, 200);
+    assert.equal((await store.getMessages(member, conversation.id))![1]!.feedback, undefined);
+    // Pas de note sur une question, ni sur une réponse d'une autre conversation.
+    assert.equal((await app.inject(put(exchange.userMessage.id, { rating: "up" }))).statusCode, 404);
+    assert.equal((await app.inject(put(crypto.randomUUID(), { rating: "up" }))).statusCode, 404);
+    assert.equal((await app.inject(put(exchange.assistantMessage.id, { rating: "bof" }))).statusCode, 400);
+  });
+
   it("régénérer garde l'ancienne réponse comme autre version", async (t) => {
     const { app, store } = setup();
     t.after(() => app.close());

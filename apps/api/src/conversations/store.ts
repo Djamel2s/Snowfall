@@ -54,7 +54,11 @@ export type StoredMessage = {
   sources?: MessageSource[];
   /** Versions de ce tour (modification, régénération) : présent seulement s'il y en a plusieurs. */
   branch?: BranchInfo;
+  /** Retour de l'utilisateur sur une réponse. */
+  feedback?: MessageFeedback;
 };
+
+export type MessageFeedback = { rating: "up" | "down"; comment?: string };
 
 export type SearchHit = {
   id: string;
@@ -73,6 +77,8 @@ export type ExchangeOptions = {
   replaceFromMessageId?: string;
   /** Sources citées par la réponse. */
   sources?: MessageSource[];
+  /** Run qui a produit la réponse (retour 👍👎 → trace). */
+  runId?: string;
 };
 
 export interface ConversationStore {
@@ -109,6 +115,16 @@ export interface ConversationStore {
     assistantContent: string,
     options?: ExchangeOptions,
   ): Promise<{ userMessage: StoredMessage; assistantMessage: StoredMessage } | null>;
+  /**
+   * Retour sur une réponse (null : retiré). Renvoie le run qui l'a produite
+   * (pour noter sa trace), ou null si la réponse n'existe pas dans cette conversation.
+   */
+  setFeedback(
+    owner: ConversationOwner,
+    conversationId: string,
+    messageId: string,
+    feedback: MessageFeedback | null,
+  ): Promise<{ runId: string | null } | null>;
   /** Affiche une autre version d'un tour : la branche suit sa suite la plus récente. */
   selectBranch(owner: ConversationOwner, conversationId: string, messageId: string): Promise<boolean>;
   /** Régénération : nouvelle version de la dernière réponse (sœur), si elle n'a pas changé entre-temps. */
@@ -118,7 +134,12 @@ export interface ConversationStore {
     previousAssistantId: string,
     content: string,
     sources?: MessageSource[],
+    runId?: string,
   ): Promise<StoredMessage | null>;
+}
+
+export function feedbackAad(owner: ConversationOwner, messageId: string) {
+  return `message-feedback:${owner.organizationId}:${owner.userId}:${messageId}`;
 }
 
 // L'AAD lie chaque chiffré à son propriétaire et à sa ligne.
@@ -511,12 +532,26 @@ export class PostgresConversationStore implements ConversationStore {
         byMessage.set(row.messageId!, [...(byMessage.get(row.messageId!) ?? []), meta]);
       }
 
+      const ratings = await client.query<{ messageId: string; rating: number; comment: string | null }>(
+        `SELECT message_id AS "messageId", rating, comment FROM message_feedback
+         WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3 AND message_id = ANY($4::uuid[])`,
+        [conversationId, owner.userId, owner.organizationId, path],
+      );
+      const feedback = new Map<string, MessageFeedback>();
+      for (const row of ratings.rows) {
+        feedback.set(row.messageId, {
+          rating: row.rating > 0 ? "up" : "down",
+          ...(row.comment ? { comment: await this.keyring.decrypt(client, owner.organizationId, row.comment, feedbackAad(owner, row.messageId)) } : {}),
+        });
+      }
+
       const messages: StoredMessage[] = [];
       for (const { parentId: _parent, sortKey: _key, ...row } of result.rows) {
         const message = await this.decryptMessage(client, owner, conversationId, row);
         const attachments = byMessage.get(row.id);
         const branch = branches.get(row.id);
-        messages.push({ ...message, ...(attachments ? { attachments } : {}), ...(branch ? { branch } : {}) });
+        const rated = feedback.get(row.id);
+        messages.push({ ...message, ...(attachments ? { attachments } : {}), ...(branch ? { branch } : {}), ...(rated ? { feedback: rated } : {}) });
       }
       return messages;
     });
@@ -544,6 +579,7 @@ export class PostgresConversationStore implements ConversationStore {
     content: string,
     sources: MessageSource[] | undefined,
     parentId: string | null,
+    runId?: string,
   ) {
     const id = randomUUID();
     const encrypted = await this.keyring.encrypt(
@@ -557,10 +593,10 @@ export class PostgresConversationStore implements ConversationStore {
       : null;
     const result = await client.query<{ id: string; role: MessageRole; createdAt: string }>(
       `INSERT INTO messages
-         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, run_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
        RETURNING id, role, created_at AS "createdAt"`,
-      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId],
+      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId, runId ?? null],
     );
     const message: StoredMessage = { ...result.rows[0]!, content };
     if (sources?.length) message.sources = sources;
@@ -600,7 +636,7 @@ export class PostgresConversationStore implements ConversationStore {
       }
 
       const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent, undefined, parentId);
-      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id);
+      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id, options.runId);
 
       if (options.attachmentIds?.length) {
         const linked = await client.query<AttachmentMeta & { name: string }>(
@@ -655,6 +691,29 @@ export class PostgresConversationStore implements ConversationStore {
     return activePath(nodes, conversation.rows[0]?.leaf ?? null).path.at(-1) ?? null;
   }
 
+  async setFeedback(owner: ConversationOwner, conversationId: string, messageId: string, feedback: MessageFeedback | null) {
+    return withTenant(this.pool, owner, async (client) => {
+      const message = await client.query<{ runId: string | null }>(
+        `SELECT run_id AS "runId" FROM messages
+         WHERE id = $1 AND role = 'assistant' AND conversation_id = $2 AND user_id = $3 AND organization_id = $4`,
+        [messageId, conversationId, owner.userId, owner.organizationId],
+      );
+      if (!message.rowCount) return null;
+      if (!feedback) {
+        await client.query("DELETE FROM message_feedback WHERE message_id = $1 AND user_id = $2 AND organization_id = $3", [messageId, owner.userId, owner.organizationId]);
+      } else {
+        const comment = feedback.comment ? await this.keyring.encrypt(client, owner.organizationId, feedback.comment, feedbackAad(owner, messageId)) : null;
+        await client.query(
+          `INSERT INTO message_feedback (message_id, conversation_id, organization_id, user_id, rating, comment)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (message_id) DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, updated_at = now()`,
+          [messageId, conversationId, owner.organizationId, owner.userId, feedback.rating === "up" ? 1 : -1, comment],
+        );
+      }
+      return { runId: message.rows[0]!.runId };
+    });
+  }
+
   async selectBranch(owner: ConversationOwner, conversationId: string, messageId: string) {
     return withTenant(this.pool, owner, async (client) => {
       const conversation = await client.query(
@@ -679,6 +738,7 @@ export class PostgresConversationStore implements ConversationStore {
     previousAssistantId: string,
     content: string,
     sources?: MessageSource[],
+    runId?: string,
   ) {
     return withTenant(this.pool, owner, async (client) => {
       const conversation = await client.query(
@@ -699,7 +759,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!previous.rowCount) return null;
 
       // Nouvelle version, sœur de l'ancienne : celle-ci reste consultable.
-      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId);
+      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId, runId);
       await client.query(
         `UPDATE conversations SET current_leaf_id = $4, updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,

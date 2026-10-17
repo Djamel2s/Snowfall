@@ -36,7 +36,11 @@ export type Message = {
   sources?: MessageSource[]
   /** Versions de ce tour (modification, régénération), s'il y en a plusieurs. */
   branch?: MessageBranch
+  /** Ton retour sur une réponse. */
+  feedback?: MessageFeedback
 }
+
+export type MessageFeedback = { rating: 'up' | 'down'; comment?: string }
 
 export type MessageBranch = { index: number; count: number; siblings: string[] }
 
@@ -499,6 +503,13 @@ export const api = {
     stream<{ userMessage?: Message; assistantMessage?: Message }>(`/conversations/${conversationId}/approvals/${approvalId}`, { approved }, options),
 
   /** Réponse en cours dans la conversation (reconnexion), ou null. */
+  /** 👍 / 👎 sur une réponse (null : retiré). */
+  setFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback | null) =>
+    request<{ feedback: MessageFeedback | null }>(
+      `/conversations/${conversationId}/messages/${messageId}/feedback`,
+      json('PUT', feedback ? feedback : { rating: null }),
+    ),
+
   /** Afficher une autre version d'un message : renvoie la branche affichée. */
   selectBranch: async (conversationId: string, messageId: string) =>
     (await request<{ messages: Message[] }>(`/conversations/${conversationId}/branch`, json('POST', { messageId }))).messages,

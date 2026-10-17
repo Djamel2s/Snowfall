@@ -742,6 +742,37 @@ export function createAppServer(deps: AppDependencies) {
       return { messages };
     });
 
+    // Retour 👍👎 sur une réponse : enregistré (commentaire chiffré), tracé dans
+    // l'audit (note seule), et noté sur la trace de la réponse (note seule).
+    api.put("/conversations/:id/messages/:messageId/feedback", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+
+      const params = z.object({ id: conversationIdSchema, messageId: z.uuid() }).safeParse(request.params);
+      const body = z
+        .object({ rating: z.enum(["up", "down"]).nullable(), comment: z.string().trim().max(1_000).optional() })
+        .strict()
+        .safeParse(request.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const feedback = body.data.rating ? { rating: body.data.rating, ...(body.data.comment ? { comment: body.data.comment } : {}) } : null;
+      const saved = await conversationStore.setFeedback(user, params.data.id, params.data.messageId, feedback);
+      if (!saved) return conversationNotFound(request, reply, user, params.data.id);
+
+      await kit.record(request, user, {
+        eventType: "message.feedback",
+        targetType: "conversation",
+        targetId: params.data.id,
+        details: { rating: body.data.rating ?? "none", comment: Boolean(feedback?.comment) },
+      });
+      if (saved.runId && tracer.score) {
+        const value = body.data.rating === "up" ? 1 : body.data.rating === "down" ? 0 : null;
+        void tracer.score(saved.runId, `feedback-${params.data.messageId}`, value).catch((error: unknown) => request.log.warn({ err: error }, "Note de trace impossible"));
+      }
+      return { feedback };
+    });
+
     // Branches : afficher une autre version d'un tour (modification, régénération).
     api.post("/conversations/:id/branch", async (request, reply) => {
       const user = kit.principal(request);
@@ -1045,10 +1076,11 @@ export function createAppServer(deps: AppDependencies) {
                 attachmentIds: input.attachmentIds,
                 ...(input.editMessageId ? { replaceFromMessageId: input.editMessageId } : {}),
                 ...(sources.length ? { sources } : {}),
+                runId: run.id,
               })
               .then((exchange) => (exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null))
           : await conversationStore
-              .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined)
+              .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined, run.id)
               .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null));
       if (!payload) return null;
 

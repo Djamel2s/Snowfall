@@ -94,6 +94,28 @@ describe(
       );
     });
 
+    it("retour 👍👎 : commentaire chiffré, invisible d'un autre tenant, effacé avec la réponse", async () => {
+      const conv = await store.create(a, "Retour");
+      const exchange = (await store.appendExchange(a, conv.id, "Q", "R", { runId: randomUUID() }))!;
+      const saved = await store.setFeedback(a, conv.id, exchange.assistantMessage.id, { rating: "down", comment: "Erreur sur le dossier Orion" });
+      assert.match(saved!.runId!, /^[0-9a-f-]{36}$/);
+      assert.deepEqual((await store.getMessages(a, conv.id))![1]!.feedback, { rating: "down", comment: "Erreur sur le dossier Orion" });
+      // Une question ne se note pas ; un autre tenant ne note rien.
+      assert.equal(await store.setFeedback(a, conv.id, exchange.userMessage.id, { rating: "up" }), null);
+      assert.equal(await store.setFeedback(b, conv.id, exchange.assistantMessage.id, { rating: "up" }), null);
+
+      const raw = await withTenant(owner, a, (client) => client.query("SELECT rating, comment FROM message_feedback WHERE message_id = $1", [exchange.assistantMessage.id]));
+      assert.equal(raw.rows[0].rating, -1);
+      assert.ok(!String(raw.rows[0].comment).includes("Orion"));
+      await assert.rejects(
+        withTenant(owner, a, (client) => client.query("UPDATE message_feedback SET comment = 'en clair' WHERE message_id = $1", [exchange.assistantMessage.id])),
+        /message_feedback_comment_encrypted_check/,
+      );
+      await store.delete(a, conv.id);
+      const left = await withTenant(owner, a, (client) => client.query("SELECT 1 FROM message_feedback WHERE message_id = $1", [exchange.assistantMessage.id]));
+      assert.equal(left.rowCount, 0);
+    });
+
     it("refuse de créer une conversation sans appartenance", async () => {
       await assert.rejects(
         store.create({ userId: alice, organizationId: orgB }, "intrus"),

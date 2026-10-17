@@ -4,7 +4,7 @@ import { InMemorySpanExporter, type ReadableSpan } from "@opentelemetry/sdk-trac
 import { z } from "zod";
 import { defineTool } from "../agent/tools.js";
 import { createChatRunner, type ChatChunk, type ChatModel } from "../graph/chat-graph.js";
-import { createLangfuseTracer, maskPersonalData, startTraceRetention, type RunInfo } from "./tracing.js";
+import { createLangfuseTracer, maskPersonalData, startTraceRetention, traceIdOf, type RunInfo } from "./tracing.js";
 
 const settings = { baseUrl: "http://langfuse:3000", publicKey: "pk-lf-test", secretKey: "sk-lf-test" };
 
@@ -81,6 +81,33 @@ describe("Traces des agents (OpenTelemetry)", () => {
     assert.equal(tool.attributes["snowfall.tool.status"], "done");
     const calls = byName(spans, "chat");
     assert.deepEqual(calls.map((span) => span.attributes["gen_ai.usage.output_tokens"]).sort(), [10, 20]);
+  });
+
+  it("trace identifiée par le run : un retour 👍👎 retrouve la trace de sa réponse", async () => {
+    const spans = await traced();
+    const root = byName(spans, "invoke_agent")[0]!;
+    assert.equal(root.spanContext().traceId, traceIdOf(info().runId));
+    assert.match(root.spanContext().traceId, /^[0-9a-f]{32}$/);
+    // Un autre run, une autre trace ; les spans restent aléatoires.
+    const other = await traced({ runId: "99999999-9999-4999-8999-999999999999" });
+    assert.notEqual(byName(other, "invoke_agent")[0]!.spanContext().traceId, root.spanContext().traceId);
+  });
+
+  it("note de l'utilisateur : la note seule, idempotente, retirable", async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    const fetcher = (async (url: string, init: RequestInit) => {
+      calls.push({ url, method: init.method ?? "GET", ...(init.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const tracer = createLangfuseTracer({ ...settings, content: "masked" }, new InMemorySpanExporter(), fetcher);
+    await tracer.score!(info().runId, "feedback-m1", 0);
+    await tracer.score!(info().runId, "feedback-m1", null);
+    assert.deepEqual(calls[0], {
+      url: "http://langfuse:3000/api/public/scores",
+      method: "POST",
+      body: { id: "feedback-m1", traceId: traceIdOf(info().runId), name: "user_feedback", value: 0, dataType: "BOOLEAN" },
+    });
+    assert.deepEqual(calls[1], { url: "http://langfuse:3000/api/public/scores/feedback-m1", method: "DELETE" });
   });
 
   it("contenu masqué : ni e-mail, ni téléphone, ni IBAN, ni numéro de sécurité sociale", async () => {

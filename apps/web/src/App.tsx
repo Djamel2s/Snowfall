@@ -10,6 +10,7 @@ import {
   isPaused,
   type KnowledgeOwnerKind,
   type Message,
+  type MessageFeedback as Feedback,
   type ModelSelection,
   type Preferences,
   type ProviderCatalog,
@@ -32,6 +33,7 @@ import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import BranchSwitcher from './components/BranchSwitcher'
+import MessageFeedback from './components/MessageFeedback'
 import ArtifactPanel from './components/ArtifactPanel'
 import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
 import { useArtifactPanel } from './hooks/useArtifactPanel'
@@ -893,6 +895,31 @@ function App() {
     )
   }
 
+  /** Retour sur une réponse : affiché tout de suite, annulé si l'enregistrement échoue. */
+  async function rateMessage(messageId: string, feedback: Feedback | null) {
+    const conversation = activeConversation
+    if (!conversation) return
+    const apply = (value: Feedback | null | undefined) =>
+      updateConversation(conversation.id, (current) => ({
+        ...current,
+        messages: current.messages.map((item) => {
+          if (item.id !== messageId) return item
+          const next = { ...item }
+          if (value) next.feedback = value
+          else delete next.feedback
+          return next
+        }),
+      }))
+    const previous = conversation.messages.find((item) => item.id === messageId)?.feedback
+    apply(feedback)
+    try {
+      await api.setFeedback(conversation.id, messageId, feedback)
+    } catch (cause) {
+      apply(previous)
+      fail(cause, 'error.send')
+    }
+  }
+
   /** Autre version d'un message : la conversation affiche sa branche. */
   async function selectBranch(messageId: string) {
     const conversation = activeConversation
@@ -1194,6 +1221,9 @@ function App() {
                               >
                                 {copiedId === message.id ? <Check size={14} /> : <Copy size={14} />}
                               </button>
+                              {canWrite && (
+                                <MessageFeedback feedback={message.feedback} disabled={sending} onChange={(feedback) => rateMessage(message.id, feedback)} />
+                              )}
                               {message.id === lastAssistantId && canWrite && (
                                 <button
                                   className="copy-message"

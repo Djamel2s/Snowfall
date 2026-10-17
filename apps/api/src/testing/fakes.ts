@@ -1,5 +1,6 @@
 // Implémentations en mémoire pour les tests de routes (aucune base requise).
 import { activePath, latestLeaf } from "../conversations/branches.js";
+import type { MessageFeedback } from "../conversations/store.js";
 import type { AttachmentMeta } from "../attachments/store.js";
 import type { SessionStore } from "../auth/session-store.js";
 import type { TenantContext } from "../db/tenant.js";
@@ -29,10 +30,13 @@ export function createFakeConversationStore(): ConversationStore & {
     return path.map((messageId) => {
       const { parentId: _parent, ...message } = all.find((item) => item.id === messageId)!;
       const branch = branches.get(messageId);
-      return branch ? { ...message, branch } : message;
+      const rated = feedback.get(messageId);
+      return { ...message, ...(branch ? { branch } : {}), ...(rated ? { feedback: rated } : {}) };
     });
   };
   const leaf = (id: string) => view(id).at(-1)?.id ?? null;
+  const feedback = new Map<string, MessageFeedback>();
+  const runs = new Map<string, string>();
   const files = new Map<string, AttachmentMeta>();
   let clock = Date.now();
   const now = () => new Date((clock += 1)).toISOString();
@@ -108,6 +112,13 @@ export function createFakeConversationStore(): ConversationStore & {
 
     getMessages: async (owner, id) => (owns(owner, id) ? view(id) : null),
 
+    setFeedback: async (owner, id, messageId, rating) => {
+      if (!owns(owner, id) || !(messages.get(id) ?? []).some((item) => item.id === messageId && item.role === "assistant")) return null;
+      if (rating) feedback.set(messageId, rating);
+      else feedback.delete(messageId);
+      return { runId: runs.get(messageId) ?? null };
+    },
+
     selectBranch: async (owner, id, messageId) => {
       if (!owns(owner, id) || !(messages.get(id) ?? []).some((item) => item.id === messageId)) return false;
       leaves.set(id, latestLeaf(messages.get(id)!, messageId));
@@ -137,13 +148,14 @@ export function createFakeConversationStore(): ConversationStore & {
       if (options.sources?.length) assistantMessage.sources = options.sources;
       list.push(userMessage, assistantMessage);
       leaves.set(id, assistantMessage.id);
+      if (options.runId) runs.set(assistantMessage.id, options.runId);
       conversations.get(id)!.updatedAt = now();
       const { parentId: _u, ...user } = userMessage;
       const { parentId: _a, ...assistant } = assistantMessage;
       return { userMessage: user, assistantMessage: assistant };
     },
 
-    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources) => {
+    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources, runId) => {
       if (!owns(owner, id)) return null;
       const list = messages.get(id)!;
       const previous = list.find((item) => item.id === previousAssistantId && item.role === "assistant");
@@ -152,6 +164,7 @@ export function createFakeConversationStore(): ConversationStore & {
       if (sources?.length) replacement.sources = sources;
       list.push(replacement);
       leaves.set(id, replacement.id);
+      if (runId) runs.set(replacement.id, runId);
       const { parentId: _p, ...stored } = replacement;
       return stored;
     },

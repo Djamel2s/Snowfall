@@ -33,6 +33,7 @@ const privileges: Record<string, string[]> = {
   organization_settings: ["SELECT", "INSERT", "UPDATE"],
   token_usage: ["SELECT", "INSERT", "UPDATE"],
   tool_usage: ["SELECT", "INSERT", "UPDATE"],
+  message_feedback: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   projects: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   user_preferences: ["SELECT", "INSERT", "UPDATE"],

@@ -19,6 +19,7 @@ import type { CodeSandbox } from "./code-tool.js";
 import { MemoryMcpServerStore } from "../mcp/store.js";
 import type { McpDependencies } from "../routes/mcp.js";
 import { startFakeMcpServer } from "../testing/fake-mcp.js";
+import { noopTracer, type RunTracer } from "../observability/tracing.js";
 
 const ORIGIN = "http://localhost:5173";
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -94,6 +95,7 @@ async function instance(
     summarize?: Summarizer;
     sandbox?: CodeSandbox;
     mcp?: McpDependencies;
+    tracer?: RunTracer;
   } = {},
 ) {
   let current = alice;
@@ -124,6 +126,7 @@ async function instance(
     ...(options.summarize ? { summarize: options.summarize } : {}),
     ...(options.sandbox ? { sandbox: options.sandbox } : {}),
     ...(options.mcp ? { mcp: options.mcp } : {}),
+    ...(options.tracer ? { tracer: options.tracer } : {}),
     ...(options.timing ? { runTiming: options.timing } : {}),
     runChat: options.runChat ?? createChatRunner(options.model ?? notingModel),
   });
@@ -593,6 +596,26 @@ describe("Exécution durable : runs", () => {
     assert.equal(done.event, "done");
     assert.match((done.data as { assistantMessage: { content: string } }).assistantMessage.content, /^Début de réponse\.\n\n_Réponse interrompue : durée maximale/);
     assert.ok(db.events.some((event) => event.eventType === "agent.run_limit"));
+  });
+
+  it("retour 👎 sur une réponse : noté sur la trace du run qui l'a produite", async (t) => {
+    const started: string[] = [];
+    const scores: [string, string, number | null][] = [];
+    const tracer: RunTracer = {
+      ...noopTracer,
+      startRun: (info) => (started.push(info.runId), noopTracer.startRun(info)),
+      score: async (runId, scoreId, value) => void scores.push([runId, scoreId, value]),
+    };
+    const answering: ChatModel = { id: "a", supportsTools: true, async *stream() { yield { type: "token", text: "Réponse." }; } };
+    const api = await instance(sharedDatabase(), { model: answering, tracer });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["search_knowledge"]);
+    const done = (await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Q" }))).at(-1)!;
+    const answer = (done.data as { assistantMessage: { id: string } }).assistantMessage;
+    const put = await api.app.inject({ method: "PUT", url: `/conversations/${conversationId}/messages/${answer.id}/feedback`, headers: { origin: ORIGIN }, payload: { rating: "down" } });
+    assert.equal(put.statusCode, 200);
+    await until(async () => scores.length === 1);
+    assert.deepEqual(scores, [[started[0], `feedback-${answer.id}`, 0]]);
   });
 
   it("l'outil d'écriture n'est proposé que si l'organisation, l'agent et les droits le permettent", async (t) => {
