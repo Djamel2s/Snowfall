@@ -14,11 +14,13 @@ import {
   type StoredMessage,
 } from "../conversations/store.js";
 
-type FakeConversation = ConversationSummary & { owner: ConversationOwner };
+type FakeConversation = ConversationSummary & { owner: ConversationOwner; expiresAt?: number };
 
 export function createFakeConversationStore(): ConversationStore & {
   /** Pièces jointes connues du faux magasin (id → métadonnées). */
   files: Map<string, AttachmentMeta>;
+  /** Fait échoir une conversation temporaire (tests de purge). */
+  expire(conversationId: string): void;
 } {
   const conversations = new Map<string, FakeConversation>();
   // Tous les messages (toutes branches), avec leur parent ; feuille affichée par conversation.
@@ -45,7 +47,7 @@ export function createFakeConversationStore(): ConversationStore & {
     const conversation = conversations.get(id);
     return conversation?.owner.userId === owner.userId && conversation.owner.organizationId === owner.organizationId;
   };
-  const summary = ({ owner: _owner, ...rest }: FakeConversation): ConversationSummary => rest;
+  const summary = ({ owner: _owner, expiresAt: _expires, ...rest }: FakeConversation): ConversationSummary => rest;
   const message = (role: StoredMessage["role"], content: string, parentId: string | null): StoredMessage & { parentId: string | null } => ({
     id: crypto.randomUUID(),
     role,
@@ -56,15 +58,25 @@ export function createFakeConversationStore(): ConversationStore & {
 
   return {
     files,
+    expire: (conversationId) => {
+      const conversation = conversations.get(conversationId);
+      if (conversation?.temporary) conversation.expiresAt = 0;
+    },
+
+    expiredTemporary: async () =>
+      [...conversations.values()]
+        .filter((item) => item.temporary && (item.expiresAt ?? Infinity) <= Date.now())
+        .map((item) => ({ conversationId: item.id, ...item.owner })),
 
     list: async (owner) =>
       [...conversations.values()]
-        .filter((item) => owns(owner, item.id))
+        .filter((item) => owns(owner, item.id) && !item.temporary)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map(summary),
 
-    create: async (owner, title = "Nouvelle conversation", agentId, projectId, model) => {
+    create: async (owner, title = "Nouvelle conversation", agentId, projectId, model, options = {}) => {
       if (agentId && model) throw new Error("INVALID_SELECTION");
+      if (options.temporary && projectId) throw new Error("INVALID_SELECTION");
       const at = now();
       const conversation: FakeConversation = {
         id: crypto.randomUUID(),
@@ -74,6 +86,7 @@ export function createFakeConversationStore(): ConversationStore & {
         model: model ?? null,
         knowledge: { agent: true, project: true },
         projectId: projectId ?? null,
+        ...(options.temporary ? { temporary: true as const, expiresAt: Date.now() + 24 * 3_600_000 } : {}),
         createdAt: at,
         updatedAt: at,
       };
@@ -95,6 +108,7 @@ export function createFakeConversationStore(): ConversationStore & {
       }
       if (changes.knowledge) conversation.knowledge = { ...conversation.knowledge, ...changes.knowledge };
       if (changes.title !== undefined) conversation.title = changes.title;
+      if (changes.projectId && conversation.temporary) throw new Error("PROJECT_NOT_FOUND");
       if (changes.projectId !== undefined) conversation.projectId = changes.projectId;
       return summary(conversation);
     },
@@ -102,7 +116,7 @@ export function createFakeConversationStore(): ConversationStore & {
     search: async (owner, query) => {
       const needle = normalizeForSearch(query);
       return [...conversations.values()]
-        .filter((item) => owns(owner, item.id))
+        .filter((item) => owns(owner, item.id) && !item.temporary)
         .flatMap((item) => {
           const hit = (messages.get(item.id) ?? []).find((entry) => normalizeForSearch(entry.content).includes(needle));
           if (hit) return [{ id: item.id, title: item.title, snippet: hit.content.slice(0, 80) }];
@@ -111,6 +125,26 @@ export function createFakeConversationStore(): ConversationStore & {
     },
 
     getMessages: async (owner, id) => (owns(owner, id) ? view(id) : null),
+
+    importConversation: async (owner, title, imported) => {
+      const at = now();
+      const conversation: FakeConversation = {
+        id: crypto.randomUUID(),
+        owner: { userId: owner.userId, organizationId: owner.organizationId },
+        title,
+        agentId: null,
+        model: null,
+        knowledge: { agent: true, project: true },
+        projectId: null,
+        createdAt: at,
+        updatedAt: at,
+      };
+      conversations.set(conversation.id, conversation);
+      const list: (StoredMessage & { parentId: string | null })[] = [];
+      for (const entry of imported) list.push(message(entry.role, entry.content, list.at(-1)?.id ?? null));
+      messages.set(conversation.id, list);
+      return summary(conversation);
+    },
 
     setFeedback: async (owner, id, messageId, rating) => {
       if (!owns(owner, id) || !(messages.get(id) ?? []).some((item) => item.id === messageId && item.role === "assistant")) return null;

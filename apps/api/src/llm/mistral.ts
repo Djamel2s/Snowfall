@@ -1,7 +1,7 @@
 import { ChatMistralAI } from "@langchain/mistralai";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
 import type { ToolSpec } from "../agent/tools.js";
-import type { ChatModel, ChatTurn } from "../graph/chat-graph.js";
+import type { ChatModel, ChatTurn, GenerationOptions } from "../graph/chat-graph.js";
 import { conversationTurns, imageDataUrl } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
@@ -35,14 +35,19 @@ const toMistralTools = (tools: ToolSpec[]) =>
   tools.map((tool) => ({ type: "function" as const, function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
 
 export function createMistralModel(model: string, settings: ProviderSettings): ChatModel {
-  const llm = new ChatMistralAI({
-    apiKey: settings.apiKey,
-    model,
-    maxTokens: settings.maxOutputTokens,
-    temperature: 0.3,
-    maxRetries: 2,
-    streamUsage: true,
-  });
+  // Un client par combinaison de réglages (température, longueur) : peu nombreuses.
+  const clients = new Map<string, ChatMistralAI>();
+  const clientFor = (generation: GenerationOptions | undefined) => {
+    const temperature = generation?.temperature ?? 0.3;
+    const maxTokens = Math.min(generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens);
+    const key = `${temperature}:${maxTokens}`;
+    let llm = clients.get(key);
+    if (!llm) {
+      llm = new ChatMistralAI({ apiKey: settings.apiKey, model, maxTokens, temperature, maxRetries: 2, streamUsage: true });
+      clients.set(key, llm);
+    }
+    return llm;
+  };
 
   return {
     id: `mistral:${model}`,
@@ -50,9 +55,10 @@ export function createMistralModel(model: string, settings: ProviderSettings): C
 
     async *stream(request, signal) {
       const timeout = AbortSignal.timeout(settings.timeoutMs);
+      const llm = clientFor(request.generation);
       const runnable = request.tools?.length ? llm.bindTools(toMistralTools(request.tools)) : llm;
       const stream = await runnable.stream(
-        [new SystemMessage(buildSystemPrompt(request.instructions, request.summary)), ...toMistralMessages(conversationTurns(request))],
+        [new SystemMessage(buildSystemPrompt(request.instructions, request.summary, request.memories)), ...toMistralMessages(conversationTurns(request))],
         { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
       );
 

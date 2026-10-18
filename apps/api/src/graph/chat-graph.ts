@@ -1,4 +1,5 @@
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
+import { exposureOf, gateOutbound, type Exposure } from "../agent/exposure.js";
 import type { AgentTrace } from "../observability/tracing.js";
 import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
 
@@ -62,11 +63,18 @@ export type ChatRequest = {
   instructions?: string | undefined;
   /** Résumé des échanges anciens (compaction), donné comme contexte. */
   summary?: string | undefined;
+  /** Mémoire de l'utilisateur (s'il l'a activée) : faits courts, donnés comme contexte. */
+  memories?: string[] | undefined;
   /** Transcription complète (boucle d'agent) : remplace history + message. */
   turns?: ChatTurn[] | undefined;
   /** Outils proposés au modèle pour ce tour. */
   tools?: ToolSpec[] | undefined;
+  /** Réglages de génération (agent) ; absents : ceux du fournisseur. */
+  generation?: GenerationOptions | undefined;
 };
+
+/** Température (0 à 1) et longueur maximale ; plafonnées par la plateforme. */
+export type GenerationOptions = { temperature?: number; maxOutputTokens?: number };
 
 export interface ChatModel {
   /** Identifiant tracé dans l'audit, ex. "mistral:mistral-small-latest". */
@@ -150,6 +158,7 @@ export type ChatRunner = (
     instructions?: string | undefined;
     /** Résumé des échanges anciens (compaction). */
     summary?: string | undefined;
+    memories?: string[] | undefined;
     /** Outils disponibles : active la boucle d'agent. */
     tools?: AgentTool[] | undefined;
     /** Nombre maximal d'aller-retour modèle ↔ outils. */
@@ -159,6 +168,7 @@ export type ChatRunner = (
      * modèle est rappelé SANS outils et doit conclure. Borne le coût d'une réponse.
      */
     maxTokens?: number | undefined;
+    generation?: GenerationOptions | undefined;
   },
   options?: {
     onToken?: (text: string) => void;
@@ -207,6 +217,7 @@ const AgentState = Annotation.Root({
   turns: Annotation<ChatTurn[]>({ reducer: (current, added) => current.concat(added), default: () => [] }),
   instructions: Annotation<string | undefined>,
   summary: Annotation<string | undefined>,
+  memories: Annotation<string[] | undefined>,
   /** Texte visible produit par le modèle, toutes étapes confondues. */
   response: Annotation<string>,
   usage: Annotation<TokenUsage | undefined>,
@@ -237,7 +248,7 @@ export function buildAgentGraph(
   model: ChatModel,
   tools: AgentTool[],
   maxSteps: number,
-  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver; trace?: AgentTrace; maxTokens?: number } = {},
+  options: { approve?: Approver; checkpointer?: BaseCheckpointSaver; trace?: AgentTrace; maxTokens?: number; generation?: GenerationOptions } = {},
 ) {
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
   const specs = tools.map(toolSpec);
@@ -262,7 +273,9 @@ export function buildAgentGraph(
         turns: state.turns,
         instructions: state.instructions,
         summary: state.summary,
+        ...(state.memories?.length ? { memories: state.memories } : {}),
         ...(offerTools ? { tools: specs } : {}),
+        ...(options.generation ? { generation: options.generation } : {}),
       };
       const span = options.trace?.model({ step: state.steps });
       try {
@@ -310,14 +323,15 @@ export function buildAgentGraph(
         steps: calls.length ? state.steps + 1 : state.steps,
       };
     })
-    .addNode("tool", async (input: { call: ToolCall }, config) => {
+    .addNode("tool", async (input: { call: ToolCall; exposure?: Exposure }, config) => {
       const { call } = input;
       const signal = config.signal ?? new AbortController().signal;
       config.writer?.({ tool: { id: call.id, name: call.name, status: "running" } satisfies ToolEvent });
       const span = options.trace?.tool({ name: call.name, callId: call.id, input: call.arguments });
       let result: Awaited<ReturnType<typeof runTool>>;
       try {
-        result = await runTool(tools, call, signal, approve);
+        // Règle de deux : réponse exposée → les appels sortants demandent l'accord.
+        result = await runTool(gateOutbound(tools, input.exposure), call, signal, approve);
       } catch (error) {
         // Pause pour validation : ce n'est pas une erreur (l'outil reprendra après la décision).
         span?.end({ status: isGraphInterrupt(error) ? "waiting" : "error" });
@@ -341,7 +355,9 @@ export function buildAgentGraph(
       "model",
       (state: State) => {
         const calls = lastCalls(state.turns).slice(0, MAX_TOOL_CALLS_PER_STEP);
-        return calls.length ? calls.map((call) => new Send("tool", { call })) : END;
+        // Exposition calculée sur les tours déjà écrits : même décision à la reprise.
+        const exposure = exposureOf(state.turns);
+        return calls.length ? calls.map((call) => new Send("tool", { call, exposure })) : END;
       },
       ["tool", END],
     )
@@ -356,6 +372,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
     const durable = options.durable;
     const graph = buildAgentGraph(model, tools, maxSteps, {
       ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
+      ...(input.generation ? { generation: input.generation } : {}),
       ...(options.approve ? { approve: options.approve } : {}),
       ...(durable ? { checkpointer: durable.checkpointer } : {}),
       ...(options.trace ? { trace: options.trace } : {}),
@@ -376,7 +393,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
         ? new Command({ resume: durable.resume })
         : durable?.continue
           ? null
-          : { turns, instructions: input.instructions, summary: input.summary, response: "", usage: undefined, steps: 0 },
+          : { turns, instructions: input.instructions, summary: input.summary, memories: input.memories, response: "", usage: undefined, steps: 0 },
       { ...config, streamMode: ["custom", "values"] },
     );
 

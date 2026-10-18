@@ -20,10 +20,14 @@ import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
 import McpSettings from './McpSettings'
+import MyDataSettings from './MyDataSettings'
+import MemorySettings from './MemorySettings'
 
 type Props = {
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
+  /** Conversations importées : la liste est relue. */
+  onConversationsImported: () => void
 }
 
 const roles: Role[] = ['owner', 'admin', 'member', 'reader']
@@ -59,7 +63,7 @@ function Meter({ label, used, limit }: { label: string; used: number; limit: num
   )
 }
 
-export default function SettingsPanel({ preferences, onPreferencesChange }: Props) {
+export default function SettingsPanel({ preferences, onPreferencesChange, onConversationsImported }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
   const session = getSession()
   const isAdmin = session.user.role === 'owner' || session.user.role === 'admin'
@@ -256,6 +260,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
             </div>
           </section>
 
+          <MemorySettings enabled={preferences.memory} onToggle={(memory) => updatePreferences({ memory })} onError={setError} />
+
           <section className="settings-card" aria-label={t('settings.usage')}>
             <h3>{t('settings.usage')}</h3>
             {usage ? (
@@ -284,6 +290,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange }: Prop
               <p className="settings-hint">{t('common.loading')}</p>
             )}
           </section>
+
+          <MyDataSettings onImported={onConversationsImported} onError={setError} />
 
         </>
       )}

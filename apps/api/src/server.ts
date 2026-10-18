@@ -26,7 +26,7 @@ import {
   type ModelRegistry,
 } from "./llm/registry.js";
 import { providerIds, type ModelSelection, type ProviderId, type ProviderSettings } from "./llm/types.js";
-import { agentProfileSchema } from "./agents/profile.js";
+import { agentProfileSchema, generationOf } from "./agents/profile.js";
 import { PostgresAgentStore, type Agent, type AgentStore } from "./agents/store.js";
 import databasePlugin from "./plugins/database.js";
 import {
@@ -90,6 +90,16 @@ import {
 } from "./workspace/settings.js";
 import { createRouteKit } from "./routes/kit.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { parseImport } from "./conversations/import.js";
+import { MemoryPromptStore, PostgresPromptStore, type PromptStore } from "./prompts/store.js";
+import { InMemoryUserMemoryStore, PostgresUserMemoryStore, type UserMemoryStore } from "./memory/store.js";
+import { registerMemoryRoutes } from "./routes/memory.js";
+import { memoryTool } from "./agent/memory-tool.js";
+import { carriesNotice, guardTools } from "./agent/injection-guard.js";
+import { UnixSocketOcr, type DocumentOcr } from "./ocr/client.js";
+import { PostgresAgentRatingStore, type AgentRating, type AgentRatingStore } from "./agents/ratings.js";
+import { registerPromptRoutes } from "./routes/prompts.js";
+import { MemoryShareStore, PostgresShareStore, SHARE_DURATIONS, type ShareStore } from "./shares/store.js";
 import { meterOf, MemoryToolUsageStore, type OrganizationSettings, type ToolUsageStore } from "./workspace/settings.js";
 import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
 import { PostgresMcpServerStore } from "./mcp/store.js";
@@ -209,6 +219,16 @@ export type AppDependencies = {
   mcp?: McpDependencies;
   /** Fichiers produits par le code. Absent : en mémoire. */
   generatedFiles?: GeneratedFileStore;
+  /** Liens de partage internes. Absent : en mémoire. */
+  shares?: ShareStore;
+  /** Bibliothèque de prompts. Absent : en mémoire. */
+  prompts?: PromptStore;
+  /** Mémoire des utilisateurs (utilisée seulement s'ils l'ont activée). */
+  memories?: UserMemoryStore;
+  /** OCR local des documents numérisés (absent : non lus). */
+  ocr?: DocumentOcr;
+  /** Taux de réponses utiles par agent (agrégat de l'organisation). */
+  agentRatings?: AgentRatingStore;
   /** Traces des agents (OpenTelemetry → Langfuse). Absent : aucune trace. */
   tracer?: RunTracer;
   /** Résumés de compaction des longues conversations. Absent : en mémoire. */
@@ -293,6 +313,9 @@ export function createAppServer(deps: AppDependencies) {
   const tracer = deps.tracer ?? noopTracer;
   const generatedFiles = deps.generatedFiles ?? new MemoryGeneratedFileStore();
   const toolUsage = deps.toolUsage ?? new MemoryToolUsageStore();
+  const shares = deps.shares ?? new MemoryShareStore();
+  const prompts = deps.prompts ?? new MemoryPromptStore();
+  const memories = deps.memories ?? new InMemoryUserMemoryStore();
   /** Identifiant de cette instance (bail des runs qu'elle exécute). */
   const instance = `api-${randomUUID()}`;
   const localRuns = new Map<string, { stop: (reason: "cancel" | "lost" | "shutdown") => void }>();
@@ -369,7 +392,8 @@ export function createAppServer(deps: AppDependencies) {
     agentId: z.uuid().optional(),
     projectId: z.uuid().optional(),
     model: modelSelectionSchema.optional(),
-  }).strict().refine((body) => !(body.agentId && body.model));
+    temporary: z.boolean().optional(),
+  }).strict().refine((body) => !(body.agentId && body.model) && !(body.temporary && body.projectId));
 
   // agentId / model : qui répond. Les deux à null = modèle par défaut.
   const updateConversationSchema = z.object({
@@ -606,11 +630,13 @@ export function createAppServer(deps: AppDependencies) {
           parsed.data.agentId,
           parsed.data.projectId,
           parsed.data.model,
+          { temporary: parsed.data.temporary === true },
         );
         await kit.record(request, user, {
           eventType: "conversation.create",
           targetType: "conversation",
           targetId: conversation.id,
+          ...(conversation.temporary ? { details: { temporary: true } } : {}),
         });
         return reply.code(201).send({ conversation });
       } catch (error) {
@@ -721,8 +747,10 @@ export function createAppServer(deps: AppDependencies) {
         ),
     });
     if (deps.mcp) registerMcpRoutes(api, kit, deps.mcp);
+    registerPromptRoutes(api, kit, prompts);
+    registerMemoryRoutes(api, kit, memories);
 
-    if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments, deps.scanner);
+    if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments, deps.scanner, deps.ocr);
     if (deps.knowledge) {
       registerKnowledgeRoutes(api, kit, { knowledge: deps.knowledge, agents, canManageAgent, scanner: deps.scanner });
     }
@@ -900,6 +928,169 @@ export function createAppServer(deps: AppDependencies) {
         request.log.error({ err: error }, "Recherche dans la base de connaissances impossible");
         return { mode: "none" };
       }
+    }
+
+    // ---- Mes données (RGPD : droit d'accès et portabilité) ----------------------
+    // Tout ce que la plateforme conserve sur l'utilisateur, déchiffré, en JSON.
+    const checkExportLimit = api.createRateLimit({ max: 3, timeWindow: "1 minute", keyGenerator: (request) => `export:${kit.principal(request).userId}` });
+    api.get("/me/export", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const limit = await checkExportLimit(request);
+      if (!limit.isAllowed && limit.isExceeded) return reply.code(429).send({ error: "Too many requests" });
+
+      const conversations = [];
+      for (const conversation of await conversationStore.list(user)) {
+        const messages = (await conversationStore.getMessages(user, conversation.id)) ?? [];
+        conversations.push({
+          id: conversation.id,
+          title: conversation.title,
+          createdAt: conversation.createdAt,
+          messages: messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+            createdAt: message.createdAt,
+            ...(message.sources?.length ? { sources: message.sources.map((source) => ({ n: source.n, name: source.name })) } : {}),
+            ...(message.attachments?.length ? { attachments: message.attachments.map((file) => file.name) } : {}),
+            ...(message.feedback ? { feedback: message.feedback } : {}),
+          })),
+        });
+      }
+      const myAgents = agents ? (await agents.list(user)).filter((agent) => agent.createdBy === user.userId) : [];
+      const extra = await personalData(user);
+      await kit.record(request, user, { eventType: "privacy.export", targetType: "user", targetId: user.userId, details: { conversations: conversations.length } });
+      reply.header("Content-Disposition", 'attachment; filename="mes-donnees-snowfall.json"');
+      return {
+        format: "snowfall.personal-data",
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        account: { userId: user.userId, organizationId: user.organizationId, role: user.role },
+        preferences: deps.preferences ? await deps.preferences.get(user) : null,
+        conversations,
+        agents: myAgents.map((agent) => ({ name: agent.name, instructions: agent.instructions, provider: agent.provider, model: agent.model, tools: agent.tools, createdAt: agent.createdAt })),
+        ...extra,
+      };
+    });
+
+    // ---- Import de conversations (ChatGPT, LibreChat, Snowfall) ----------------
+    const checkImportLimit = api.createRateLimit({ max: 5, timeWindow: "1 minute", keyGenerator: (request) => `import:${kit.principal(request).userId}` });
+    api.post("/conversations/import", { bodyLimit: 25 * 1024 * 1024 }, async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+      const limit = await checkImportLimit(request);
+      if (!limit.isAllowed && limit.isExceeded) return reply.code(429).send({ error: "Too many requests" });
+
+      const parsed = parseImport(request.body);
+      if (!parsed) return reply.code(400).send({ error: "Invalid request", reason: "unknown_format" });
+      let messages = 0;
+      for (const conversation of parsed.conversations) {
+        await conversationStore.importConversation(user, conversation.title, conversation.messages);
+        messages += conversation.messages.length;
+      }
+      await kit.record(request, user, {
+        eventType: "conversation.import",
+        targetType: "user",
+        targetId: user.userId,
+        details: { format: parsed.format, conversations: parsed.conversations.length, messages, skipped: parsed.skipped },
+      });
+      return reply.code(201).send({ imported: parsed.conversations.length, skipped: parsed.skipped, format: parsed.format });
+    });
+
+    // ---- Partage interne ----------------------------------------------------
+    // Un lien fige la branche affichée ; lisible par les membres de l'organisation
+    // jusqu'à son expiration. Jamais pour une conversation sur une base confidentielle.
+
+    api.post("/conversations/:id/shares", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      const body = z.object({ days: z.number().int().refine((days) => (SHARE_DURATIONS as readonly number[]).includes(days)) }).strict().safeParse(request.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const loaded = await loadConversation(request, reply, user, params.data.id);
+      if (!loaded) return reply;
+      // Une conversation temporaire ne survit pas à 24 h : elle ne se partage pas.
+      if (loaded.conversation.temporary) {
+        await kit.record(request, user, { eventType: "share.denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "temporary" } });
+        return reply.code(409).send({ error: "Conflict", reason: "temporary" });
+      }
+      if ((await activeBases(user, loaded.conversation, loaded.agent)).some((base) => base.confidential)) {
+        await kit.record(request, user, { eventType: "share.denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "confidential" } });
+        return reply.code(409).send({ error: "Conflict", reason: "confidential" });
+      }
+      if (loaded.history.length === 0) return reply.code(400).send({ error: "Invalid request", reason: "empty" });
+
+      // Instantané minimal : texte des messages, nom des sources (pas leurs extraits :
+      // une base de projet est privée), ni pièces jointes ni fichiers produits.
+      const share = await shares.create(user, {
+        conversationId: params.data.id,
+        title: loaded.conversation.title,
+        days: body.data.days,
+        snapshot: {
+          ...(loaded.agent ? { agent: { name: loaded.agent.name, avatar: loaded.agent.avatar } } : {}),
+          messages: loaded.history.map((message) => ({
+            role: message.role,
+            content: message.content,
+            createdAt: message.createdAt,
+            ...(message.sources?.length ? { sources: message.sources.map((source) => ({ n: source.n, name: source.name })) } : {}),
+          })),
+        },
+      });
+      await kit.record(request, user, {
+        eventType: "share.create",
+        targetType: "share",
+        targetId: share.id,
+        details: { conversationId: params.data.id, days: body.data.days, messages: loaded.history.length },
+      });
+      return reply.code(201).send({ share });
+    });
+
+    api.get("/conversations/:id/shares", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      if (!(await conversationStore.get(user, params.data.id))) return conversationNotFound(request, reply, user, params.data.id);
+      return { shares: await shares.list(user, params.data.id) };
+    });
+
+    api.delete("/shares/:id", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = z.object({ id: z.uuid() }).safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      if (!(await shares.delete(user, params.data.id))) return reply.code(404).send({ error: "Not found" });
+      await kit.record(request, user, { eventType: "share.revoke", targetType: "share", targetId: params.data.id });
+      return reply.code(204).send();
+    });
+
+    // Le jeton voyage dans le corps (jamais dans l'adresse : elle finit dans les journaux).
+    const checkShareOpenLimit = api.createRateLimit({ max: 30, timeWindow: "1 minute", keyGenerator: (request) => `share-open:${kit.principal(request).userId}` });
+    api.post("/shares/open", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const limit = await checkShareOpenLimit(request);
+      if (!limit.isAllowed && limit.isExceeded) return reply.code(429).send({ error: "Too many requests" });
+      const body = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict().safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+      const opened = await shares.open(user, body.data.token);
+      if (!opened) {
+        await kit.record(request, user, { eventType: "share.view", outcome: "denied", targetType: "share", details: { reason: "unknown_or_expired" } });
+        return reply.code(404).send({ error: "Not found" });
+      }
+      if (!opened.mine) await kit.record(request, user, { eventType: "share.view", targetType: "share", targetId: opened.id });
+      return { share: opened };
+    });
+
+    /** Données personnelles des autres modules (prompts, mémoire), pour l'export RGPD. */
+    async function personalData(user: AuthenticatedUser): Promise<Record<string, unknown>> {
+      const mine = (await prompts.list(user)).filter((prompt) => prompt.mine);
+      return {
+        prompts: mine.map(({ name, content, shared, updatedAt }) => ({ name, content, shared, updatedAt })),
+        memories: (await memories.list(user)).map(({ content, createdAt }) => ({ content, createdAt })),
+      };
     }
 
     /** Outils permis pour cette réponse : organisation ∩ agent (voir agent/catalog.ts). */
@@ -1228,7 +1419,8 @@ export function createAppServer(deps: AppDependencies) {
           model: selection ? `${selection.provider}:${selection.model}` : provider,
           agent: agent ? { id: agent.id, name: agent.name } : undefined,
           resumed: !mode.start,
-          confidential,
+          // Conversation temporaire : comme une base confidentielle, rien du contenu dans la trace.
+          confidential: confidential || conversation.temporary === true,
           question: mode.start ? run.request.content : undefined,
         });
         // Reprise : le modèle doit toujours être autorisé (l'admin a pu changer d'avis).
@@ -1259,8 +1451,36 @@ export function createAppServer(deps: AppDependencies) {
           codeRuns: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "run_code").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
+        // Mémoire : activée par l'utilisateur, jamais en conversation temporaire ni
+        // confidentielle (rien n'en sort, rien n'y entre).
+        const memoryOn = !conversation.temporary && !confidential && deps.preferences ? (await deps.preferences.get(user)).memory : false;
+        const remembered = memoryOn ? (await memories.list(user)).map((memory) => memory.content) : [];
+        if (memoryOn && kit.canWrite(user) && models.supportsTools?.(selection)) {
+          tools.push(
+            memoryTool({
+              store: memories,
+              tenant: user,
+              audit: (event) => kit.record(request, user, { eventType: "memory.create", targetType: "memory", ...event, details: { ...event.details, source: "agent" } }),
+            }),
+          );
+        }
         const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
-        const metered = tools.map((tool) => meteredTool(request, user, tool, limits));
+        // Garde contre les injections : contenus suspects avertis et audités ; une
+        // écriture demandée ensuite porte une alerte sur sa carte de validation.
+        const startTexts = [input.message, ...input.history.map((turn) => turn.content), ...earlier.map((turn) => turn.content)];
+        const taint = { tainted: carriesNotice(startTexts) };
+        if (mode.start && carriesNotice([input.message])) {
+          await kit.record(request, user, { eventType: "agent.injection_suspected", targetType: "conversation", targetId: run.conversationId, details: { source: "attachment" } });
+        }
+        const guarded = guardTools(tools, taint, (tool, verdict) => {
+          void kit.record(request, user, {
+            eventType: "agent.injection_suspected",
+            targetType: "conversation",
+            targetId: run.conversationId,
+            details: { source: "tool", tool, signals: verdict.signals.join(","), score: verdict.score },
+          });
+        });
+        const metered = guarded.map((tool) => meteredTool(request, user, tool, limits));
 
         const result = await runnerFor(selection)(
           {
@@ -1269,7 +1489,10 @@ export function createAppServer(deps: AppDependencies) {
             images: input.images,
             instructions: agent?.instructions,
             summary: input.summary,
+            ...(remembered.length ? { memories: remembered } : {}),
             ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: deps.agentMaxTokens } : {}),
+            // Réglages de l'agent (créativité, longueur), plafonnés par chaque fournisseur.
+            ...(agent && Object.keys(generationOf(agent.parameters)).length ? { generation: generationOf(agent.parameters) } : {}),
           },
           {
             signal: controller.signal,
@@ -1433,6 +1656,8 @@ export function createAppServer(deps: AppDependencies) {
       tool: approval.name,
       title: approval.preview.title,
       detail: approval.preview.detail ?? "",
+      ...(approval.preview.warning ? { warning: true } : {}),
+      ...(approval.preview.exposure ? { exposure: true } : {}),
     });
 
     /** Lance un nouveau run et en diffuse les événements. */
@@ -1499,11 +1724,32 @@ export function createAppServer(deps: AppDependencies) {
       }
     }
 
+    /** Conversations temporaires échues : effacées comme une suppression par leur auteur. */
+    async function purgeTemporary() {
+      const system = { ip: "system", id: "temporary-purge", log: app.log } as unknown as FastifyRequest;
+      for (const expired of (await conversationStore.expiredTemporary?.()) ?? []) {
+        const owner = { organizationId: expired.organizationId, userId: expired.userId };
+        try {
+          if (!(await conversationStore.delete(owner, expired.conversationId))) continue;
+          await kit.record(system, { ...owner, role: "reader" }, {
+            eventType: "conversation.purge",
+            targetType: "conversation",
+            targetId: expired.conversationId,
+            details: { reason: "temporary_expired" },
+          });
+        } catch (error) {
+          app.log.error({ err: error, conversation: expired.conversationId }, "Purge de la conversation temporaire impossible");
+        }
+      }
+    }
+
     api.addHook("onReady", async () => {
       recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
+      purgeTemporary().catch((error: unknown) => app.log.error({ err: error }, "Purge des conversations temporaires impossible"));
     });
     const recovery = setInterval(() => {
       recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
+      purgeTemporary().catch((error: unknown) => app.log.error({ err: error }, "Purge des conversations temporaires impossible"));
     }, RUN_RECOVERY_MS);
     recovery.unref();
     // Arrêt du serveur : les runs locaux s'interrompent sans rien effacer ; leur
@@ -1912,7 +2158,14 @@ export function createAppServer(deps: AppDependencies) {
     api.get("/agents", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
-      return { agents: (await store.list(user)).map((agent) => view(user, agent)) };
+      // Taux de 👍 de l'organisation (à partir de 5 avis), pour le catalogue.
+      const ratings = deps.agentRatings ? await deps.agentRatings.ratings(user).catch(() => ({})) : {};
+      return {
+        agents: (await store.list(user)).map((agent) => {
+          const rating = (ratings as Record<string, AgentRating>)[agent.id];
+          return { ...view(user, agent), ...(rating ? { rating } : {}) };
+        }),
+      };
     });
 
     api.post("/agents", async (request, reply) => {
@@ -2246,7 +2499,9 @@ export function createProductionServer() {
   const settingsStore = new PostgresSettingsStore(pool);
   // Le logger n'existe qu'après création de l'application : branché par référence.
   const knowledgeLog: { current: FastifyBaseLogger | null } = { current: null };
+  const ocr = config.ocrSocket ? new UnixSocketOcr(config.ocrSocket) : undefined;
   const knowledge = new KnowledgeService({
+    ocr,
     store: new PostgresKnowledgeStore(pool, keyring),
     embeddings,
     settings: settingsStore,
@@ -2278,6 +2533,11 @@ export function createProductionServer() {
       ? { mcp: { store: new PostgresMcpServerStore(pool, keyring), ...(process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY === "1" ? {} : { checkAddress: publicAddressOnly }) } }
       : {}),
     generatedFiles: new PostgresGeneratedFileStore(pool, keyring),
+    shares: new PostgresShareStore(pool, keyring),
+    prompts: new PostgresPromptStore(pool, keyring),
+    ...(ocr ? { ocr } : {}),
+    memories: new PostgresUserMemoryStore(pool, keyring),
+    agentRatings: new PostgresAgentRatingStore(pool),
     // Traces vers Langfuse auto-hébergé, si configuré.
     ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),
     summarize: createSummarizer((selection) => models.runner(selection)),
@@ -2352,6 +2612,7 @@ export function createProductionServer() {
       knowledgeLinks: config.knowledge.links,
       rerank: config.knowledge.rerank?.model ?? "off",
       antivirus: config.antivirus ? `clamav://${config.antivirus.host}:${config.antivirus.port}` : "off",
+      ocr: config.ocrSocket ? "local" : "off",
     },
     "Fournisseurs LLM configurés",
   );

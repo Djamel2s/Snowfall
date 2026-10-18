@@ -18,15 +18,17 @@ import {
   Check,
   MoreHorizontal,
   TextSearch,
+  ScrollText,
 } from 'lucide-react'
-import type { Agent, Preferences, Project, SearchHit } from '../lib/api'
+import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import AgentStudio from './AgentStudio'
 import SettingsPanel from './SettingsPanel'
 import AgentCatalog from './AgentCatalog'
+import PromptLibrary from './PromptLibrary'
 import KnowledgePanel from './KnowledgePanel'
 
-export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'settings'
+export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'settings'
 
 export type SidebarConversation = {
   id: string
@@ -81,6 +83,11 @@ type SidebarProps = {
   currentUserId: string
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
+  onConversationsImported: () => void
+  prompts: Prompt[]
+  canWrite: boolean
+  onPromptsChange: (prompts: Prompt[]) => void
+  onUsePrompt: (prompt: Prompt) => void
 }
 
 /** Champ de saisie en place (nouveau projet, renommage). */
@@ -327,6 +334,7 @@ export default function Sidebar(props: SidebarProps) {
               { id: 'chats', label: t('sidebar.chats'), icon: MessageSquare },
               { id: 'projects', label: t('sidebar.projects'), icon: Folder },
               { id: 'agents', label: t('sidebar.agents'), icon: Bot },
+              { id: 'prompts', label: t('prompts.title'), icon: ScrollText },
             ] as const
           ).map(({ id, label, icon: Icon }) => (
             <button
@@ -381,8 +389,10 @@ export default function Sidebar(props: SidebarProps) {
               onSaved={props.onAgentSaved}
               onDeleted={props.onAgentDeleted}
             />
+          ) : sidebarPanel === 'prompts' ? (
+            <PromptLibrary prompts={props.prompts} canWrite={props.canWrite} onChange={props.onPromptsChange} onUse={props.onUsePrompt} />
           ) : sidebarPanel === 'settings' ? (
-            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} />
+            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onConversationsImported={props.onConversationsImported} />
           ) : (
             <>
               <button className="new-chat-button" onClick={props.onNewChat} disabled={creating}>

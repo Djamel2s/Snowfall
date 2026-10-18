@@ -7,6 +7,7 @@ import {
   type ToolId,
   type Agent,
   type AgentAvatarData,
+  type AgentParameters,
   type McpServer,
   type AlienAvatar,
   type ProviderCatalog,
@@ -50,6 +51,8 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
   // Serveurs MCP approuvés par l'admin, et ceux confiés à l'agent.
   const [mcpServers, setMcpServers] = useState<McpServer[]>([])
   const [agentMcp, setAgentMcp] = useState<string[]>(agent?.mcpServers ?? [])
+  // Réglages des réponses (créativité, longueur) ; non réglés : ceux du fournisseur.
+  const [parameters, setParameters] = useState<AgentParameters>(agent?.parameters ?? {})
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState(notice ?? '')
@@ -132,7 +135,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
     setError('')
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [] },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], parameters },
         agent?.id,
       )
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
@@ -324,6 +327,38 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
           ))}
         </div>
       )}
+
+      <div className="studio-parameters" role="group" aria-label={t('studio.answers')}>
+        <span className="studio-parameters-label">{t('studio.creativity')}</span>
+        <div className="settings-segmented" role="radiogroup" aria-label={t('studio.creativity')}>
+          {([undefined, 'precise', 'balanced', 'creative'] as const).map((value) => (
+            <button
+              key={value ?? 'auto'}
+              type="button"
+              role="radio"
+              aria-checked={parameters.creativity === value}
+              onClick={() =>
+                setParameters((current) => {
+                  const next = { ...current }
+                  if (value) next.creativity = value
+                  else delete next.creativity
+                  return next
+                })
+              }
+            >
+              {t(`studio.creativity.${value ?? 'auto'}`)}
+            </button>
+          ))}
+        </div>
+        <span className="studio-parameters-label">{t('studio.length')}</span>
+        <div className="settings-segmented" role="radiogroup" aria-label={t('studio.length')}>
+          {(['complete', 'concise'] as const).map((value) => (
+            <button key={value} type="button" role="radio" aria-checked={(parameters.length ?? 'complete') === value} onClick={() => setParameters({ ...parameters, length: value })}>
+              {t(`studio.length.${value}`)}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {agent ? (
         <KnowledgePanel kind="agents" ownerId={agent.id} />

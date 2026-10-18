@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { BookOpen, Copy, Globe, Pencil, Plug, Plus, Search, SquareTerminal } from 'lucide-react'
+import { BookOpen, Copy, Globe, Pencil, Plug, Plus, Search, SquareTerminal, ThumbsUp } from 'lucide-react'
 import type { Agent, ToolId } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
@@ -91,6 +91,12 @@ export default function AgentCatalog({ agents, activeAgentId, currentUserId, mod
                       const Icon = toolIcons[tool]!
                       return <Icon key={tool} size={11} aria-hidden="true" />
                     })}
+                  </span>
+                )}
+                {agent.rating && (
+                  <span className="agent-card-rating" title={t('agents.rating', { count: agent.rating.total })}>
+                    <ThumbsUp size={10} aria-hidden="true" />
+                    {Math.round((agent.rating.up / agent.rating.total) * 100)} %
                   </span>
                 )}
               </button>

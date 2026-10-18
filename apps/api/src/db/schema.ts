@@ -274,6 +274,9 @@ export const conversations = pgTable.withRLS(
     useProjectKnowledge: boolean("use_project_knowledge").notNull().default(true),
     // Branches : dernier message de la branche affichée (NULL : la plus récente).
     currentLeafId: uuid("current_leaf_id"),
+    // Conversation temporaire : hors historique et recherche, sans contenu dans
+    // les traces, impossible à partager ; effacée 24 h après sa création.
+    temporary: boolean("temporary").notNull().default(false),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -566,6 +569,8 @@ export const userPreferences = pgTable.withRLS(
     locale: text("locale"),
     sendOnEnter: boolean("send_on_enter").notNull().default(true),
     reduceMotion: text("reduce_motion").notNull().default("system"),
+    // Mémoire : désactivée tant que l'utilisateur ne l'a pas activée.
+    memoryEnabled: boolean("memory_enabled").notNull().default(false),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -903,6 +908,93 @@ export const generatedFiles = pgTable.withRLS(
     ),
     check("generated_files_size_check", sql.raw(`size_bytes BETWEEN 1 AND ${GENERATED_FILE_MAX_BYTES}`)),
     tenantPolicy("generated_files_owner", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Bibliothèque de prompts --------------------------------------------------
+// Prompts réutilisables (variables {{nom}}), privés ou partagés avec
+// l'organisation. Nom et contenu chiffrés. Lecture : les siens et ceux partagés ;
+// écriture : son auteur seulement.
+export const prompts = pgTable.withRLS(
+  "prompts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    content: text("content").notNull(),
+    shared: boolean("shared").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("prompts_organization_idx").on(table.organizationId),
+    pgPolicy("prompts_read", {
+      as: "permissive",
+      for: "select",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND (${table.shared} OR ${table.userId} = ${currentUser})`,
+    }),
+    tenantPolicy("prompts_owner", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Mémoire de l'utilisateur ---------------------------------------------------
+// Faits courts retenus à sa demande (validation de chaque ajout). Privée :
+// seul l'utilisateur la lit, l'administrateur non plus. Contenu chiffré.
+export const userMemories = pgTable.withRLS(
+  "user_memories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("user_memories_owner_idx").on(table.organizationId, table.userId, table.createdAt),
+    foreignKey({
+      name: "user_memories_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    tenantPolicy("user_memories_owner", table.organizationId, table.userId),
+  ],
+);
+
+// ---- Partage interne d'une conversation ---------------------------------------
+// Un lien fige un instantané de la branche affichée, lisible par les membres de
+// l'organisation jusqu'à son expiration. Jeton : seul son hachage sert à la
+// recherche ; le jeton lui-même (pour le recopier), le titre et l'instantané
+// sont chiffrés. Lecture : toute l'organisation ; création, suppression : l'auteur.
+export const conversationShares = pgTable.withRLS(
+  "conversation_shares",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    conversationId: uuid("conversation_id").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    token: text("token").notNull(),
+    title: text("title").notNull(),
+    snapshot: text("snapshot").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("conversation_shares_token_idx").on(table.tokenHash),
+    index("conversation_shares_conversation_idx").on(table.conversationId),
+    foreignKey({
+      name: "conversation_shares_conversation_owner_fk",
+      columns: [table.conversationId, table.organizationId, table.userId],
+      foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
+    }).onDelete("cascade"),
+    check("conversation_shares_token_hash_check", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check("conversation_shares_expiry_check", sql`${table.expiresAt} > ${table.createdAt} AND ${table.expiresAt} <= ${table.createdAt} + interval '31 days'`),
+    pgPolicy("conversation_shares_read", { as: "permissive", for: "select", to: "public", using: sql`${table.organizationId} = ${currentOrganization}` }),
+    tenantPolicy("conversation_shares_owner", table.organizationId, table.userId),
   ],
 );
 

@@ -144,6 +144,16 @@ describe("Flux d'appels d'outils", () => {
     assert.equal(body?.tools?.length, 1);
   });
 
+  it("réglages de l'agent : température transmise, longueur plafonnée ; refusée aux modèles de raisonnement", async () => {
+    const settings = { apiKey: "x", baseUrl: `http://127.0.0.1:${port}/v1`, maxOutputTokens: 800, timeoutMs: 5_000 };
+    await collect(createOpenAiCompatibleModel("local", "llama", settings).stream({ history: [], message: "x", generation: { temperature: 0.9, maxOutputTokens: 5_000 } }));
+    const sent = body as unknown as { temperature?: number; max_tokens?: number };
+    assert.deepEqual([sent.temperature, sent.max_tokens], [0.9, 800]);
+    await collect(createOpenAiCompatibleModel("openai", "gpt-5-mini", settings).stream({ history: [], message: "x", generation: { temperature: 0.9, maxOutputTokens: 300 } }));
+    const reasoning = body as unknown as { temperature?: number; max_completion_tokens?: number };
+    assert.deepEqual([reasoning.temperature, reasoning.max_completion_tokens], [undefined, 300]);
+  });
+
   const realFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = realFetch;

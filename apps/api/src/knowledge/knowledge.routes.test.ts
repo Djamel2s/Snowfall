@@ -8,6 +8,9 @@ import type { AuditEvent } from "../audit/audit.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
 import type { ChatRunner } from "../graph/chat-graph.js";
 import type { ModelRegistry } from "../llm/registry.js";
+import { makePdf } from "../attachments/fixtures.js";
+import type { DocumentOcr } from "../ocr/client.js";
+import { looksScanned } from "../ocr/client.js";
 import { createAppServer } from "../server.js";
 import { createFakeConversationStore, createFakeKnowledgeStore } from "../testing/fakes.js";
 import { defaultSettings, type OrganizationSettings, type SettingsStore } from "../workspace/settings.js";
@@ -30,14 +33,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers };
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers, parameters: input.parameters ?? existing.parameters };
       agents.set(id, agent);
       return agent;
     },
@@ -86,6 +89,7 @@ function setup(
     tools?: boolean;
     runChat?: ChatRunner;
     webSearch?: boolean;
+    ocr?: DocumentOcr;
   } = {},
 ) {
   let current = alice;
@@ -115,6 +119,7 @@ function setup(
     audit,
     log: () => app.log,
     linksEnabled: true,
+    ...(options.ocr ? { ocr: options.ocr } : {}),
     fetchTesting: { resolve: () => [{ address: "127.0.0.1", family: 4 }], isAllowedAddress: () => true, anyPort: true },
   });
   const app = createAppServer({
@@ -489,5 +494,60 @@ describe("Bases de connaissances : routes", () => {
     await knowledge.recover();
     await knowledge.idle();
     assert.equal((await knowledge.store.getSource(alice, orphan.id))?.status, "ready");
+  });
+});
+
+describe("OCR local : documents numérisés", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
+
+  it("détection d'un PDF sans couche texte", () => {
+    assert.equal(looksScanned("", makePdf("")), true);
+    assert.equal(looksScanned("Les congés payés sont de 27 jours ouvrés par an, selon l'accord.", makePdf("x")), false);
+  });
+
+  it("sans OCR : image refusée avec un motif clair ; avec OCR : image et PDF numérisé indexés", async (t) => {
+    const without = setup();
+    t.after(() => without.app.close());
+    const plain = await createAgent(without.app);
+    const refused = await without.app.inject(upload(`/agents/${plain.id}/knowledge/files`, "scan.png", png));
+    assert.equal(refused.statusCode, 415);
+    assert.equal(refused.json().reason, "image");
+
+    const read: string[] = [];
+    const ocr: DocumentOcr = {
+      recognize: async (_bytes, mediaType) => {
+        read.push(mediaType);
+        return mediaType === "image/png" ? "Badge visiteur : accueil niveau 2" : "Contrat Orion signé le 3 mars 2026";
+      },
+    };
+    const { app, knowledge, calls } = setup({ ocr });
+    t.after(() => app.close());
+    const agent = await createAgent(app);
+    assert.equal((await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "scan.png", png))).statusCode, 202);
+    assert.equal((await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "contrat.pdf", makePdf("")))).statusCode, 202);
+    await knowledge.idle();
+    assert.deepEqual(read.sort(), ["application/pdf", "image/png"]);
+    const listed = (await app.inject({ method: "GET", url: `/agents/${agent.id}/knowledge` })).json().knowledge;
+    assert.deepEqual(listed.sources.map((source: { status: string }) => source.status), ["ready", "ready"]);
+
+    const conversation = (await app.inject(json("POST", "/conversations", { agentId: agent.id }))).json().conversation;
+    await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Quand le contrat Orion a-t-il été signé ?" }));
+    assert.match(calls.at(-1)!.message, /3 mars 2026/);
+  });
+
+  it("OCR en panne : l'image échoue proprement, le PDF garde son texte d'origine", async (t) => {
+    const ocr: DocumentOcr = { recognize: async () => { throw new Error("OCR_UNAVAILABLE"); } };
+    const { app, knowledge } = setup({ ocr });
+    t.after(() => app.close());
+    const agent = await createAgent(app);
+    await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "scan.png", png));
+    await knowledge.idle();
+    await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "annexe.pdf", makePdf("Annexe 7 du contrat")));
+    await knowledge.idle();
+    const listed = (await app.inject({ method: "GET", url: `/agents/${agent.id}/knowledge` })).json().knowledge;
+    const byName = Object.fromEntries(listed.sources.map((source: { name: string; status: string; errorCode: string | null }) => [source.name, source]));
+    assert.equal(byName["scan.png"].status, "error");
+    assert.equal(byName["scan.png"].errorCode, "ocr_failed");
+    assert.equal(byName["annexe.pdf"].status, "ready");
   });
 });

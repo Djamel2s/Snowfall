@@ -148,12 +148,12 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
             signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
             body: JSON.stringify({
               // Début de requête stable (prompt système, puis historique) : le cache implicite de Gemini s'applique.
-              systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary) }] },
+              systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary, chat.memories) }] },
               contents: toGeminiContents(conversationTurns(chat)),
               ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
               generationConfig: {
-                maxOutputTokens: settings.maxOutputTokens,
-                temperature: 0.3,
+                maxOutputTokens: Math.min(chat.generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens),
+                temperature: chat.generation?.temperature ?? 0.3,
                 ...(NO_THINKING.test(model)
                   ? {}
                   : {

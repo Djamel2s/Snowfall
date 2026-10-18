@@ -102,6 +102,8 @@ const envSchema = z.object({
   WEB_SEARCH_URL: z.union([z.url(), z.literal("")]).optional(),
   // Interpréteur de code : socket Unix du bac à sable (ex. /run/sandbox/sandbox.sock). Absent : indisponible.
   SANDBOX_SOCKET: z.string().optional(),
+  // OCR local des documents numérisés : socket Unix du service (ex. /run/ocr/ocr.sock). Absent : non lus.
+  OCR_SOCKET: z.string().optional(),
   // Serveurs d'outils MCP (ajoutés et approuvés par les admins). Désactivé par défaut.
   MCP_ENABLED: z.enum(["true", "false"]).default("false"),
   // Traces des agents (OpenTelemetry → Langfuse auto-hébergé). Absent : aucune trace.
@@ -161,6 +163,7 @@ export type AppConfig = {
   tracing: { baseUrl: string; publicKey: string; secretKey: string; content: "masked" | "none"; retentionDays: number } | undefined;
   webSearchUrl: string | undefined;
   sandboxSocket: string | undefined;
+  ocrSocket: string | undefined;
   mcpEnabled: boolean;
   knowledge: {
     embeddingModels: { mistral: string; openai: string; google: string; local: string | undefined };
@@ -348,6 +351,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tracing: tracingConfig(e),
     webSearchUrl: e.WEB_SEARCH_URL ? e.WEB_SEARCH_URL.replace(/\/$/, "") : undefined,
     sandboxSocket: e.SANDBOX_SOCKET || undefined,
+    ocrSocket: e.OCR_SOCKET || undefined,
     mcpEnabled: e.MCP_ENABLED === "true",
     knowledge: {
       embeddingModels: {

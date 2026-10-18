@@ -314,8 +314,8 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
     it("préférences par membre", async () => {
       const preferences = new PostgresPreferencesStore(pool);
       assert.equal((await preferences.get(tenant(memberA))).locale, null);
-      await preferences.update(tenant(memberA), { locale: "en", sendOnEnter: false, reduceMotion: "on" });
-      assert.deepEqual(await preferences.get(tenant(memberA)), { locale: "en", sendOnEnter: false, reduceMotion: "on" });
+      await preferences.update(tenant(memberA), { locale: "en", sendOnEnter: false, reduceMotion: "on", memory: true });
+      assert.deepEqual(await preferences.get(tenant(memberA)), { locale: "en", sendOnEnter: false, reduceMotion: "on", memory: true });
       assert.equal((await preferences.get(tenant(adminA))).locale, null);
     });
   });

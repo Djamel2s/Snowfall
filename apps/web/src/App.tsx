@@ -1,15 +1,13 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { getSession, logout as endSession } from './auth/session'
 import {
   api,
   type Agent,
   type AttachmentMeta,
-  type AgentStep,
-  type RunSnapshot,
-  approvalStep,
   isPaused,
   type KnowledgeOwnerKind,
   type Message,
+  type Prompt,
   type MessageFeedback as Feedback,
   type ModelSelection,
   type Preferences,
@@ -22,7 +20,7 @@ import { toAttachmentImage } from './lib/image'
 import './App.css'
 import './agents.css'
 import './workspace.css'
-import { ArrowUp, BookOpen, Check, Copy, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
+import { ArrowUp, BookOpen, Check, Copy, Hourglass, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
 import Sidebar, { type SidebarPanel } from './components/Sidebar'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
@@ -33,11 +31,16 @@ import AgentSteps from './components/AgentSteps'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import BranchSwitcher from './components/BranchSwitcher'
+import ConversationMenu from './components/ConversationMenu'
+import SharedView from './components/SharedView'
+import PromptPicker from './components/PromptPicker'
+import PromptVariables from './components/PromptVariables'
+import { promptVariables, slashQuery } from './lib/prompts'
 import MessageFeedback from './components/MessageFeedback'
 import ArtifactPanel from './components/ArtifactPanel'
 import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
 import { useArtifactPanel } from './hooks/useArtifactPanel'
-import { useReasoning } from './hooks/useReasoning'
+import { useRun } from './hooks/useRun'
 import { useGeneratedFiles } from './hooks/useGeneratedFiles'
 import { usePinnedConversations } from './hooks/usePinnedConversations'
 import { migrateLegacyProjects } from './lib/legacy-projects'
@@ -60,6 +63,8 @@ type Conversation = {
   /** Bases de connaissances consultées (agent, projet). */
   knowledge: { agent: boolean; project: boolean }
   projectId: string | null
+  /** Hors historique, sans contenu dans les traces, effacée sous 24 h. */
+  temporary?: boolean
   messages: Message[]
   updatedAt: number
 }
@@ -75,7 +80,7 @@ type PendingFile = {
   attachment?: AttachmentMeta
 }
 
-const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduceMotion: 'system' }
+const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduceMotion: 'system', memory: false }
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 const ACCEPT = '.pdf,.docx,.txt,.md,.csv,.json,image/png,image/jpeg,image/webp'
 const DOCUMENT_MAX = 10 * 1024 * 1024
@@ -101,6 +106,9 @@ function Snowfall() {
   )
 }
 
+/** Jeton d'un lien de partage, dans le fragment de l'adresse (jamais envoyé au serveur avec elle). */
+const readShareToken = () => /^#partage=([A-Za-z0-9_-]{43})$/.exec(window.location.hash)?.[1] ?? null
+
 const toConversation = (item: {
   id: string
   title: string
@@ -108,8 +116,10 @@ const toConversation = (item: {
   model?: ModelSelection | null
   knowledge?: { agent: boolean; project: boolean }
   projectId: string | null
+  temporary?: boolean
   updatedAt: string
 }): Conversation => ({
+  ...(item.temporary ? { temporary: true } : {}),
   id: item.id,
   title: item.title,
   agentId: item.agentId,
@@ -128,30 +138,36 @@ function App() {
   const [loadedId, setLoadedId] = useState<string | null>(null)
   // Conversations créées ici : rien à charger depuis le serveur (sinon le message en cours d'envoi serait écrasé).
   const freshIds = useRef(new Set<string>())
+  // Mode temporaire : s'applique aux nouvelles conversations jusqu'à ce qu'on le coupe.
+  const [temporaryMode, setTemporaryMode] = useState(false)
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
-  const [streamingText, setStreamingText] = useState('')
-  // Étapes de l'agent pendant la réponse (outils appelés), remplacées à chaque nouvel état.
-  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([])
-  const onStep = (step: AgentStep) =>
-    setAgentSteps((current) => (current.some((item) => item.id === step.id) ? current.map((item) => (item.id === step.id ? { ...item, ...step } : item)) : [...current, step]))
-  // Conversation dont la réponse s'écrit (ou attend une validation).
-  const streamingIdRef = useRef<string | null>(null)
-  // Réponse en pause : elle attend ta décision sur une action (exécution durable).
-  const [paused, setPaused] = useState(false)
-  // Réflexion du modèle : en direct, puis rattachée à la réponse (cette session
-  // seulement : elle n'est jamais enregistrée).
   const { artifact, openArtifact, closeArtifact } = useArtifactPanel()
+  // Lien de partage ouvert (#partage=…) : vue en lecture seule à la place de la conversation.
+  const [sharedToken, setSharedToken] = useState(readShareToken)
+  useEffect(() => {
+    const onHash = () => setSharedToken(readShareToken())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+  const closeShared = () => {
+    history.replaceState(null, '', window.location.pathname)
+    setSharedToken(null)
+  }
   // Copie des conversations lisible à la fin d'une réponse (ouverture de son artifact).
   const conversationsRef = useRef({ conversations, activeId })
   useEffect(() => {
     conversationsRef.current = { conversations, activeId }
   }, [conversations, activeId])
-  const { reasoning, reasoningByMessage, onReasoning, showReasoning, keepReasoning } = useReasoning()
   const { generatedFiles, refreshFiles } = useGeneratedFiles()
-  // Régénération : la dernière réponse est masquée pendant qu'une nouvelle s'écrit.
-  const [regenerating, setRegenerating] = useState(false)
+  // Réponse en cours (flux, étapes, réflexion, validations, reprise) : voir hooks/useRun.ts.
+  const run = useRun({
+    updateMessages: (conversationId, update) => updateConversation(conversationId, (conversation) => ({ ...conversation, messages: update(conversation.messages) })),
+    onFinished: finishAnswer,
+    onFailed: (cause) => fail(cause, 'error.send'),
+    onStart: () => setError(''),
+  })
+  const { sending, streamingText, agentSteps, paused, regenerating, reasoning, reasoningByMessage } = run
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
   const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -176,6 +192,11 @@ function App() {
   const [pickerOpen, setPickerOpen] = useState(false)
   // Mention « @… » en cours dans le message : position du « @ » et texte tapé.
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null)
+  // Bibliothèque de prompts : « / » en début de saisie, puis variables à renseigner.
+  const [prompts, setPrompts] = useState<Prompt[]>([])
+  const [promptQuery, setPromptQuery] = useState<string | null>(null)
+  const [pendingPrompt, setPendingPrompt] = useState<Prompt | null>(null)
+  const promptPickerRef = useRef<PickerControl>(null)
   const pickerRef = useRef<PickerControl>(null)
   // Sources prêtes par base (« agents:<id> », « projects:<id> ») : affiche les bascules.
   const [knowledgeCounts, setKnowledgeCounts] = useState<Record<string, number>>({})
@@ -183,11 +204,11 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  const stoppedRef = useRef(false)
 
   const messagesLoading = activeId !== null && loadedId !== activeId
   const activeConversation = conversations.find((conversation) => conversation.id === activeId)
+  const listedConversations = useMemo(() => conversations.filter((conversation) => !conversation.temporary), [conversations])
+  const temporaryShown = Boolean(activeConversation?.temporary || (!activeConversation && temporaryMode))
   const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
   const activeAgent = responder.kind === 'agent' ? responder.agent : null
   const agentKnowledge = activeAgent ? (knowledgeCounts[`agents:${activeAgent.id}`] ?? 0) : 0
@@ -222,8 +243,6 @@ function App() {
     bottomRef.current?.scrollIntoView({ behavior: streamingText ? 'auto' : 'smooth', block: 'end' })
   }, [activeConversation?.messages, sending, streamingText])
 
-  useEffect(() => () => abortRef.current?.abort(), [])
-
   // Chargement initial : conversations, agents, projets, préférences.
   useEffect(() => {
     let cancelled = false
@@ -251,6 +270,7 @@ function App() {
 
     void load()
     api.listAgents().then((items) => !cancelled && setAgents(items)).catch(() => undefined)
+    api.listPrompts().then((items) => !cancelled && setPrompts(items)).catch(() => undefined)
     api.modelCatalog().then((items) => !cancelled && setCatalog(items)).catch(() => undefined)
     api
       .getPreferences()
@@ -281,7 +301,7 @@ function App() {
         updateConversation(id, (conversation) => ({ ...conversation, messages }))
         void refreshFiles(id)
         // Réponse encore en cours ou en attente de validation : on la retrouve.
-        void resumeRun(id)
+        void run.resume(id)
       } catch (cause) {
         if (!cancelled) fail(cause, 'error.loadMessages')
       } finally {
@@ -350,6 +370,20 @@ function App() {
     }
   }, [search])
 
+  /** Liste relue depuis le serveur (après un import) : les conversations ouvertes gardent leurs messages. */
+  async function reloadConversations() {
+    try {
+      const history = await api.listConversations()
+      setConversations((current) => [
+        // Les temporaires ne sont jamais dans l'historique : celle qui est ouverte reste.
+        ...current.filter((known) => known.temporary),
+        ...history.map((item) => current.find((known) => known.id === item.id) ?? toConversation(item)),
+      ])
+    } catch (cause) {
+      fail(cause, 'error.loadConversations')
+    }
+  }
+
   function updateConversation(id: string, updater: (conversation: Conversation) => Conversation) {
     setConversations((current) =>
       current.map((conversation) => (conversation.id === id ? updater(conversation) : conversation)),
@@ -362,10 +396,11 @@ function App() {
   }
 
   /** keepInput : création au premier envoi, le message tapé est gardé. */
-  async function newChat(agent?: Agent, options: { keepInput?: boolean } = {}): Promise<Conversation | null> {
+  async function newChat(agent?: Agent, options: { keepInput?: boolean; temporary?: boolean } = {}): Promise<Conversation | null> {
+    const temporary = options.temporary ?? temporaryMode
     if (creating) return null
 
-    abortRef.current?.abort()
+    run.detach()
     setError('')
     if (!options.keepInput) setInput('')
     setSidebarOpen(false)
@@ -382,7 +417,8 @@ function App() {
             )
           ? { model: last.selection }
           : {}
-    const base = activeProjectId ? { projectId: activeProjectId } : {}
+    // Une conversation temporaire n'est rangée dans aucun projet.
+    const base = temporary ? { temporary: true } : activeProjectId ? { projectId: activeProjectId } : {}
 
     try {
       const created = await api
@@ -445,6 +481,7 @@ function App() {
 
   function onComposerChange(value: string, caret: number) {
     setInput(value)
+    setPromptQuery(canWrite ? slashQuery(value) : null)
     const found = conversationIsEmpty && canWrite ? mentionAt(value, caret) : null
     if (found) {
       setMention(found)
@@ -516,6 +553,7 @@ function App() {
         model: agent.model,
         tools: agent.tools,
         mcpServers: agent.mcpServers ?? [],
+        parameters: agent.parameters ?? {},
       })
       setAgents((current) => [...current, copy])
       openAgentEditor(copy)
@@ -533,8 +571,8 @@ function App() {
   }
 
   const visibleConversations = activeProjectId
-    ? conversations.filter((conversation) => conversation.projectId === activeProjectId)
-    : conversations
+    ? listedConversations.filter((conversation) => conversation.projectId === activeProjectId)
+    : listedConversations
 
   // ---- Pièces jointes -----------------------------------------------------
 
@@ -597,191 +635,22 @@ function App() {
 
   // ---- Génération (envoi, modification, régénération, arrêt) ---------------
 
-  /** Fin de réponse : l'interface revient au repos. */
-  function resetStreaming() {
-    setSending(false)
-    setStreamingText('')
-    setAgentSteps([])
-    setRegenerating(false)
-    setPaused(false)
-    showReasoning('')
-    streamingIdRef.current = null
-  }
-
-  /** Messages relus depuis le serveur (réponse terminée ailleurs, après une pause…). */
-  async function refreshMessages(conversationId: string) {
-    const messages = await api.getMessages(conversationId)
-    updateConversation(conversationId, (conversation) => ({ ...conversation, messages }))
-    return messages.at(-1)?.role === 'assistant' ? messages.at(-1)!.id : undefined
-  }
-
-  /**
-   * Suit une réponse : envoi, reprise après une validation (resume : texte et
-   * étapes conservés), ou reconnexion. run renvoie « paused » si la réponse
-   * attend une décision : l'interface reste alors sur la réponse en cours.
-   */
-  async function stream(
-    conversationId: string,
-    run: (signal: AbortSignal, onToken: (text: string) => void) => Promise<'paused' | string | void>,
-    rollback: () => void,
-    options: { resume?: boolean } = {},
-  ) {
-    setError('')
-    setSending(true)
-    setPaused(false)
-    if (!options.resume) {
-      setAgentSteps([])
-      showReasoning('')
-    }
-    streamingIdRef.current = conversationId
-    stoppedRef.current = false
-    const controller = new AbortController()
-    abortRef.current = controller
-    let keep = false
-
-    try {
-      const outcome = await run(controller.signal, (text) => {
-        if (!controller.signal.aborted) setStreamingText((current) => current + text)
-      })
-      if (outcome === 'paused') {
-        keep = true
-        setPaused(true)
-        return
-      }
-      // Réponse terminée (outcome : son identifiant) : la réflexion reste consultable.
-      if (outcome) keepReasoning(outcome)
-      // La réponse enregistrée remplace tout de suite le flux : sinon les deux
-      // s'affichent le temps des rafraîchissements ci-dessous.
-      resetStreaming()
-      // Fichiers produits par le code pendant cette réponse.
-      void refreshFiles(conversationId)
-      // Synchronise l'ordre et les titres depuis le serveur.
-      const history = await api.listConversations()
-      setConversations((current) =>
-        current
-          .map((item) => {
-            const saved = history.find((entry) => entry.id === item.id)
-            return saved ? { ...item, title: saved.title, updatedAt: new Date(saved.updatedAt).getTime() } : item
-          })
-          .sort((a, b) => b.updatedAt - a.updatedAt),
-      )
-      // Un seul artifact dans la réponse (et toujours sur cette conversation) : ouvert d'office.
-      const answer = outcome ? conversationsRef.current.conversations.find((item) => item.id === conversationId)?.messages.find((item) => item.id === outcome) : undefined
-      const found = answer ? artifactsIn(answer.content) : []
-      if (found.length === 1 && conversationsRef.current.activeId === conversationId) openArtifact(found[0]!)
-    } catch (cause) {
-      if (cause instanceof Error && cause.name === 'AbortError') {
-        // Arrêt volontaire : la réponse partielle est enregistrée côté serveur.
-        if (stoppedRef.current) {
-          setTimeout(() => {
-            api
-              .getMessages(conversationId)
-              .then((messages) => updateConversation(conversationId, (conversation) => ({ ...conversation, messages })))
-              .catch(() => undefined)
-          }, 600)
-        }
-        return
-      }
-      rollback()
-      fail(cause, 'error.send')
-    } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null
-        if (!keep) resetStreaming()
-      }
-    }
-  }
-
-  /**
-   * Arrêter : demandé au serveur (fermer l'onglet ne suffit plus, la réponse
-   * continuerait). La réponse partielle est gardée.
-   */
-  function stopGeneration() {
-    stoppedRef.current = true
-    const conversationId = streamingIdRef.current
-    if (conversationId) api.cancelRun(conversationId).catch(() => undefined)
-    abortRef.current?.abort()
-    if (paused && conversationId) {
-      resetStreaming()
-      setTimeout(() => void refreshMessages(conversationId).catch(() => undefined), 600)
-    }
-  }
-
-  /** Ta décision : la réponse reprend dans la même bulle (texte et étapes gardés). */
-  async function decideApproval(approvalId: string, approved: boolean) {
-    const conversationId = streamingIdRef.current
-    if (!conversationId) throw new Error(t('agent.approvalExpired'))
-    setAgentSteps((current) => current.map((step) => (step.approval?.id === approvalId ? { ...step, approval: undefined } : step)))
-    await stream(
-      conversationId,
-      async (signal, onToken) => {
-        const result = await api.decideApproval(conversationId, approvalId, approved, { signal, onToken, onReasoning, onStep })
-        if (isPaused(result)) return 'paused'
-        return refreshMessages(conversationId)
-      },
-      () => void refreshMessages(conversationId).catch(() => undefined),
-      { resume: true },
-    )
-  }
-
-  /** Étapes et validations en attente d'une réponse reprise (reconnexion). */
-  const restoreSteps = (snapshot: RunSnapshot) =>
-    snapshot.approvals.reduce<AgentStep[]>(
-      (steps, approval) => {
-        const pending = approvalStep(approval)
-        return steps.some((step) => step.id === pending.id)
-          ? steps.map((step) => (step.id === pending.id ? { ...step, approval: pending.approval, status: 'running' } : step))
-          : [...steps, pending]
-      },
-      snapshot.steps.map((step) => ({ ...step })),
-    )
-
-  /**
-   * Conversation ouverte avec une réponse en cours (onglet rouvert, autre
-   * appareil) : la question, le texte et les étapes réapparaissent, puis la
-   * suite arrive en direct ; une validation en attente est proposée à nouveau.
-   */
-  async function resumeRun(conversationId: string) {
-    if (streamingIdRef.current) return
-    const run = await api.getRun(conversationId).catch(() => null)
-    if (!run || streamingIdRef.current) return
-    if (run.kind === 'message') {
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        messages: [...conversation.messages, { id: `run-${run.id}`, role: 'user', content: run.question, createdAt: new Date().toISOString() }],
-      }))
-    } else {
-      setRegenerating(true)
-    }
-    setStreamingText(run.text)
-    showReasoning(run.reasoning ?? '')
-    setAgentSteps(restoreSteps(run))
-    if (run.status === 'waiting') {
-      streamingIdRef.current = conversationId
-      setSending(true)
-      setPaused(true)
-      return
-    }
-    await stream(
-      conversationId,
-      async (signal, onToken) => {
-        const result = await api.watchRun(conversationId, {
-          signal,
-          onToken,
-          onReasoning,
-          onStep,
-          onSnapshot: (snapshot) => {
-            setStreamingText(snapshot.text)
-            showReasoning(snapshot.reasoning ?? '')
-            setAgentSteps(restoreSteps(snapshot))
-          },
+  /** Réponse terminée : titres et ordre relus, fichiers produits, artifact unique ouvert. */
+  async function finishAnswer(conversationId: string, answerId: string | undefined) {
+    void refreshFiles(conversationId)
+    const history = await api.listConversations()
+    setConversations((current) =>
+      current
+        .map((item) => {
+          const saved = history.find((entry) => entry.id === item.id)
+          return saved ? { ...item, title: saved.title, updatedAt: new Date(saved.updatedAt).getTime() } : item
         })
-        if (isPaused(result)) return 'paused'
-        return refreshMessages(conversationId)
-      },
-      () => void refreshMessages(conversationId).catch(() => undefined),
-      { resume: true },
+        .sort((a, b) => b.updatedAt - a.updatedAt),
     )
+    // Un seul artifact dans la réponse (et toujours sur cette conversation) : ouvert d'office.
+    const answer = answerId ? conversationsRef.current.conversations.find((item) => item.id === conversationId)?.messages.find((item) => item.id === answerId) : undefined
+    const found = answer ? artifactsIn(answer.content) : []
+    if (found.length === 1 && conversationsRef.current.activeId === conversationId) openArtifact(found[0]!)
   }
 
   async function sendMessage() {
@@ -813,13 +682,13 @@ function App() {
       updatedAt: Date.now(),
     }))
 
-    await stream(
+    await run.stream(
       conversationId,
       async (signal, onToken) => {
         const result = await api.sendMessage(
           conversationId,
           { content: message, attachmentIds: attachments.map((file) => file.id) },
-          { signal, onToken, onReasoning, onStep },
+          { signal, onToken, ...run.handlers },
         )
         if (isPaused(result)) return 'paused'
         updateConversation(conversationId, (current) => ({
@@ -853,13 +722,13 @@ function App() {
     setEditing(null)
     updateConversation(conversation.id, (current) => ({ ...current, messages: [...previous.slice(0, index), optimistic] }))
 
-    await stream(
+    await run.stream(
       conversation.id,
       async (signal, onToken) => {
         const result = await api.sendMessage(
           conversation.id,
           { content: text, attachmentIds, editMessageId: original.id },
-          { signal, onToken, onReasoning, onStep },
+          { signal, onToken, ...run.handlers },
         )
         if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
@@ -867,7 +736,7 @@ function App() {
           messages: [...previous.slice(0, index), result.userMessage, result.assistantMessage],
         }))
         // L'ancienne version reste consultable : relecture pour afficher ‹ 1/2 ›.
-        void refreshMessages(conversation.id).catch(() => undefined)
+        void run.refreshMessages(conversation.id).catch(() => undefined)
         return result.assistantMessage.id
       },
       () => updateConversation(conversation.id, (current) => ({ ...current, messages: previous })),
@@ -877,18 +746,18 @@ function App() {
   async function regenerate() {
     const conversation = activeConversation
     if (!conversation || sending) return
-    setRegenerating(true)
+    run.setRegenerating(true)
 
-    await stream(
+    await run.stream(
       conversation.id,
       async (signal, onToken) => {
-        const result = await api.regenerate(conversation.id, { signal, onToken, onReasoning, onStep })
+        const result = await api.regenerate(conversation.id, { signal, onToken, ...run.handlers })
         if (isPaused(result)) return 'paused'
         updateConversation(conversation.id, (current) => ({
           ...current,
           messages: [...current.messages.slice(0, -1), result.assistantMessage],
         }))
-        void refreshMessages(conversation.id).catch(() => undefined)
+        void run.refreshMessages(conversation.id).catch(() => undefined)
         return result.assistantMessage.id
       },
       () => undefined,
@@ -943,6 +812,22 @@ function App() {
     }
   }
 
+  /**
+   * Bascule du mode temporaire. Le caractère temporaire est fixé à la création :
+   * une conversation encore vide est remplacée par une nouvelle, dans le bon mode.
+   */
+  async function toggleTemporary() {
+    const next = !temporaryMode
+    setTemporaryMode(next)
+    const previous = activeConversation
+    if (!previous || previous.messages.length > 0) return
+    const agent = previous.agentId ? agents.find((item) => item.id === previous.agentId) : undefined
+    const created = await newChat(agent, { temporary: next, keepInput: true })
+    if (!created) return
+    setConversations((current) => current.filter((item) => item.id !== previous.id))
+    api.deleteConversation(previous.id).catch(() => undefined)
+  }
+
   async function deleteConversation(id: string) {
     if (sending) return
     setError('')
@@ -956,7 +841,20 @@ function App() {
     }
   }
 
+  /** Prompt choisi : inséré tel quel, ou après avoir renseigné ses variables. */
+  function applyPrompt(prompt: Prompt) {
+    setPromptQuery(null)
+    setSidebarOpen(false)
+    if (promptVariables(prompt.content).length) {
+      setPendingPrompt(prompt)
+      return
+    }
+    setInput(prompt.content)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (promptQuery !== null && promptPickerRef.current?.handleKey(event)) return
     if (mention && pickerRef.current?.handleKey(event)) return
     if (event.key !== 'Enter' || event.shiftKey) return
     // Préférence : Entrée envoie, sinon Ctrl/Cmd + Entrée.
@@ -985,7 +883,7 @@ function App() {
       <Snowfall />
 
       <Sidebar
-        conversations={conversations}
+        conversations={listedConversations}
         visibleConversations={visibleConversations}
         projects={projects}
         activeProjectId={activeProjectId}
@@ -1056,6 +954,11 @@ function App() {
         }}
         preferences={preferences}
         onPreferencesChange={savePreferences}
+        onConversationsImported={() => void reloadConversations()}
+        prompts={prompts}
+        canWrite={canWrite}
+        onPromptsChange={setPrompts}
+        onUsePrompt={applyPrompt}
       />
 
       <section className="chat-workspace">
@@ -1068,28 +971,58 @@ function App() {
             >
               <Menu size={19} />
             </button>
-            {activeAgent && (
+            {activeAgent && !sharedToken && (
               <span className="topbar-agent">
                 <AgentAvatar avatar={activeAgent.avatar} size={24} mood={agentMood} />
                 {activeAgent.name}
                 <ProviderLogo provider={activeAgent.provider} size={12} />
               </span>
             )}
-            {responder.kind === 'model' && (
+            {responder.kind === 'model' && !sharedToken && (
               <span className="topbar-agent topbar-model">
                 <ProviderLogo provider={responder.provider} size={14} />
                 {responder.label}
               </span>
             )}
-            <span className="topbar-current">{activeConversation?.title ?? t('chat.newConversation')}</span>
+            <span className="topbar-current">{sharedToken ? t('share.viewTitle') : (activeConversation?.title ?? t('chat.newConversation'))}</span>
           </div>
 
           <div className="topbar-right">
+            {!sharedToken && canWrite && (!activeConversation || activeConversation.messages.length === 0) ? (
+              <button
+                type="button"
+                className={`icon-button chat-temporary-toggle${temporaryShown ? ' active' : ''}`}
+                aria-pressed={temporaryShown}
+                aria-label={t('temporary.toggle')}
+                title={t('temporary.toggle')}
+                onClick={() => void toggleTemporary()}
+              >
+                <Hourglass size={16} />
+              </button>
+            ) : (
+              activeConversation?.temporary && !sharedToken && (
+                <span className="chat-temporary-badge" title={t('temporary.notice')}>
+                  <Hourglass size={13} />
+                  {t('temporary.badge')}
+                </span>
+              )
+            )}
+            {activeConversation && activeConversation.messages.length > 0 && !sharedToken && (
+              <ConversationMenu
+                conversationId={activeConversation.id}
+                title={activeConversation.title}
+                messages={activeConversation.messages}
+                canShare={canWrite && !activeConversation.temporary}
+                onError={setError}
+              />
+            )}
             <LanguageSwitcher onChange={(locale) => savePreferences({ ...preferences, locale })} />
           </div>
         </header>
 
+        {sharedToken && <SharedView token={sharedToken} onClose={closeShared} />}
         <div
+          hidden={Boolean(sharedToken)}
           className={`chat-content ${conversationIsEmpty ? 'chat-content-empty' : ''} ${dragging ? 'chat-dragging' : ''}`}
           onDragOver={(event) => {
             if (!activeConversation || !canWrite || !event.dataTransfer.types.includes('Files')) return
@@ -1271,7 +1204,7 @@ function App() {
                     <div className="message-body">
                       <div className="message-author">{assistantName}</div>
                       {reasoning && <Reasoning text={reasoning} thinking={!streamingText && !paused} />}
-                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={decideApproval} />}
+                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={run.decide} />}
                       {streamingText ? (
                         <Markdown source={streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
                       ) : (
@@ -1289,7 +1222,7 @@ function App() {
             )}
           </div>
 
-          <footer className="composer-area">
+          <footer className="composer-area" hidden={Boolean(sharedToken)}>
             {error && (
               <div className="error-notice" role="alert">
                 <span>{error}</span>
@@ -1300,6 +1233,20 @@ function App() {
             )}
 
             <div className="composer">
+              {promptQuery !== null && (
+                <PromptPicker prompts={prompts} query={promptQuery} controlRef={promptPickerRef} onPick={applyPrompt} onClose={() => setPromptQuery(null)} />
+              )}
+              {pendingPrompt && (
+                <PromptVariables
+                  prompt={pendingPrompt}
+                  onCancel={() => setPendingPrompt(null)}
+                  onInsert={(text) => {
+                    setPendingPrompt(null)
+                    setInput(text)
+                    requestAnimationFrame(() => inputRef.current?.focus())
+                  }}
+                />
+              )}
               {conversationIsEmpty && activeConversation && !historyLoading && !messagesLoading && (
                 canWrite ? (
                   <ResponderPicker
@@ -1409,7 +1356,7 @@ function App() {
                   {sending ? (
                     <button
                       className="send-button stop-button"
-                      onClick={stopGeneration}
+                      onClick={run.stop}
                       aria-label={t('chat.stop')}
                       title={t('chat.stop')}
                     >
@@ -1429,7 +1376,7 @@ function App() {
                 </div>
               </div>
             </div>
-            <p className="composer-disclaimer">{t('chat.disclaimer')}</p>
+            <p className="composer-disclaimer">{temporaryShown ? t('temporary.notice') : t('chat.disclaimer')}</p>
           </footer>
         </div>
       </section>

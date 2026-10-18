@@ -58,7 +58,23 @@ export const agentProfileSchema = z.object({
   tools: z.array(z.enum(toolIds)).max(toolIds.length).default(defaultAgentTools),
   /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
   mcpServers: z.array(z.uuid()).max(10).default([]),
+  /** Réglages des réponses ; absents : ceux du fournisseur. */
+  parameters: z
+    .object({
+      creativity: z.enum(["precise", "balanced", "creative"]).optional(),
+      length: z.enum(["concise", "complete"]).optional(),
+    })
+    .strict()
+    .default({}),
 }).strict();
+
+/** Réglages d'agent → paramètres de génération (température, longueur maximale). */
+export function generationOf(parameters: AgentProfile["parameters"] | undefined) {
+  return {
+    ...(parameters?.creativity ? { temperature: { precise: 0.1, balanced: 0.5, creative: 0.9 }[parameters.creativity] } : {}),
+    ...(parameters?.length === "concise" ? { maxOutputTokens: 1_000 } : {}),
+  };
+}
 
 export type AgentAvatar = z.infer<typeof avatarSchema>;
 export type AgentProfile = z.infer<typeof agentProfileSchema>;

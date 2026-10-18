@@ -41,9 +41,17 @@ export type ConversationSummary = {
   model: ModelSelection | null;
   knowledge: KnowledgeToggles;
   projectId: string | null;
+  /** Présent (true) seulement pour une conversation temporaire. */
+  temporary?: true;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Durée de vie d'une conversation temporaire (aussi fixée en base, par trigger). */
+export const TEMPORARY_TTL_HOURS = 24;
+
+/** Conversation temporaire arrivée à échéance (relevée hors contexte tenant). */
+export type ExpiredConversation = { conversationId: string; organizationId: string; userId: string };
 
 export type StoredMessage = {
   id: string;
@@ -89,8 +97,11 @@ export interface ConversationStore {
     agentId?: string,
     projectId?: string,
     model?: ModelSelection,
+    options?: { temporary?: boolean },
   ): Promise<ConversationSummary>;
   get(owner: ConversationOwner, conversationId: string): Promise<ConversationSummary | null>;
+  /** Conversations temporaires échues, toutes organisations (purge). */
+  expiredTemporary?(): Promise<ExpiredConversation[]>;
   /** Changer l'agent ou le modèle n'est possible que tant que la conversation est vide. */
   update(
     owner: ConversationOwner,
@@ -125,6 +136,8 @@ export interface ConversationStore {
     messageId: string,
     feedback: MessageFeedback | null,
   ): Promise<{ runId: string | null } | null>;
+  /** Conversation importée (autre service) : messages chaînés dans l'ordre, une seule branche. */
+  importConversation(owner: ConversationOwner, title: string, messages: { role: MessageRole; content: string }[]): Promise<ConversationSummary>;
   /** Affiche une autre version d'un tour : la branche suit sa suite la plus récente. */
   selectBranch(owner: ConversationOwner, conversationId: string, messageId: string): Promise<boolean>;
   /** Régénération : nouvelle version de la dernière réponse (sœur), si elle n'a pas changé entre-temps. */
@@ -169,6 +182,7 @@ type ConversationRow = {
   useAgentKnowledge: boolean;
   useProjectKnowledge: boolean;
   projectId: string | null;
+  temporary: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -176,7 +190,7 @@ type ConversationRow = {
 const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId", project_id AS "projectId",
   model_provider AS "modelProvider", model_id AS "modelId",
   use_agent_knowledge AS "useAgentKnowledge", use_project_knowledge AS "useProjectKnowledge",
-  created_at AS "createdAt", updated_at AS "updatedAt"`;
+  temporary, created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 const modelOf = (row: ConversationRow): ModelSelection | null =>
   row.modelProvider && row.modelId ? { provider: row.modelProvider, model: row.modelId } : null;
@@ -230,6 +244,7 @@ export class PostgresConversationStore implements ConversationStore {
       model: modelOf(row),
       knowledge: knowledgeOf(row),
       projectId: row.projectId,
+      ...(row.temporary ? { temporary: true as const } : {}),
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
         : await this.keyring.decrypt(
@@ -271,7 +286,7 @@ export class PostgresConversationStore implements ConversationStore {
     const result = await client.query<ConversationRow>(
       `SELECT ${SUMMARY_COLUMNS}
        FROM conversations
-       WHERE user_id = $1 AND organization_id = $2
+       WHERE user_id = $1 AND organization_id = $2 AND NOT temporary
        ORDER BY updated_at DESC
        LIMIT 200`,
       [owner.userId, owner.organizationId],
@@ -286,6 +301,14 @@ export class PostgresConversationStore implements ConversationStore {
 
   async list(owner: ConversationOwner): Promise<ConversationSummary[]> {
     return withTenant(this.pool, owner, (client) => this.summaries(client, owner));
+  }
+
+  /** Échéances tenues par trigger hors RLS forcée : seuls les identifiants sortent. */
+  async expiredTemporary(): Promise<ExpiredConversation[]> {
+    const result = await this.pool.query<{ conversation_id: string; organization_id: string; user_id: string }>(
+      "SELECT conversation_id, organization_id, user_id FROM snowfall_expired_temporary()",
+    );
+    return result.rows.map((row) => ({ conversationId: row.conversation_id, organizationId: row.organization_id, userId: row.user_id }));
   }
 
   async get(owner: ConversationOwner, conversationId: string) {
@@ -306,8 +329,11 @@ export class PostgresConversationStore implements ConversationStore {
     agentId?: string,
     projectId?: string,
     model?: ModelSelection,
+    options: { temporary?: boolean } = {},
   ): Promise<ConversationSummary> {
     if (agentId && model) throw new Error("INVALID_SELECTION");
+    // Une conversation temporaire n'est rangée nulle part.
+    if (options.temporary && projectId) throw new Error("INVALID_SELECTION");
     return withTenant(this.pool, owner, async (client) => {
       if (agentId) {
         // RLS : seul un agent de l'organisation courante est visible.
@@ -328,8 +354,8 @@ export class PostgresConversationStore implements ConversationStore {
         : null;
 
       const result = await client.query<ConversationRow>(
-        `INSERT INTO conversations (id, user_id, organization_id, title, agent_id, project_id, model_provider, model_id)
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8
+        `INSERT INTO conversations (id, user_id, organization_id, title, agent_id, project_id, model_provider, model_id, temporary)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
          WHERE EXISTS (
            SELECT 1 FROM organization_members
            WHERE user_id = $2 AND organization_id = $3
@@ -344,6 +370,7 @@ export class PostgresConversationStore implements ConversationStore {
           projectId ?? null,
           model?.provider ?? null,
           model?.model ?? null,
+          options.temporary === true,
         ],
       );
 
@@ -356,6 +383,7 @@ export class PostgresConversationStore implements ConversationStore {
         model: modelOf(row),
         knowledge: knowledgeOf(row),
         projectId: row.projectId,
+        ...(row.temporary ? { temporary: true as const } : {}),
         title: title ?? DEFAULT_CONVERSATION_TITLE,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
@@ -402,6 +430,12 @@ export class PostgresConversationStore implements ConversationStore {
           [changes.projectId, owner.userId, owner.organizationId],
         );
         if (!project.rowCount) throw new Error("PROJECT_NOT_FOUND");
+        // Une conversation temporaire n'entre dans aucun projet (contrainte CHECK aussi en base).
+        const temporary = await client.query(
+          "SELECT 1 FROM conversations WHERE id = $1 AND user_id = $2 AND organization_id = $3 AND temporary",
+          [conversationId, owner.userId, owner.organizationId],
+        );
+        if (temporary.rowCount) throw new Error("PROJECT_NOT_FOUND");
       }
 
       const sets: string[] = [];
@@ -689,6 +723,28 @@ export class PostgresConversationStore implements ConversationStore {
     );
     const nodes = await this.nodes(client, owner, conversationId);
     return activePath(nodes, conversation.rows[0]?.leaf ?? null).path.at(-1) ?? null;
+  }
+
+  async importConversation(owner: ConversationOwner, title: string, messages: { role: MessageRole; content: string }[]) {
+    const conversation = await this.create(owner, title);
+    try {
+      await withTenant(this.pool, owner, async (client) => {
+        let parentId: string | null = null;
+        for (const message of messages) {
+          parentId = (await this.insertMessage(client, owner, conversation.id, message.role, message.content, undefined, parentId)).id;
+        }
+        await client.query(
+          `UPDATE conversations SET current_leaf_id = $4, updated_at = now()
+           WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+          [conversation.id, owner.userId, owner.organizationId, parentId],
+        );
+      });
+    } catch (error) {
+      // Pas de conversation vide laissée derrière un import échoué.
+      await this.delete(owner, conversation.id).catch(() => undefined);
+      throw error;
+    }
+    return conversation;
   }
 
   async setFeedback(owner: ConversationOwner, conversationId: string, messageId: string, feedback: MessageFeedback | null) {

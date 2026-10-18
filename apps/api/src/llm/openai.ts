@@ -50,6 +50,9 @@ export function toOpenAiMessages(turns: ChatTurn[]): ChatCompletionMessageParam[
   });
 }
 
+/** Modèles de raisonnement d'OpenAI : température imposée par le fournisseur. */
+const REASONING_MODEL = /^(o\d|gpt-5)/;
+
 export const toOpenAiTools = (tools: ToolSpec[]): ChatCompletionTool[] =>
   tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
 
@@ -74,11 +77,13 @@ export function createOpenAiCompatibleModel(
           stream_options: { include_usage: true },
           // Les serveurs locaux ne connaissent souvent que max_tokens.
           ...(provider === "openai"
-            ? { max_completion_tokens: settings.maxOutputTokens }
-            : { max_tokens: settings.maxOutputTokens }),
+            ? { max_completion_tokens: Math.min(request.generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens) }
+            : { max_tokens: Math.min(request.generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens) }),
+          // Les modèles de raisonnement (o1…, gpt-5…) n'acceptent pas de température.
+          ...(request.generation?.temperature !== undefined && !REASONING_MODEL.test(model) ? { temperature: request.generation.temperature } : {}),
           // Prompt système puis historique, à l'identique d'un tour à l'autre : le cache
           // automatique d'OpenAI relit ce début de requête (moins cher, plus rapide).
-          messages: [{ role: "system", content: buildSystemPrompt(request.instructions, request.summary) }, ...toOpenAiMessages(conversationTurns(request))],
+          messages: [{ role: "system", content: buildSystemPrompt(request.instructions, request.summary, request.memories) }, ...toOpenAiMessages(conversationTurns(request))],
           ...(request.tools?.length ? { tools: toOpenAiTools(request.tools) } : {}),
         },
         signal ? { signal } : {},

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
+import { MemoryPromptStore, promptVariables } from "../prompts/store.js";
 import { createAppServer, type AppDependencies } from "../server.js";
 import type { AuditEvent } from "../audit/audit.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
@@ -288,6 +289,98 @@ describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer
     assert.equal((await app.inject(put(exchange.assistantMessage.id, { rating: "bof" }))).statusCode, 400);
   });
 
+  it("conversation temporaire : hors historique et recherche, non partageable, purgée à échéance", async (t) => {
+    const { app, store, events } = setup({ runTiming: { recoveryMs: 20 } });
+    t.after(() => app.close());
+    const created = await app.inject(post("/conversations", { temporary: true }));
+    assert.equal(created.statusCode, 201);
+    const temporary = created.json().conversation as { id: string; temporary?: boolean };
+    assert.equal(temporary.temporary, true);
+    await store.appendExchange(member, temporary.id, "Mot de passe Wi-Fi ?", "Demandez à l'accueil.");
+    const kept = await store.create(member, "Gardée");
+
+    const list = (await app.inject({ ...post("/conversations"), method: "GET" as const })).json() as { id: string }[];
+    assert.deepEqual(list.map((item) => item.id), [kept.id]);
+    const search = await app.inject({ ...post("/conversations/search?q=wi-fi"), method: "GET" as const });
+    assert.deepEqual(search.json().results, []);
+    // Toujours lisible par son auteur tant qu'elle existe.
+    assert.equal((await app.inject({ ...post(`/conversations/${temporary.id}/messages`), method: "GET" as const })).statusCode, 200);
+
+    const share = await app.inject(post(`/conversations/${temporary.id}/shares`, { days: 7 }));
+    assert.equal(share.statusCode, 409);
+    assert.equal(share.json().reason, "temporary");
+    // Ni rangée dans un projet, ni créée directement dans un projet.
+    assert.equal((await app.inject(post("/conversations", { temporary: true, projectId: crypto.randomUUID() }))).statusCode, 400);
+    assert.equal((await app.inject(post("/conversations", { temporary: "oui" }))).statusCode, 400);
+
+    // Échéance : effacée par la purge, tracée dans l'audit (sans contenu).
+    store.expire(temporary.id);
+    store.expire(kept.id);
+    for (let attempt = 0; attempt < 100 && (await store.get(member, temporary.id)); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await store.get(member, temporary.id), null);
+    assert.ok(await store.get(member, kept.id));
+    const purged = events.find((event) => event.eventType === "conversation.purge");
+    assert.equal(purged?.targetId, temporary.id);
+    assert.ok(!JSON.stringify(events).includes("Wi-Fi"));
+  });
+
+  it("import : conversations créées (branche unique), format inconnu refusé, audit sans contenu", async (t) => {
+    const { app, store, events } = setup();
+    t.after(() => app.close());
+    const response = await app.inject(
+      post("/conversations/import", [
+        { title: "Voyage", current_node: "a", mapping: { u: { parent: null, message: { author: { role: "user" }, content: { content_type: "text", parts: ["Où aller ?"] } } }, a: { parent: "u", message: { author: { role: "assistant" }, content: { content_type: "text", parts: ["À Lisbonne."] } } } } },
+      ]),
+    );
+    assert.equal(response.statusCode, 201);
+    assert.deepEqual(response.json(), { imported: 1, skipped: 0, format: "chatgpt" });
+    const [imported] = await store.list(member);
+    assert.equal(imported!.title, "Voyage");
+    assert.deepEqual((await store.getMessages(member, imported!.id))!.map((message) => [message.role, message.content]), [["user", "Où aller ?"], ["assistant", "À Lisbonne."]]);
+    assert.ok(!JSON.stringify(events).includes("Lisbonne"));
+    assert.equal((await app.inject(post("/conversations/import", { nimporte: "quoi" }))).statusCode, 400);
+  });
+
+  it("mes données : export complet (conversations, retours), téléchargé, audité", async (t) => {
+    const { app, store, events } = setup();
+    t.after(() => app.close());
+    const conversation = await store.create(member, "Mutuelle");
+    const exchange = (await store.appendExchange(member, conversation.id, "Ma mutuelle ?", "Malakoff."))!;
+    await store.setFeedback(member, conversation.id, exchange.assistantMessage.id, { rating: "up" });
+    const response = await app.inject({ method: "GET", url: "/me/export" });
+    assert.equal(response.statusCode, 200);
+    assert.match(String(response.headers["content-disposition"]), /attachment/);
+    const data = response.json();
+    assert.equal(data.format, "snowfall.personal-data");
+    assert.deepEqual(data.conversations[0].messages.map((message: { content: string }) => message.content), ["Ma mutuelle ?", "Malakoff."]);
+    assert.deepEqual(data.conversations[0].messages[1].feedback, { rating: "up" });
+    assert.ok(events.some((event) => event.eventType === "privacy.export"));
+  });
+
+  it("prompts : privés ou partagés, modifiables par l'auteur seul, variables comptées", async (t) => {
+    const prompts = new MemoryPromptStore();
+    const author = setup({ prompts });
+    const colleague = setup({ prompts, user: { userId: "collegue", organizationId: member.organizationId, role: "member" } });
+    t.after(() => Promise.all([author.app.close(), colleague.app.close()]));
+
+    const privateOne = (await author.app.inject(post("/prompts", { name: "Brouillon", content: "Mon texte" }))).json().prompt;
+    const sharedOne = (await author.app.inject(post("/prompts", { name: "Compte rendu", content: "Résume {{réunion}} pour {{équipe}}.", shared: true }))).json().prompt;
+    assert.equal(privateOne.shared, false);
+    // Le collègue voit seulement le prompt partagé, sans pouvoir le modifier.
+    const seen = (await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts;
+    assert.deepEqual(seen.map((prompt: { name: string; mine: boolean }) => [prompt.name, prompt.mine]), [["Compte rendu", false]]);
+    const put = (app: typeof author.app, id: string, payload: unknown) => app.inject({ ...post(`/prompts/${id}`, payload), method: "PUT" });
+    assert.equal((await put(colleague.app, sharedOne.id, { name: "Piraté", content: "x", shared: true })).statusCode, 404);
+    assert.equal((await colleague.app.inject({ method: "DELETE", url: `/prompts/${sharedOne.id}`, headers: { origin: ORIGIN } })).statusCode, 404);
+    assert.equal((await put(author.app, sharedOne.id, { name: "Compte rendu", content: "Résume {{réunion}}.", shared: false })).statusCode, 200);
+    assert.deepEqual((await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts, []);
+    // Trop de variables : refusé. Audit sans le contenu.
+    const many = Array.from({ length: 11 }, (_, index) => `{{v${index}}}`).join(" ");
+    assert.equal((await author.app.inject(post("/prompts", { name: "Trop", content: many }))).statusCode, 400);
+    assert.ok(!JSON.stringify(author.events).includes("Résume"));
+    assert.deepEqual(promptVariables("Bonjour {{ prénom }}, voir {{dossier}} et {{prénom}}."), ["prénom", "dossier"]);
+  });
+
   it("régénérer garde l'ancienne réponse comme autre version", async (t) => {
     const { app, store } = setup();
     t.after(() => app.close());
@@ -446,6 +539,29 @@ describe("Pièces jointes", () => {
     );
     assert.equal(send.statusCode, 200);
     assert.match(calls[0]!.message, /<document name="Contrat été.pdf">[\s\S]*Clause de confidentialite[\s\S]*<\/document>\s*Résume$/);
+  });
+
+  it("PDF numérisé joint : lu par l'OCR local, transmis au modèle comme document", async (t) => {
+    const files = new Map<string, AttachmentMeta>();
+    const content = new Map<string, ModelAttachment>();
+    const read: string[] = [];
+    const { app, store, calls } = setup({
+      attachments: fakeAttachments(files, content),
+      ocr: { recognize: async (_bytes, mediaType) => (read.push(mediaType), "Bail commercial : loyer de 2 400 euros par mois") },
+    });
+    t.after(() => app.close());
+    const conversation = await store.create(member);
+    const upload = await app.inject({
+      method: "POST",
+      url: `/conversations/${conversation.id}/attachments`,
+      headers: { origin: ORIGIN, "content-type": "application/octet-stream", "x-file-name": "scan.pdf" },
+      payload: makePdf(""),
+    });
+    assert.equal(upload.statusCode, 201);
+    store.files.set(upload.json().attachment.id, upload.json().attachment);
+    await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Loyer ?", attachmentIds: [upload.json().attachment.id] }));
+    assert.deepEqual(read, ["application/pdf"]);
+    assert.match(calls[0]!.message, /<document name="scan.pdf">[\s\S]*2 400 euros/);
   });
 
   it("refuse un type de fichier non pris en charge et une pièce jointe inconnue", async (t) => {

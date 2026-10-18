@@ -125,10 +125,12 @@ services:
     # secret_id AppRole : fichier monté en lecture seule, jamais en variable.
     secrets: [vault_secret_id]
     # Groupe du socket du bac à sable (interpréteur de code).
-    group_add: ["10010"]
+    # Groupes des sockets : bac à sable (10010) et OCR local (10011).
+    group_add: ["10010", "10011"]
     volumes:
       - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
       - snowfall_sandbox_socket:/run/sandbox
+      - snowfall_ocr_socket:/run/ocr
     environment:
       NODE_ENV: production
       APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
@@ -145,6 +147,8 @@ services:
       WEB_SEARCH_URL: ${WEB_SEARCH_URL:-}
       # Interpréteur de code (profil « code ») : /run/sandbox/sandbox.sock ; vide = indisponible.
       SANDBOX_SOCKET: ${SANDBOX_SOCKET:-}
+      # OCR local des documents numérisés (profil « ocr ») : /run/ocr/ocr.sock ; vide = non lus.
+      OCR_SOCKET: ${OCR_SOCKET:-}
       # Serveurs MCP (approuvés par les admins ; domaines dans infra/egress/mcp-domains.txt).
       MCP_ENABLED: ${MCP_ENABLED:-false}
       # Antivirus obligatoire : un fichier non analysable est refusé.
@@ -293,6 +297,32 @@ services:
       - /dev/shm:size=16m,mode=0700
     volumes:
       - snowfall_sandbox_socket:/run/sandbox
+
+  # ---- OCR local (profil « ocr ») ---------------------------------------------
+  # PDF numérisés et images des bases : lus ici, jamais par un service tiers.
+  # Tesseract et Poppler analysent des fichiers non fiables : aucun réseau,
+  # lecture seule, utilisateurs dédiés, limites par lecture (apps/ocr/server.py).
+  # Activer côté API : OCR_SOCKET=/run/ocr/ocr.sock.
+  ocr:
+    build: { context: apps/ocr }
+    profiles: ["ocr"]
+    runtime: ${OCR_RUNTIME:-runsc}
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL, CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    logging: *logging
+    tmpfs:
+      - /work:size=512m,mode=0711
+      - /tmp:size=16m,mode=0700
+    volumes:
+      - snowfall_ocr_socket:/run/ocr
 
   # ---- Recherche web des agents (profil « web-search ») ----------------------
   # Métamoteur privé : l'API l'interroge en JSON sur le réseau interne ; lui
@@ -495,6 +525,7 @@ services:
       - ./infra/tls/web:/etc/nginx/tls:ro
 
 volumes:
+  snowfall_ocr_socket:
   snowfall_sandbox_socket:
   snowfall_clamav_db:
   snowfall_openbao_data:

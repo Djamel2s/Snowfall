@@ -276,3 +276,50 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   pour une référence, puis `--baseline ref.json` après un changement de prompt,
   d'outil ou de modèle (code de sortie 1 en cas de régression). Coût : 2 à 4
   appels par cas.
+
+## 21. OCR local (profil « ocr »)
+
+- `docker compose -f compose.yaml -f compose.prod.yaml --profile ocr up -d ocr`,
+  puis côté API `OCR_SOCKET=/run/ocr/ocr.sock` et redémarrage.
+- Runtime gVisor par défaut (`OCR_RUNTIME=runsc`) ; sur un hôte sans gVisor :
+  `OCR_RUNTIME=runc` (isolation moindre, à consigner).
+- Vérifier : `docker run --rm --network none --read-only --tmpfs /work --tmpfs /tmp -v "$PWD/apps/ocr:/t:ro" snowfall-ocr python3 -I /t/ocr_test.py`
+  (tous les contrôles « ok »).
+- Sans OCR : les images sont refusées dans les bases (motif affiché), les PDF
+  numérisés restent sans texte. Panne de l'OCR : source « Lecture du scan
+  impossible », à relancer.
+- Mise à jour de sécurité Debian : relever les versions figées dans
+  `apps/ocr/Dockerfile` (Trivy les signale en CI).
+
+## 22. Conversations temporaires et mémoire
+
+- Purge : les conversations temporaires de plus de 24 h sont effacées par l'API
+  (cycle de reprise des runs, toutes les 30 s ; audit `conversation.purge`).
+  Rien à planifier ; vérifier l'absence d'arriéré :
+  `SELECT count(*) FROM temporary_conversations WHERE expires_at < now() - interval '1 hour';`
+  (rôle migrateur ; doit valoir 0).
+- Mémoire : désactivée par défaut, activée par chaque utilisateur ; aucun
+  administrateur ne peut la lire (RLS propriétaire). Effacement d'un compte :
+  supprimée avec l'appartenance à l'organisation.
+
+## 23. Mise à jour vers la phase 3
+
+- `npm run db:migrate -w @snowfall/api` (applique aussi les droits du rôle
+  applicatif) : nouvelles tables et fonctions (partages, prompts, conversations
+  temporaires, mémoire, compteurs des agents) ; puis redémarrer l'API.
+
+## 24. Injections de prompt
+
+- Audit `agent.injection_suspected` : un contenu lu pendant une réponse (outil,
+  passage, pièce jointe) contenait des consignes adressées à l'assistant. Détails :
+  outil, signaux, score — jamais le contenu. Une hausse soudaine sur un même outil
+  (ex. un serveur MCP, un domaine web) mérite une enquête.
+- Mesurer le détecteur (gratuit, local) : `npx tsx scripts/injection-holdout.ts`
+  dans `apps/api`. Ne jamais régler le détecteur sur le jeu « tenu à l'écart » :
+  s'il sert à régler, en écrire un nouveau.
+- Mesurer les agents : `npm run agent:eval -w @snowfall/api -- --model <p:modèle> --repeat 3 --only <cas securite-…>`.
+- Règle de deux : une validation « Cette réponse a lu un contenu externe et des
+  données internes » est normale ; elle protège contre l'exfiltration. Si les
+  utilisateurs s'en plaignent sur un parcours précis, mesurer avec le banc avant
+  d'assouplir quoi que ce soit (`agent/exposure.ts`).
+

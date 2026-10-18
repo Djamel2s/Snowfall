@@ -17,7 +17,14 @@ export type ToolResult = {
 };
 
 /** Ce que l'utilisateur voit avant d'approuver : construit par NOTRE code à partir des arguments validés. */
-export type ToolPreview = { title: string; detail?: string };
+export type ToolPreview = {
+  title: string;
+  detail?: string;
+  /** Un contenu suspect (injection possible) a précédé la demande : l'interface prévient l'utilisateur. */
+  warning?: boolean;
+  /** Appel sortant d'une réponse exposée (contenu externe + données internes) : à valider. */
+  exposure?: boolean;
+};
 
 export interface AgentTool<Args extends z.ZodType = z.ZodType> {
   name: string;

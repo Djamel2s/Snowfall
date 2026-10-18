@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { AgentRatingStore } from "./ratings.js";
 import { createAppServer } from "../server.js";
 import type { AuditEvent } from "../audit/audit.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
@@ -34,14 +35,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers };
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers, parameters: input.parameters ?? existing.parameters };
       agents.set(id, agent);
       return agent;
     },
@@ -73,7 +74,7 @@ function fakeConversations(): ConversationStore {
   return createFakeConversationStore();
 }
 
-function setup(options: { user?: AuthenticatedUser; agents?: AgentStore; calls?: Parameters<typeof fakeRegistry>[0] } = {}) {
+function setup(options: { user?: AuthenticatedUser; agents?: AgentStore; calls?: Parameters<typeof fakeRegistry>[0]; agentRatings?: AgentRatingStore } = {}) {
   let current = options.user ?? alice;
   const events: AuditEvent[] = [];
   const agents = options.agents ?? fakeAgents();
@@ -85,6 +86,7 @@ function setup(options: { user?: AuthenticatedUser; agents?: AgentStore; calls?:
     agents,
     models: fakeRegistry(options.calls),
     audit: { record: async (_request, event) => { events.push(event); } },
+    ...(options.agentRatings ? { agentRatings: options.agentRatings } : {}),
   });
   return { app, events, agents, as: (user: AuthenticatedUser) => { current = user; } };
 }
@@ -96,6 +98,15 @@ const post = (url: string, payload: unknown) => ({
   payload: payload as Record<string, unknown>,
 });
 
+describe("Agents : réglages des réponses", () => {
+  it("créativité et longueur → température et plafond ; rien si non réglé", async () => {
+    const { generationOf } = await import("./profile.js");
+    assert.deepEqual(generationOf({}), {});
+    assert.deepEqual(generationOf({ creativity: "precise", length: "concise" }), { temperature: 0.1, maxOutputTokens: 1000 });
+    assert.deepEqual(generationOf({ creativity: "creative", length: "complete" }), { temperature: 0.9 });
+  });
+});
+
 describe("Agents", () => {
   it("expose le catalogue des fournisseurs", async (t) => {
     const { app } = setup();
@@ -105,6 +116,17 @@ describe("Agents", () => {
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().providers[0].id, "mistral");
+  });
+
+  it("catalogue : taux de 👍 joint aux agents notés (agrégat de l'organisation)", async (t) => {
+    let known = "";
+    const { app } = setup({ agentRatings: { ratings: async (tenant) => (tenant.organizationId === alice.organizationId ? { [known]: { up: 9, total: 12 } } : {}) } });
+    t.after(() => app.close());
+    known = (await app.inject(post("/agents", validAgent))).json().agent.id;
+    const other = (await app.inject(post("/agents", { ...validAgent, name: "Comptable" }))).json().agent.id;
+    const listed = (await app.inject({ method: "GET", url: "/agents" })).json().agents as { id: string; rating?: unknown }[];
+    assert.deepEqual(listed.find((agent) => agent.id === known)?.rating, { up: 9, total: 12 });
+    assert.equal(listed.find((agent) => agent.id === other)?.rating, undefined);
   });
 
   it("crée un agent et trace l'événement sans son contenu", async (t) => {

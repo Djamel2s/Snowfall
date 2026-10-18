@@ -44,6 +44,26 @@ export type MessageFeedback = { rating: 'up' | 'down'; comment?: string }
 
 export type MessageBranch = { index: number; count: number; siblings: string[] }
 
+/** Prompt de la bibliothèque : privé, ou partagé avec l'organisation. */
+export type Prompt = { id: string; name: string; content: string; shared: boolean; mine: boolean; updatedAt: string }
+export type PromptInput = { name: string; content: string; shared: boolean }
+
+/** Lien de partage interne (le jeton est le secret du lien). */
+export type ShareLink = { id: string; token: string; expiresAt: string; createdAt: string }
+
+/** Conversation partagée ouverte : instantané figé au moment du partage. */
+export type OpenedShare = {
+  id: string
+  title: string
+  expiresAt: string
+  createdAt: string
+  mine: boolean
+  snapshot: {
+    agent?: { name: string; avatar: AgentAvatarData }
+    messages: { role: 'user' | 'assistant'; content: string; createdAt: string; sources?: { n: number; name: string }[] }[]
+  }
+}
+
 export type KnowledgeOwnerKind = 'agents' | 'projects'
 
 export type KnowledgeSource = {
@@ -80,6 +100,8 @@ export type ConversationSummary = {
   /** Bases de connaissances consultées (agent, projet). */
   knowledge?: { agent: boolean; project: boolean }
   projectId: string | null
+  /** Conversation temporaire : hors historique, effacée sous 24 h. */
+  temporary?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -144,12 +166,18 @@ export type AgentInput = {
   tools: ToolId[]
   /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
   mcpServers: string[]
+  /** Réglages des réponses ; absents : ceux du fournisseur. */
+  parameters?: AgentParameters
 }
+
+export type AgentParameters = { creativity?: 'precise' | 'balanced' | 'creative'; length?: 'concise' | 'complete' }
 
 export type Agent = AgentInput & {
   id: string
   createdBy: string | null
   canEdit: boolean
+  /** Réponses jugées utiles dans l'organisation (présent à partir de 5 avis). */
+  rating?: { up: number; total: number }
 }
 
 export type Role = 'owner' | 'admin' | 'member' | 'reader'
@@ -158,7 +186,12 @@ export type Preferences = {
   locale: 'fr' | 'en' | null
   sendOnEnter: boolean
   reduceMotion: 'system' | 'on' | 'off'
+  /** Mémoire activée (désactivée par défaut). */
+  memory: boolean
 }
+
+/** Fait retenu à la demande de l'utilisateur. */
+export type UserMemory = { id: string; content: string; createdAt: string }
 
 export type UsageTotals = { inputTokens: number; outputTokens: number }
 
@@ -333,7 +366,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
 
 /** Action d'écriture en attente de ton accord : aperçu construit par le serveur. */
-export type ToolApproval = { id: string; title: string; detail: string }
+export type ToolApproval = {
+  id: string
+  title: string
+  detail: string
+  /** Un contenu lu pendant la réponse contenait des consignes adressées à l'assistant. */
+  warning?: boolean
+  /** Appel sortant d'une réponse qui a lu un contenu externe ET des données internes. */
+  exposure?: boolean
+}
 
 /** Étape d'un agent pendant la réponse (appel d'outil). */
 export type AgentStep = {
@@ -371,11 +412,11 @@ export type RunSnapshot = {
 export type ActiveRun = RunSnapshot & { id: string; kind: 'message' | 'regenerate'; question: string }
 
 /** Demande de validation reçue du serveur, rattachée à son étape. */
-export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown }): AgentStep => ({
+export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown; warning?: unknown; exposure?: unknown }): AgentStep => ({
   id: String(payload.stepId),
   name: String(payload.tool),
   status: 'running',
-  approval: { id: String(payload.id), title: String(payload.title), detail: String(payload.detail ?? '') },
+  approval: { id: String(payload.id), title: String(payload.title), detail: String(payload.detail ?? ''), ...(payload.warning === true ? { warning: true } : {}), ...(payload.exposure === true ? { exposure: true } : {}) },
 })
 
 /**
@@ -463,7 +504,7 @@ export const api = {
     ).results,
 
   createConversation: async (
-    options: { title?: string; agentId?: string; projectId?: string; model?: ModelSelection } = {},
+    options: { title?: string; agentId?: string; projectId?: string; model?: ModelSelection; temporary?: boolean } = {},
   ) => {
     const data = await request<ConversationSummary | { conversation: ConversationSummary }>(
       '/conversations',
@@ -503,6 +544,28 @@ export const api = {
     stream<{ userMessage?: Message; assistantMessage?: Message }>(`/conversations/${conversationId}/approvals/${approvalId}`, { approved }, options),
 
   /** Réponse en cours dans la conversation (reconnexion), ou null. */
+  listMemories: async () => (await request<{ memories: UserMemory[] }>('/me/memories')).memories,
+  deleteMemory: (id: string) => request<void>(`/me/memories/${id}`, { method: 'DELETE' }),
+  clearMemories: () => request<void>('/me/memories', { method: 'DELETE' }),
+
+  listPrompts: async () => (await request<{ prompts: Prompt[] }>('/prompts')).prompts,
+  createPrompt: async (input: PromptInput) => (await request<{ prompt: Prompt }>('/prompts', json('POST', input))).prompt,
+  updatePrompt: async (id: string, input: PromptInput) => (await request<{ prompt: Prompt }>(`/prompts/${id}`, json('PUT', input))).prompt,
+  deletePrompt: (id: string) => request<void>(`/prompts/${id}`, { method: 'DELETE' }),
+
+  /** Import d'un fichier exporté d'un autre service (ChatGPT, LibreChat, Snowfall). */
+  importConversations: (data: unknown) =>
+    request<{ imported: number; skipped: number; format: string }>('/conversations/import', json('POST', data)),
+  /** Toutes mes données (RGPD), déchiffrées. */
+  exportPersonalData: () => request<unknown>('/me/export'),
+
+  createShare: async (conversationId: string, days: number) =>
+    (await request<{ share: ShareLink }>(`/conversations/${conversationId}/shares`, json('POST', { days }))).share,
+  listShares: async (conversationId: string) => (await request<{ shares: ShareLink[] }>(`/conversations/${conversationId}/shares`)).shares,
+  deleteShare: (id: string) => request<void>(`/shares/${id}`, { method: 'DELETE' }),
+  /** Le jeton part dans le corps, jamais dans l'adresse (journaux). */
+  openShare: async (token: string) => (await request<{ share: OpenedShare }>('/shares/open', json('POST', { token }))).share,
+
   /** 👍 / 👎 sur une réponse (null : retiré). */
   setFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback | null) =>
     request<{ feedback: MessageFeedback | null }>(

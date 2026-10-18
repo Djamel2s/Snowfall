@@ -85,6 +85,7 @@ jobs:
       - run: docker build -f apps/api/Dockerfile --target runtime -t snowfall-api:ci .
       - run: docker build -f apps/web/Dockerfile -t snowfall-web:ci .
       - run: docker build -t snowfall-sandbox:ci apps/sandbox
+      - run: docker build -t snowfall-ocr:ci apps/ocr
       # Vulnérabilités connues des images (système et dépendances embarquées).
       - name: Scan de l'image API
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -107,6 +108,17 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+      - name: Scan de l'image OCR
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: snowfall-ocr:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      # OCR dans son image, sans réseau : scan lu, fichier corrompu, utilisateur
+      # dédié, environnement nettoyé, délai.
+      - name: Tests de l'OCR
+        run: docker run --rm --network none --read-only --tmpfs /work --tmpfs /tmp -v "$PWD/apps/ocr:/t:ro" snowfall-ocr:ci python3 -I /t/ocr_test.py
       # Le bac à sable durci comme en production, attaqué : réseau, identité,
       # socket de l'API, écriture, ressources, survie, fuite entre exécutions.
       - name: Batterie d'attaques du bac à sable

@@ -62,3 +62,26 @@ test('membre : seulement son compte, aucun onglet d’organisation', async ({ pa
   await expect(page.getByRole('region', { name: 'Profil' }).getByText('Camille Test')).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Organisation' })).toHaveCount(0)
 })
+
+test('mémoire : désactivée par défaut, activée, faits visibles et oubliables', async ({ page }, info) => {
+  await mockApi(page)
+  await openSettings(page)
+  const card = page.getByRole('region', { name: 'Mémoire' })
+  const toggle = card.getByRole('switch', { name: /Activer la mémoire/ })
+  await expect(toggle).not.toBeChecked()
+
+  const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().endsWith('/api/me/preferences'))
+  await toggle.check()
+  expect((await saved).postDataJSON()).toMatchObject({ memory: true })
+
+  await expect(card.getByText('Travaille sur le dossier Orion')).toBeVisible()
+  await card.getByRole('button', { name: /Oublier « Travaille sur le dossier Orion/ }).click()
+  await expect(card.getByText('Travaille sur le dossier Orion')).toHaveCount(0)
+  await card.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: info.outputPath('memoire.png') })
+
+  // Tout oublier : deux clics.
+  await card.getByRole('button', { name: 'Tout oublier' }).click()
+  await card.getByRole('button', { name: 'Cliquer encore pour tout oublier' }).click()
+  await expect(card.getByText('Rien de retenu pour l’instant.')).toBeVisible()
+})

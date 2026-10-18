@@ -87,8 +87,10 @@ export function createAnthropicModel(model: string, settings: ProviderSettings):
     async *stream(request, signal) {
       const params = {
         model,
-        max_tokens: settings.maxOutputTokens,
-        system: buildSystemPrompt(request.instructions, request.summary),
+        max_tokens: Math.min(request.generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens),
+        // Température : refusée avec la réflexion (modèles récents) ; sinon celle de l'agent.
+        ...(request.generation?.temperature !== undefined && !SUPPORTS_EFFORT.test(model) ? { temperature: request.generation.temperature } : {}),
+        system: buildSystemPrompt(request.instructions, request.summary, request.memories),
         messages: toAnthropicMessages(conversationTurns(request)),
         ...(request.tools?.length ? { tools: toAnthropicTools(request.tools) } : {}),
         // Cache automatique : tout le début de requête (outils, système, historique)

@@ -12,7 +12,7 @@ test('question → réponse en Markdown, enregistrée dans la conversation', asy
   await page.getByPlaceholder(/Posez votre question/).fill('Combien de jours de télétravail ?')
   await page.keyboard.press('Enter')
   await expect(page.locator('.markdown strong', { hasText: 'trois jours' })).toBeVisible()
-  await expect(page.getByText('Combien de jours de télétravail ?')).toBeVisible()
+  await expect(page.locator('.message-user').getByText('Combien de jours de télétravail ?')).toBeVisible()
   expect(api.unknown).toEqual([])
 })
 

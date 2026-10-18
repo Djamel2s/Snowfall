@@ -1,0 +1,1 @@
+ALTER TABLE "conversations" ADD COLUMN "temporary" boolean DEFAULT false NOT NULL;

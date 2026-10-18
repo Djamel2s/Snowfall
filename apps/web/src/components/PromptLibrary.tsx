@@ -1,0 +1,130 @@
+import { useState, type FormEvent } from 'react'
+import { Check, CornerDownLeft, Pencil, Plus, ScrollText, Trash2, Users, X } from 'lucide-react'
+import { api, type Prompt } from '../lib/api'
+import { useI18n } from '../lib/i18n'
+import { promptVariables } from '../lib/prompts'
+
+type Draft = { id?: string; name: string; content: string; shared: boolean }
+
+type Props = {
+  prompts: Prompt[]
+  canWrite: boolean
+  onChange: (prompts: Prompt[]) => void
+  onUse: (prompt: Prompt) => void
+}
+
+/**
+ * Bibliothèque de prompts (barre latérale) : les miens et ceux partagés par
+ * l'organisation. Créer, modifier, partager ; « Utiliser » remplit la zone de
+ * saisie. Dans la conversation, « / » les propose aussi.
+ */
+export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Props) {
+  const { t } = useI18n()
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [armed, setArmed] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    if (!draft || !draft.name.trim() || !draft.content.trim()) return
+    setError('')
+    try {
+      const input = { name: draft.name.trim(), content: draft.content.trim(), shared: draft.shared }
+      const saved = draft.id ? await api.updatePrompt(draft.id, input) : await api.createPrompt(input)
+      onChange(draft.id ? prompts.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...prompts])
+      setDraft(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  async function remove(prompt: Prompt) {
+    if (armed !== prompt.id) return setArmed(prompt.id)
+    try {
+      await api.deletePrompt(prompt.id)
+      onChange(prompts.filter((item) => item.id !== prompt.id))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  return (
+    <div className="prompt-library">
+      <div className="sidebar-section-label projects-heading">
+        <span>{t('prompts.title').toUpperCase()}</span>
+        {canWrite && !draft && (
+          <button className="projects-add-button" type="button" aria-label={t('prompts.new')} title={t('prompts.new')} onClick={() => setDraft({ name: '', content: '', shared: false })}>
+            <Plus size={15} />
+          </button>
+        )}
+      </div>
+      {error && <p className="settings-error" role="alert">{error}</p>}
+
+      {draft && (
+        <form className="prompt-form" aria-label={draft.id ? t('prompts.edit') : t('prompts.new')} onSubmit={(event) => void save(event)}>
+          <input autoFocus placeholder={t('prompts.name')} aria-label={t('prompts.name')} value={draft.name} maxLength={60} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+          <textarea placeholder={t('prompts.content')} aria-label={t('prompts.content')} rows={6} value={draft.content} maxLength={8000} onChange={(event) => setDraft({ ...draft, content: event.target.value })} />
+          <p className="settings-hint">
+            {promptVariables(draft.content).length ? t('prompts.variables', { list: promptVariables(draft.content).join(', ') }) : t('prompts.variablesHint')}
+          </p>
+          <label className="settings-row settings-switch">
+            <span>{t('prompts.shareWithOrg')}</span>
+            <input type="checkbox" role="switch" checked={draft.shared} onChange={(event) => setDraft({ ...draft, shared: event.target.checked })} />
+          </label>
+          <div className="prompt-form-actions">
+            <button type="button" className="chat-actions-item" onClick={() => setDraft(null)}>
+              <X size={14} />
+              {t('common.cancel')}
+            </button>
+            <button type="submit" className="chat-actions-primary" disabled={!draft.name.trim() || !draft.content.trim()}>
+              <Check size={14} />
+              {t('common.save')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {prompts.length === 0 && !draft ? (
+        <div className="projects-empty">
+          <ScrollText size={22} />
+          <strong>{t('prompts.empty')}</strong>
+        </div>
+      ) : (
+        <ul className="prompt-list">
+          {prompts.map((prompt) => (
+            <li key={prompt.id}>
+              <button type="button" className="prompt-item-main" title={t('prompts.use')} onClick={() => onUse(prompt)}>
+                <span>
+                  <strong>
+                    {prompt.name}
+                    {prompt.shared && <Users size={11} aria-label={t('prompts.shared')} />}
+                  </strong>
+                  <small>{prompt.content.replace(/\s+/g, ' ').slice(0, 80)}</small>
+                </span>
+                <CornerDownLeft size={13} />
+              </button>
+              {prompt.mine && canWrite && (
+                <div className="prompt-item-actions">
+                  <button type="button" aria-label={t('prompts.editNamed', { name: prompt.name })} title={t('common.edit')} onClick={() => setDraft({ id: prompt.id, name: prompt.name, content: prompt.content, shared: prompt.shared })}>
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    className={armed === prompt.id ? 'armed' : ''}
+                    aria-label={t('prompts.delete', { name: prompt.name })}
+                    title={armed === prompt.id ? t('prompts.deleteConfirm') : t('common.delete')}
+                    onBlur={() => setArmed(null)}
+                    onClick={() => void remove(prompt)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="settings-hint prompt-library-hint">{t('prompts.slashHint')}</p>
+    </div>
+  )
+}

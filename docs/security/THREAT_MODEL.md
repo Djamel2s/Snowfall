@@ -58,7 +58,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 
 | Menace | Mesures | Résiduel | Preuve |
 |---|---|---|---|
-| Consigne cachée dans un document, une page, un résultat (T, E) | Balisage de données non fiables, nettoyage répété des balises, règles de la plateforme avant les instructions de l'agent, aucun outil accordé par le contenu | **M** : rien ne *détecte* l'injection | `neutralize.test.ts`, cas `securite-*` du banc |
+| Consigne cachée dans un document, une page, un résultat (T, E) | Balisage de données non fiables, nettoyage répété des balises, règles de la plateforme avant les instructions de l'agent, aucun outil accordé par le contenu | **F** pour l'exfiltration : règle de deux (contenu externe + données internes → tout appel sortant à valider), fondée sur la provenance, indépendante du texte. **M** pour le reste : la détection heuristique ne voit pas une attaque reformulée (0/12 sur le jeu v2) ; un document interne piégé peut orienter le premier appel sortant | `neutralize.test.ts`, `injection.test.ts`, `scripts/injection-holdout.ts`, 13 cas `securite-*` du banc |
 | Écriture déclenchée par un contenu (T) | Validation humaine de chaque écriture, aperçu exact après validation des arguments | F | `approval.test.ts`, `securite-document-piege` |
 | Exfiltration par adresse construite (I) | `read_webpage` limité aux adresses de la recherche ou tapées par l'utilisateur ; images jamais chargées dans les réponses | F | `web-tools.test.ts`, `securite-page-exfiltration` |
 | Réponse mensongère (« c'est enregistré ») (R) | Règle anti-fausse affirmation dans le prompt, étapes visibles | M | cas `outils-refus`, `outils-sans-outil` |
@@ -101,7 +101,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 
 ## 4. Risques résiduels prioritaires
 
-1. **Injection de prompt sans détection** (M) : ajouter une détection mesurée par le banc d'évaluation.
+1. **Injection de prompt, détection limitée** (M) : l'exfiltration est couverte par la règle de deux ; la détection heuristique n'attrape que les injections recopiées. Restent : document interne piégé (premier appel sortant), liens cliquables dans les réponses. Pistes : marquage des contenus non fiables (spotlighting), liste blanche des domaines de liens, classifieur local facultatif.
 2. **Contrats des fournisseurs d'IA** (M) : DPA, localisation, non-conservation.
 3. **MCP : jeton par serveur** (M) : OAuth par utilisateur si des écritures sensibles passent par MCP.
 4. **gVisor non vérifié sur l'hôte de production** : à faire avant d'ouvrir l'interpréteur.

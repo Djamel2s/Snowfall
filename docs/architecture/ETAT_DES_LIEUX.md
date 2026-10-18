@@ -83,16 +83,16 @@ humaine, anti-exfiltration des adresses).
 | Modifier, régénérer, arrêter, rechercher, projets | ✅ | — |
 | Recherche web, interpréteur de code, artifacts, MCP | ✅ (MCP non essayé en vrai) | — |
 | Reprise d'une réponse après déconnexion, raisonnement visible | ✅ | — |
-| **Branches de conversation** (modifier crée une branche au lieu d'écraser) | ❌ | P1 |
-| **Partage** interne en lecture | ❌ | P1 |
-| **Retour 👍👎** sur les réponses | ❌ | P1 |
-| **Export / import** (Markdown, PDF, JSON ; import ChatGPT/LibreChat) | ❌ | P2 |
-| **Bibliothèque de prompts** et commandes « / » | ❌ | P2 |
-| **Presets** et **paramètres du modèle** (température, longueur, effort) | ❌ | P2 |
-| **Mémoire** (désactivée par défaut, visible, effaçable) | ❌ | P2 |
-| **Conversation temporaire** | ❌ | P2 |
-| **OCR** (PDF scannés, images) | ❌ | P2 |
-| **Catalogue d'agents** (duplication, droits fins) | Partiel (agents partagés) | P2 |
+| **Branches de conversation** (modifier crée une branche au lieu d'écraser) | ✅ | — |
+| **Partage** interne en lecture | ✅ | — |
+| **Retour 👍👎** sur les réponses | ✅ (+ taux par agent) | — |
+| **Export / import** (Markdown, JSON ; import ChatGPT/LibreChat) | ✅ (pas d'export PDF) | — |
+| **Bibliothèque de prompts** et commandes « / » | ✅ | — |
+| **Presets** et **paramètres du modèle** (température, longueur, effort) | ✅ (réglages par agent : créativité, longueur) | — |
+| **Mémoire** (désactivée par défaut, visible, effaçable) | ✅ | — |
+| **Conversation temporaire** | ✅ | — |
+| **OCR** (PDF scannés, images) | ✅ (local, profil « ocr ») | — |
+| **Catalogue d'agents** (duplication, droits fins) | ✅ (droits fins : plus tard) | — |
 | Favoris et étiquettes, archivage | ❌ | P3 |
 | Comparaison de modèles, images, voix, actions OpenAPI, API d'agents | ❌ | P3 |
 | Sous-agents / chaînes d'agents | ❌ | P3 |
@@ -173,8 +173,14 @@ plateforme*, *désactivé*, *activé*) au lieu de le masquer.
 | 5 | Quotas et plafonds | Plafonds mensuels d'appels d'outils (code, web, MCP) ; budget de tokens et durée maximale par réponse |
 | 6 | Interface | Premiers hooks extraits de `App.tsx` ; 12 tests d'écran (Playwright) en CI, qui ont trouvé deux vrais défauts : saisie impossible sur l'écran d'accueil, réponse affichée deux fois un instant |
 
-Reste du sprint 0 : extraire la logique de réponse en cours (`App.tsx`) dans un
-hook dédié, quand une fonction de la phase 3 y touchera.
+Fait le 18 octobre : la réponse en cours (flux, étapes, réflexion, pause sur
+validation, reprise, arrêt, reconnexion) vit dans `hooks/useRun.ts` ; `App.tsx`
+passe de 1 572 à 1 389 lignes. Ces parcours n'avaient aucun test d'écran : trois
+ont été ajoutés avant de valider le déplacement (`e2e/approval.spec.ts`).
+
+Reste du sprint 0 : vérifier gVisor sur l'hôte de production. `App.tsx` reste
+gros : les conversations (chargement, création, liste) sont le prochain bloc à
+sortir, quand une fonction y touchera.
 
 ### Plan initial du sprint 0 (pour mémoire)
 
@@ -199,17 +205,49 @@ Fait le 17 octobre :
 - Corrigé au passage, trouvé par les tests d'écran : sur mobile, choisir une
   section dans la barre latérale refermait le tiroir.
 
-Suite :
+Puis, le même jour, le reste de la phase 3 :
+- **Partage interne** : lien en lecture seule (1, 7 ou 30 jours) vers un instantané
+  de la branche affichée, réservé à l'organisation, révocable ; refusé pour une
+  base confidentielle ou une conversation temporaire.
+- **Export / import** : Markdown ou JSON d'une conversation ; export de toutes mes
+  données (RGPD) ; import ChatGPT, LibreChat, Snowfall.
+- **Réglages des réponses** par agent : créativité et longueur, bornées côté serveur.
+- **Bibliothèque de prompts** (barre latérale) : privés ou partagés, variables
+  `{{…}}`, « / » dans la saisie.
+- **Conversation temporaire** (sablier en haut) : hors historique et recherche,
+  rien dans les traces, effacée sous 24 h.
+- **Mémoire** (Mon compte) : désactivée par défaut ; « retiens que… » avec
+  validation ; visible, effaçable ; jamais en temporaire ni en confidentiel.
+- **OCR local** (profil « ocr ») : PDF numérisés et images lus dans un conteneur
+  sans réseau.
+- **Taux de 👍 par agent** sur les cartes du catalogue, à partir de 5 personnes.
 
-Dans l'ordre : branches de conversation → retour 👍👎 (relié aux traces et au banc)
-→ partage interne → export/import → presets et paramètres → bibliothèque de
-prompts → conversation temporaire → mémoire → OCR local → catalogue d'agents.
+Reste de la parité (P3) : favoris et étiquettes, archivage, export PDF, presets
+de conversation hors agents, droits fins sur les agents.
 
 ### Phase 4 — Sécurité avancée et ouverture
 
-Détection des injections de prompt (mesurée avec le banc) → OAuth MCP par
-utilisateur → actions OpenAPI → sous-agents → images et voix (modèles locaux,
-GPU disponible) → test d'intrusion externe.
+Fait le 18 octobre, première étape (détection des injections) :
+- **Banc enrichi** : 13 cas d'injection (pièces jointes, mémoire, web, fausses
+  balises, faux accord, exfiltration par image ou par requête, langue étrangère)
+  et un cas témoin. Il a trouvé une vraie faille : un souvenir piégé était suivi
+  3 fois sur 3 (lien d'hameçonnage, puis demande de mot de passe). Corrigé : la
+  mémoire refuse liens, adresses, secrets et consignes, avant même la validation.
+- **Détection heuristique** : avertissement de la plateforme devant un contenu
+  suspect, audit sans contenu, alerte sur la carte de validation qui suit.
+- **Mesure honnête** : 100 % sur ce qui a servi à régler, **0/12** sur un jeu
+  tenu à l'écart d'attaques reformulées. L'heuristique ne protège pas d'un
+  attaquant qui s'adapte ; les contrôles structurels restent la défense.
+- Banc complet après coup : 50/50 (aucune régression).
+- **Règle de deux** (choisie plutôt qu'un classifieur) : dès qu'une réponse a lu
+  un contenu externe ET des données internes, tout appel sortant (recherche web,
+  page, MCP) demande l'accord, avec ce qui sortirait. Fondée sur la provenance :
+  une injection reformulée ne la contourne pas. Aucune validation de plus sur les
+  50 essais du banc ; un modèle qui obéit au piège est arrêté avant la fuite.
+
+Suite : marquage des contenus non fiables (spotlighting, mesuré sur le banc) et
+liste blanche des domaines de liens → OAuth MCP par utilisateur → actions OpenAPI → sous-agents → images
+et voix (modèles locaux, GPU disponible) → test d'intrusion externe.
 
 ## 9. Décisions à prendre
 

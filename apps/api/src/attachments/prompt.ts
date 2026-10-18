@@ -2,6 +2,7 @@ import type { ChatTurn, ModelImage } from "../graph/chat-graph.js";
 import type { StoredMessage } from "../conversations/store.js";
 import type { ModelAttachment } from "./store.js";
 import { stripTags } from "../security/neutralize.js";
+import { flagIfSuspicious } from "../security/injection.js";
 
 /** Texte de documents transmis au modèle pour une requête (tous tours confondus). */
 export const DOCUMENT_CHAR_BUDGET = 150_000;
@@ -36,7 +37,8 @@ function renderTurn(
       : attachment.text;
     budget.chars -= Math.min(attachment.text.length, allowed);
     // Le texte reste une donnée : les balises éventuelles du document sont neutralisées.
-    const safe = stripTags(text, /<\/?\s*document\b[^>]*>/gi);
+    // Consignes adressées à l'assistant repérées : avertissement de la plateforme en tête.
+    const safe = flagIfSuspicious(stripTags(text, /<\/?\s*document\b[^>]*>/gi)).text;
     documents.push(`<document name="${escapeAttribute(attachment.name)}">\n${safe || "[document sans texte lisible]"}\n</document>`);
   }
 

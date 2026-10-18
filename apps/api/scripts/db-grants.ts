@@ -34,6 +34,9 @@ const privileges: Record<string, string[]> = {
   token_usage: ["SELECT", "INSERT", "UPDATE"],
   tool_usage: ["SELECT", "INSERT", "UPDATE"],
   message_feedback: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  conversation_shares: ["SELECT", "INSERT", "DELETE"],
+  prompts: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  user_memories: ["SELECT", "INSERT", "DELETE"],
   projects: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   user_preferences: ["SELECT", "INSERT", "UPDATE"],
@@ -46,6 +49,8 @@ const privileges: Record<string, string[]> = {
   agent_checkpoints: ["SELECT", "INSERT", "DELETE"],
   agent_checkpoint_writes: ["SELECT", "INSERT", "DELETE"],
   // agent_run_leases : aucun droit, lue seulement via snowfall_stale_runs().
+  // temporary_conversations : aucun droit, lue seulement via snowfall_expired_temporary().
+  // agent_feedback : aucun droit, lue seulement via snowfall_agent_ratings().
   conversation_summaries: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   generated_files: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_servers: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -60,6 +65,8 @@ const functions = [
   "snowfall_set_organization_sso(text, text)",
   "snowfall_pending_knowledge()",
   "snowfall_stale_runs(interval)",
+  "snowfall_expired_temporary()",
+  "snowfall_agent_ratings()",
 ];
 
 async function main() {

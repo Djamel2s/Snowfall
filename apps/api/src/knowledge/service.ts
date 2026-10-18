@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger, FastifyRequest } from "fastify";
 import type { AuditLog } from "../audit/audit.js";
 import { ExtractionError, extractInWorker } from "../attachments/extract.js";
+import { looksScanned, type DocumentOcr } from "../ocr/client.js";
 import { sanitizeFileName } from "../attachments/detect.js";
 import type { TenantContext } from "../db/tenant.js";
 import type { ProviderId } from "../llm/types.js";
@@ -16,6 +17,7 @@ import type { Reranker } from "./rerank.js";
 import { contextHeader, KeywordIndex, reciprocalRankFusion, vectorSearch, type SearchHit } from "./search.js";
 import { KnowledgeLimitError, type KnowledgeBase, type KnowledgeStore, type LoadedBase } from "./store.js";
 import { stripTags } from "../security/neutralize.js";
+import { flagIfSuspicious } from "../security/injection.js";
 
 /** Texte extrait par source (au-delà, tronqué). */
 export const MAX_SOURCE_CHARS = 2_000_000;
@@ -91,8 +93,34 @@ export class KnowledgeService {
       rerankCandidates?: number;
       /** Tests uniquement : résolution DNS simulée pour les liens. */
       fetchTesting?: SafeFetchOptions["testing"];
+      /** OCR local : PDF numérisés et images (absent : non lus). */
+      ocr?: DocumentOcr | undefined;
     },
   ) {}
+
+  /** Les images ne sont acceptées que si l'OCR local est installé. */
+  get readsImages() {
+    return Boolean(this.deps.ocr);
+  }
+
+  /**
+   * Texte d'un fichier de la base. Un PDF sans couche texte (numérisé) et une
+   * image passent par l'OCR local ; s'il échoue, le PDF garde son texte d'origine.
+   */
+  private async fileText(file: KnowledgeFile, bytes: Buffer) {
+    if (file.format === "image") {
+      if (!this.deps.ocr) throw new SourceFailure("image");
+      const text = await this.deps.ocr.recognize(bytes, file.mediaType).catch(() => {
+        throw new SourceFailure("ocr_failed");
+      });
+      return text.slice(0, MAX_SOURCE_CHARS);
+    }
+    if (file.format === "text") return bytes.toString("utf8").replace(/\u0000/g, "").slice(0, MAX_SOURCE_CHARS);
+    const text = await extractInWorker(bytes, file.format, { maxChars: MAX_SOURCE_CHARS, timeoutMs: EXTRACT_TIMEOUT_MS, structure: true });
+    if (file.format !== "pdf" || !this.deps.ocr || !looksScanned(text, bytes)) return text;
+    const scanned = await this.deps.ocr.recognize(bytes, "application/pdf").catch(() => "");
+    return scanned.trim() ? scanned.slice(0, MAX_SOURCE_CHARS) : text;
+  }
 
   get store() {
     return this.deps.store;
@@ -191,16 +219,13 @@ export class KnowledgeService {
       } else {
         const content = await store.sourceContent(tenant, sourceId);
         if (!content) return;
-        const detected = detectKnowledgeFile(content.bytes, content.name, KNOWLEDGE_FILE_MAX_BYTES);
+        const detected = detectKnowledgeFile(content.bytes, content.name, KNOWLEDGE_FILE_MAX_BYTES, { images: this.readsImages });
         if (typeof detected === "string") throw new SourceFailure(detected);
         file = detected;
         bytes = content.bytes;
       }
 
-      const text =
-        file.format === "text"
-          ? bytes.toString("utf8").replace(/\u0000/g, "").slice(0, MAX_SOURCE_CHARS)
-          : await extractInWorker(bytes, file.format, { maxChars: MAX_SOURCE_CHARS, timeoutMs: EXTRACT_TIMEOUT_MS, structure: true });
+      const text = await this.fileText(file, bytes);
       const chunks = chunkDocument(text);
       if (chunks.length === 0) throw new SourceFailure("empty");
 
@@ -287,6 +312,7 @@ export class KnowledgeService {
       ? { format: "html", mediaType: "text/html" }
       : detectKnowledgeFile(fetched.bytes, fetched.fileName ?? (pathName.includes(".") ? pathName : `${pathName || "page"}${extensionFor(fetched.contentType)}`), WEB_PAGE_MAX_BYTES);
     if (typeof file === "string") throw new SourceFailure(file);
+    if (file.format === "image") throw new SourceFailure("image");
     const text =
       file.format === "text"
         ? fetched.bytes.toString("utf8").replace(/\u0000/g, "").slice(0, WEB_PAGE_MAX_CHARS)
@@ -475,7 +501,8 @@ export function renderKnowledge(passages: Passage[]) {
       ...(passage.section ? [`section="${escapeAttribute(passage.section)}"`] : []),
       ...(passage.page ? [`page="${passage.page}"`] : []),
     ].join(" ");
-    return `<source ${attributes}>\n${stripTags(passage.text, /<\/?\s*(knowledge|source)\b[^>]*>/gi)}\n</source>`;
+    // Passage suspect (document piégé dans la base) : avertissement de la plateforme en tête.
+    return `<source ${attributes}>\n${flagIfSuspicious(stripTags(passage.text, /<\/?\s*(knowledge|source)\b[^>]*>/gi)).text}\n</source>`;
   });
   return `<knowledge>\n${blocks.join("\n\n")}\n</knowledge>`;
 }

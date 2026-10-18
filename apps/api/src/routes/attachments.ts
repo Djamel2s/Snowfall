@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ATTACHMENT_MAX_BYTES } from "../db/schema.js";
 import { detectFile, sanitizeFileName } from "../attachments/detect.js";
-import { ExtractionError, extractText } from "../attachments/extract.js";
+import { ExtractionError, extractText, MAX_EXTRACTED_CHARS } from "../attachments/extract.js";
+import { looksScanned, type DocumentOcr } from "../ocr/client.js";
 import type { AttachmentStore } from "../attachments/store.js";
 import type { MalwareScanner } from "../security/antivirus.js";
 import type { RouteKit } from "./kit.js";
@@ -20,7 +21,7 @@ function decodeName(header: unknown) {
   }
 }
 
-export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, store: AttachmentStore, scanner?: MalwareScanner) {
+export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, store: AttachmentStore, scanner?: MalwareScanner, ocr?: DocumentOcr) {
   const checkUploadLimit = api.createRateLimit({
     max: 30,
     timeWindow: "1 minute",
@@ -67,6 +68,11 @@ export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, st
       if (file.kind === "document") {
         try {
           text = await extractText(bytes, file.mediaType);
+          // PDF numérisé : lu par l'OCR local s'il est installé (sinon texte d'origine).
+          if (ocr && file.mediaType === "application/pdf" && looksScanned(text, bytes)) {
+            const scanned = await ocr.recognize(bytes, "application/pdf").catch(() => "");
+            if (scanned.trim()) text = scanned.slice(0, MAX_EXTRACTED_CHARS);
+          }
         } catch (error) {
           if (error instanceof ExtractionError) return reply.code(422).send({ error: "Unreadable document" });
           throw error;

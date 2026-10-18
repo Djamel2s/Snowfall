@@ -53,6 +53,8 @@ const preferencesSchema = z.object({
   locale: z.enum(locales).nullable(),
   sendOnEnter: z.boolean(),
   reduceMotion: z.enum(["system", "on", "off"]),
+  // Absent (ancien client) : la mémoire reste désactivée.
+  memory: z.boolean().default(false),
 }).strict();
 
 const projectSchema = z.object({ name: z.string().trim().min(1).max(80) }).strict();

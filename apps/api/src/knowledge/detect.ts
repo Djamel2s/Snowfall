@@ -3,7 +3,10 @@ import { listZipEntries, readZipEntry } from "../attachments/detect.js";
 /** Extracteurs disponibles (tous exécutés dans un worker isolé, sauf le texte brut). */
 export type KnowledgeFormat = "pdf" | "docx" | "xlsx" | "pptx" | "odf" | "epub" | "html" | "text";
 
-export type KnowledgeFile = { format: KnowledgeFormat; mediaType: string };
+export type KnowledgeFile =
+  | { format: KnowledgeFormat; mediaType: string }
+  /** Image lue par l'OCR local (seulement s'il est installé). */
+  | { format: "image"; mediaType: "image/png" | "image/jpeg" | "image/webp" };
 
 /** Fichier reconnu mais pas encore pris en charge (affiché tel quel à l'utilisateur). */
 export type KnowledgeRejection = "audio_video" | "image" | "unsupported" | "too_large";
@@ -77,11 +80,21 @@ function mediaRejection(bytes: Buffer): KnowledgeRejection | null {
  * Format réel déterminé par la signature binaire (et la structure interne des
  * archives), jamais par l'extension seule ni par le Content-Type annoncé.
  */
-export function detectKnowledgeFile(bytes: Buffer, fileName: string, maxBytes: number): KnowledgeFile | KnowledgeRejection {
+export function detectKnowledgeFile(
+  bytes: Buffer,
+  fileName: string,
+  maxBytes: number,
+  options: { images?: boolean } = {},
+): KnowledgeFile | KnowledgeRejection {
   if (bytes.length === 0) return "unsupported";
   if (bytes.length > maxBytes) return "too_large";
 
   const media = mediaRejection(bytes);
+  if (media === "image" && options.images) {
+    if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47])) return { format: "image", mediaType: "image/png" };
+    if (startsWith(bytes, [0xff, 0xd8, 0xff])) return { format: "image", mediaType: "image/jpeg" };
+    if (startsWith(bytes, [0x57, 0x45, 0x42, 0x50], 8)) return { format: "image", mediaType: "image/webp" };
+  }
   if (media) return media;
 
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) return { format: "pdf", mediaType: "application/pdf" };

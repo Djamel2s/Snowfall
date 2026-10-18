@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc -b",
-    "test": "tsx --test tests/markdown.test.ts tests/responder.test.ts tests/knowledge-draft.test.ts tests/artifacts.test.ts",
+    "test": "tsx --test tests/markdown.test.ts tests/responder.test.ts tests/knowledge-draft.test.ts tests/artifacts.test.ts tests/prompts.test.ts",
     "e2e": "playwright test"
   },
   "dependencies": {

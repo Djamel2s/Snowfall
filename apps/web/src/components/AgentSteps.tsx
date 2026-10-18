@@ -95,6 +95,13 @@ function ApprovalCard({ approval, onDecide }: { approval: ToolApproval; onDecide
         <ShieldCheck size={13} />
         {t('agent.approvalTitle')}
       </p>
+      {approval.warning && (
+        <p className="approval-warning" role="alert">
+          <TriangleAlert size={13} />
+          {t('agent.approvalWarning')}
+        </p>
+      )}
+      {approval.exposure && <p className="approval-exposure">{t('agent.approvalExposure')}</p>}
       <p className="approval-subject">{approval.title}</p>
       {approval.detail && <pre className="approval-detail">{approval.detail}</pre>}
       {failed && <p className="approval-error">{t('agent.approvalExpired')}</p>}

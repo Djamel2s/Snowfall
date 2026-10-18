@@ -82,6 +82,13 @@ describe("Google Gemini", () => {
     assert.deepEqual(configs, [{ includeThoughts: true, thinkingLevel: "minimal" }, { includeThoughts: true }]);
   });
 
+  it("réglages de l'agent : température et longueur (plafonnée par la plateforme)", async () => {
+    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x", generation: { temperature: 0.1, maxOutputTokens: 9_999 } }));
+    const config = JSON.parse(String(calls.at(-1)!.init.body)).generationConfig;
+    assert.deepEqual([config.temperature, config.maxOutputTokens], [0.1, 1000]);
+  });
+
   it("passe la clé en en-tête, jamais dans l'URL", async () => {
     mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
     await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" }));

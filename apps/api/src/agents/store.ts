@@ -14,7 +14,7 @@ export type Agent = AgentProfile & ModelSelection & {
 };
 
 /** tools absent : lecture seule (defaultAgentTools) ; mcpServers absent : aucun. */
-export type AgentInput = Omit<AgentProfile, "tools" | "mcpServers"> & Partial<Pick<AgentProfile, "tools" | "mcpServers">> & ModelSelection;
+export type AgentInput = Omit<AgentProfile, "tools" | "mcpServers" | "parameters"> & Partial<Pick<AgentProfile, "tools" | "mcpServers" | "parameters">> & ModelSelection;
 
 export interface AgentStore {
   list(tenant: TenantContext): Promise<Agent[]>;
@@ -64,6 +64,7 @@ export class PostgresAgentStore implements AgentStore {
       // Profil enregistré avant le choix des outils, ou outil retiré du catalogue.
       tools: knownTools(profile.tools ?? defaultAgentTools),
       mcpServers: profile.mcpServers ?? [],
+      parameters: profile.parameters ?? {},
       id: row.id,
       provider: row.provider,
       model: row.model,
@@ -80,6 +81,7 @@ export class PostgresAgentStore implements AgentStore {
       instructions: input.instructions,
       tools: knownTools(input.tools ?? defaultAgentTools),
       mcpServers: [...new Set(input.mcpServers ?? [])],
+      parameters: input.parameters ?? {},
     };
     return this.keyring.encrypt(
       client,

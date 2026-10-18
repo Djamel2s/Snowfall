@@ -1263,3 +1263,189 @@
 .feedback-comment button:disabled { cursor: default; opacity: .4; }
 /* Le commentaire après 👎 passe sous les boutons. */
 .message-actions { flex-wrap: wrap; align-items: center; }
+
+/* ---- Menu de la conversation : partager, exporter ---------------------- */
+
+.chat-actions { position: relative; }
+/* La barre du haut passe au-dessus de la conversation (son panneau déborde dessus). */
+.chat-topbar { position: relative; z-index: 20; }
+
+.chat-actions-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #dcecff, #a9c9f2);
+  color: #0c1b2e;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.chat-actions-primary:disabled { cursor: default; opacity: .5; }
+
+.chat-actions-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 35;
+  display: flex;
+  width: min(340px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 14px;
+  background: #0d1524;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .45);
+}
+
+.chat-actions-panel h4 { margin: 0 0 4px; color: #e2ebf8; font-size: 12.5px; font-weight: 600; }
+.chat-actions-panel .settings-hint { margin: 0 0 8px; }
+.chat-actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.chat-actions-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(183, 210, 244, .12);
+  border-radius: 9px;
+  background: transparent;
+  color: #cfdcef;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-actions-item:hover { border-color: rgba(158, 202, 255, .35); color: #fff; }
+
+.share-links { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.share-links li { display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 9px; border-radius: 8px; background: rgba(255, 255, 255, .03); color: #9aabc3; font-size: 11px; }
+.share-links li span { flex: 1; }
+.share-links button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #8291a9; cursor: pointer; }
+.share-links button:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+
+/* ---- Conversation partagée (lecture seule) ----------------------------- */
+
+.shared-view { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow-y: auto; }
+
+.shared-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px auto 0;
+  width: min(760px, calc(100% - 32px));
+  padding: 10px 12px;
+  border: 1px solid rgba(158, 202, 255, .22);
+  border-radius: 12px;
+  background: rgba(13, 21, 36, .96);
+  color: #9ecaff;
+}
+
+.shared-banner span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.shared-banner strong { overflow: hidden; color: #e2ebf8; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.shared-banner small { color: #7d8ca4; font-size: 11px; }
+.shared-messages { width: min(760px, calc(100% - 32px)); margin: 18px auto 40px; }
+.shared-empty { margin: 40px auto; color: #8fa0b8; text-align: center; }
+.shared-sources { margin: 6px 0 0; padding-left: 16px; color: #7d8ca4; font-size: 11.5px; }
+/* Vue partagée : la conversation en cours est masquée (l'attribut hidden l'emporte). */
+.chat-workspace > [hidden] { display: none !important; }
+
+/* ---- Bibliothèque de prompts ------------------------------------------- */
+
+.prompt-library { display: flex; flex-direction: column; gap: 8px; }
+.prompt-form { display: flex; flex-direction: column; gap: 7px; padding: 10px; border: 1px solid rgba(183, 210, 244, .1); border-radius: 12px; background: rgba(255, 255, 255, .02); }
+.prompt-form input,
+.prompt-form textarea {
+  padding: 8px 10px;
+  border: 1px solid rgba(183, 210, 244, .12);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.prompt-form input:focus,
+.prompt-form textarea:focus { border-color: rgba(185, 217, 255, .45); }
+.prompt-form .settings-hint { margin: 0; }
+.prompt-form-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+.prompt-list { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.prompt-list li { position: relative; display: flex; border-radius: 10px; }
+.prompt-list li:hover { background: var(--sidebar-hover); }
+.prompt-item-main { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; padding: 8px 9px; border: 0; background: transparent; color: #dbe6f5; font: inherit; text-align: left; cursor: pointer; }
+.prompt-item-main span { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+.prompt-item-main strong { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.prompt-item-main small { overflow: hidden; color: #7d8ca4; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-item-main > svg { flex-shrink: 0; color: #5f708a; }
+.prompt-item-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.prompt-list li:hover .prompt-item-actions,
+.prompt-list li:focus-within .prompt-item-actions { opacity: 1; }
+.prompt-item-actions button { display: grid; width: 22px; height: 22px; place-items: center; border: 0; border-radius: 6px; background: rgba(10, 17, 30, .9); color: #9aabc3; cursor: pointer; }
+.prompt-item-actions button.armed { background: rgba(220, 70, 90, .25); color: #ffd6db; }
+.prompt-library-hint { margin: 2px 2px 8px; }
+@media (hover: none) { .prompt-item-actions { opacity: 1; } }
+
+/* « / » dans la zone de saisie */
+.prompt-picker,
+.prompt-variables {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 15;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 14px;
+  background: #0d1524;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .45);
+}
+
+.prompt-picker button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: #dbe6f5; font: inherit; text-align: left; cursor: pointer; }
+.prompt-picker button.active { background: rgba(158, 202, 255, .1); }
+.prompt-picker button span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.prompt-picker strong { font-size: 12.5px; }
+.prompt-picker small { overflow: hidden; color: #7d8ca4; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-picker-empty { margin: 6px 8px; color: #7d8ca4; font-size: 12px; }
+
+.prompt-variables { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.prompt-variables strong { color: #e2ebf8; font-size: 12.5px; }
+.prompt-variables label { display: flex; flex-direction: column; gap: 4px; color: #8fa0b8; font-size: 11px; }
+.prompt-variables input { height: 32px; padding: 0 10px; border: 1px solid rgba(183, 210, 244, .12); border-radius: 9px; outline: none; background: rgba(255, 255, 255, .03); color: #dbe6f5; font: inherit; font-size: 12.5px; }
+.prompt-variables-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.prompt-variables-actions > button:first-child { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 9px; background: rgba(255, 255, 255, .05); color: #9aabc3; cursor: pointer; }
+
+.composer { position: relative; }
+
+/* ---- Conversation temporaire --------------------------------------------- */
+
+.chat-temporary-toggle.active { background: rgba(158, 202, 255, .14); color: #cfe3ff; box-shadow: inset 0 0 0 1px rgba(158, 202, 255, .3); }
+.chat-temporary-badge { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 999px; background: rgba(158, 202, 255, .1); color: #bcd6f7; font-size: 11.5px; }
+@media (max-width: 640px) { .chat-temporary-badge { width: 26px; padding: 0; justify-content: center; font-size: 0; } }
+
+/* ---- Mémoire (Mon compte) ------------------------------------------------- */
+
+.memory-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; padding: 0; list-style: none; }
+.memory-list li { display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; border-radius: 9px; background: rgba(255, 255, 255, .03); color: #cfdbec; font-size: 12px; line-height: 1.45; }
+.memory-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.memory-list button { display: grid; flex-shrink: 0; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #8798b0; cursor: pointer; }
+.memory-list button:hover { background: rgba(220, 70, 90, .18); color: #ffd6db; }
+.chat-actions-item.armed { background: rgba(220, 70, 90, .2); color: #ffd6db; }
+
+/* Validation après un contenu suspect (injection possible). */
+.approval-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 8px; padding: 8px 10px; border-radius: 9px; background: rgba(245, 166, 35, .12); color: #f6d38f; font-size: 12px; line-height: 1.45; }
+.approval-warning svg { flex-shrink: 0; margin-top: 2px; }
+.approval-exposure { margin: 0 0 8px; color: #a9bbd4; font-size: 12px; line-height: 1.45; }

@@ -181,7 +181,7 @@ export function registerKnowledgeRoutes(api: FastifyInstance, kit: RouteKit, dep
 
       const bytes = request.body;
       const name = decodeName(request.headers["x-file-name"]);
-      const detected = detectKnowledgeFile(bytes, name, KNOWLEDGE_FILE_MAX_BYTES);
+      const detected = detectKnowledgeFile(bytes, name, KNOWLEDGE_FILE_MAX_BYTES, { images: knowledge.readsImages });
       if (typeof detected === "string") {
         await kit.record(request, user, {
           eventType: "knowledge.source_create",

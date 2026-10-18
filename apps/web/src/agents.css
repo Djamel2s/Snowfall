@@ -1045,3 +1045,13 @@
   .agent-card-actions { opacity: 1; }
   .agent-card:has(.agent-card-actions button) .agent-card-main { padding-top: 30px; }
 }
+
+/* ---- Studio : réglages des réponses ------------------------------------ */
+
+.studio-parameters { display: flex; flex-direction: column; gap: 6px; }
+.studio-parameters-label { margin-top: 2px; color: #8fa0b8; font-size: 11.5px; }
+.studio-parameters .settings-segmented { display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; }
+.studio-parameters .settings-segmented button { min-width: 0; padding-inline: 4px; }
+
+/* Taux de réponses utiles (à partir de 5 avis). */
+.agent-card-rating { display: inline-flex; align-items: center; gap: 4px; color: #8fb8a4; font-size: 10.5px; font-variant-numeric: tabular-nums; }

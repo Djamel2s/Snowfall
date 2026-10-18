@@ -384,6 +384,6 @@ describe("MCP : trous confirmés par la relecture", () => {
     const result = await runTool([tool!], { name: tool!.name, arguments: { title: "x" } }, AbortSignal.timeout(10_000), async () => true);
     assert.ok(performance.now() - started < 3_000, `${Math.round(performance.now() - started)} ms`);
     // Aucune balise de résultat ne survit dans le contenu (la boucle tronque ensuite à 24 000 caractères).
-    assert.ok((result.content.match(/<\/?\s*mcp_result[^>]{0,200}>/gi) ?? []).length <= 1);
+    assert.ok((result.content.match(/<\/?\s*mcp_result\b[^>]{0,200}>/gi) ?? []).length <= 1);
   });
 });

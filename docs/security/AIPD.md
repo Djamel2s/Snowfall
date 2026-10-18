@@ -37,6 +37,11 @@ conversations et les documents, traitement à grande échelle possible.
 | Journal d'audit | Événements de sécurité, sans contenu ni e-mail | 365 jours (90 minimum) |
 | Consommation | Tokens et appels d'outils par membre et par mois | À compléter |
 | Réflexion du modèle | Affichée, jamais enregistrée | Aucune |
+| Conversations temporaires | Comme une conversation, hors historique et sans contenu dans les traces | 24 h |
+| Mémoire de l'utilisateur | Faits courts qu'il a demandé de retenir (désactivée par défaut) | Jusqu'à effacement par l'utilisateur ; supprimée à son départ |
+| Liens de partage | Instantané chiffré d'une conversation, lisible dans l'organisation | 1, 7 ou 30 jours (révocable) |
+| Bibliothèque de prompts | Textes de prompts, privés ou partagés | Jusqu'à suppression par l'auteur |
+| Retours 👍👎 | Note, commentaire chiffré ; taux par agent agrégé (5 personnes au moins) | Avec la réponse notée |
 
 ### Destinataires et flux
 
@@ -46,6 +51,8 @@ conversations et les documents, traitement à grande échelle possible.
 | Moteurs de recherche (via SearXNG) | Requête de recherche formulée par l'agent | Si l'organisation active la recherche web ; jamais en confidentiel |
 | Serveurs MCP | Arguments des appels d'outils | Serveurs approuvés par un administrateur ; écritures validées par l'utilisateur ; jamais en confidentiel |
 | Modèles locaux (embeddings, reclassement, éventuellement génération) | Textes | Sur la plateforme : rien ne sort |
+| OCR local | Documents numérisés | Sur la plateforme, conteneur sans réseau : rien ne sort |
+| Fournisseur d'IA de la réponse | Mémoire de l'utilisateur (s'il l'a activée) | Jamais en conversation temporaire ni confidentielle |
 
 Transferts hors UE : à compléter selon les fournisseurs autorisés (localisation,
 clauses contractuelles types, garanties complémentaires).
@@ -59,8 +66,10 @@ clauses contractuelles types, garanties complémentaires).
 - **Transparence pour l'utilisateur** : étapes de l'agent visibles, sources
   citées, validation de chaque écriture, modèle utilisé affiché.
 - **Droits des personnes** : suppression des conversations par l'utilisateur ;
-  suppression au départ d'un membre. **À prévoir** : export des données de
-  l'utilisateur (droit d'accès et portabilité).
+  suppression au départ d'un membre ; export de toutes ses données (Mon compte →
+  Mes données : droit d'accès et portabilité) ; mémoire visible et effaçable,
+  désactivée tant qu'il ne l'a pas activée ; conversation temporaire pour ce qui
+  ne doit pas être conservé.
 
 ## 4. Risques pour les personnes
 
@@ -70,7 +79,9 @@ clauses contractuelles types, garanties complémentaires).
 | Divulgation à un fournisseur d'IA | Envoi de données personnelles dans un message | Liste blanche, modèles locaux pour le confidentiel, contrats (DPA, non-conservation) | À évaluer |
 | Détournement de l'agent (injection) | Document ou page piégés | Contenus balisés, validation humaine des écritures, anti-exfiltration | À évaluer |
 | Décision fondée sur une réponse erronée | Hallucination | Sources citées, avertissement dans l'interface, évaluations | À évaluer |
-| Surveillance des salariés | Lecture des usages | Audit sans contenu ; consommation agrégée ; traces masquées et courtes | À évaluer |
+| Surveillance des salariés | Lecture des usages | Audit sans contenu ; consommation agrégée ; traces masquées et courtes ; mémoire illisible par les administrateurs ; taux par agent seulement à partir de 5 personnes | À évaluer |
+| Profilage par la mémoire | Faits accumulés sur une personne | Désactivée par défaut, chaque ajout validé par l'utilisateur, liste visible et effaçable, jamais alimentée par un document | À évaluer |
+| Diffusion trop large d'une conversation | Lien de partage transmis | Lecture réservée à l'organisation, durée limitée, révocation, audit des ouvertures, refus pour le confidentiel | À évaluer |
 
 ## 5. Plan d'action
 
