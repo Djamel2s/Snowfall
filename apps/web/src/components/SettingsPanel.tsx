@@ -22,12 +22,15 @@ import { ProviderLogo } from './AgentAvatar'
 import McpSettings from './McpSettings'
 import MyDataSettings from './MyDataSettings'
 import MemorySettings from './MemorySettings'
+import McpConnections from './McpConnections'
 
 type Props = {
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
   /** Conversations importées : la liste est relue. */
   onConversationsImported: () => void
+  /** Retour d'une connexion OAuth à un outil externe (message à afficher). */
+  connectionNotice?: string | undefined
 }
 
 const roles: Role[] = ['owner', 'admin', 'member', 'reader']
@@ -63,7 +66,7 @@ function Meter({ label, used, limit }: { label: string; used: number; limit: num
   )
 }
 
-export default function SettingsPanel({ preferences, onPreferencesChange, onConversationsImported }: Props) {
+export default function SettingsPanel({ preferences, onPreferencesChange, onConversationsImported, connectionNotice }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
   const session = getSession()
   const isAdmin = session.user.role === 'owner' || session.user.role === 'admin'
@@ -261,6 +264,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
           </section>
 
           <MemorySettings enabled={preferences.memory} onToggle={(memory) => updatePreferences({ memory })} onError={setError} />
+
+          <McpConnections notice={connectionNotice} onError={setError} />
 
           <section className="settings-card" aria-label={t('settings.usage')}>
             <h3>{t('settings.usage')}</h3>

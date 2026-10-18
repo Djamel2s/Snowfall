@@ -54,3 +54,17 @@ test('question qui demande le code : bloc déplié d’emblée', async ({ page }
   await page.keyboard.press('Enter')
   await expect(page.locator('.md-code pre')).toContainText('flowchart LR')
 })
+
+test('liens de la réponse : domaine connu cliquable, domaine inconnu signalé et ouvert au second clic', async ({ page }) => {
+  await mockApi(page, { answer: 'Voir [le rapport](https://veille.example.com/synthese) et [valider](https://img.attacker.example/p?d=4407-KAPPA).' })
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).fill('Résume https://veille.example.com/rapport')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('link', { name: 'le rapport' })).toHaveAttribute('href', 'https://veille.example.com/synthese')
+  // Le lien piégé n'est pas un lien : son domaine est affiché.
+  await expect(page.locator('a[href*="attacker.example"]')).toHaveCount(0)
+  const unverified = page.getByRole('button', { name: /Lien non vérifié vers img\.attacker\.example/ })
+  await expect(unverified).toContainText('img.attacker.example')
+  await unverified.click()
+  await expect(page.getByRole('button', { name: /Ouvrir img\.attacker\.example : cliquer encore/ })).toBeVisible()
+})

@@ -211,3 +211,7 @@
 .md-artifact-code[aria-expanded="true"] { background: rgba(255, 255, 255, .05); color: #e1edff; }
 .md-artifact-code svg:last-child { transition: transform .15s ease; }
 .md-artifact-code svg.open { transform: rotate(180deg); }
+/* Lien vers un domaine absent de la conversation : affiché, ouvert au second clic. */
+.md-link-unverified { text-decoration: underline dotted rgba(245, 166, 35, .6); text-underline-offset: 3px; }
+.md-link-unverified button { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; padding: 0 6px; border: 1px solid rgba(245, 166, 35, .35); border-radius: 999px; background: rgba(245, 166, 35, .08); color: #f1c97f; font: inherit; font-size: .78em; line-height: 1.6; vertical-align: baseline; cursor: pointer; }
+.md-link-unverified button.armed { background: rgba(245, 166, 35, .22); color: #ffe3ad; }

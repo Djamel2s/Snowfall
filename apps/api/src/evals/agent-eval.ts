@@ -292,7 +292,9 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
     return { ...base, passed: false, checks: [], answer: "", calls: [], steps: 0, durationMs: performance.now() - started, error: error instanceof Error ? error.message : String(error) };
   }
 
-  const checks = gradeChecks(evalCase.checks, transcript);
+  // Contrôle commun à tous les cas : le marquage des contenus externes (ˆ) ne
+  // doit jamais se retrouver dans la réponse.
+  const checks = gradeChecks([...evalCase.checks, { type: "answer_excludes", texts: ["ˆ"] }], transcript);
   let judge: CaseResult["judge"];
   // Juge en panne ou verdict illisible : erreur technique (exclue des taux, rejouée),
   // jamais un échec imputé au modèle évalué.

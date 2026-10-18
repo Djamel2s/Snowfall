@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { defineTool, type AgentTool } from "../agent/tools.js";
+import { OpenApiClient } from "./openapi.js";
 import { McpClient, toolFingerprint, type McpServerSettings, type McpToolDefinition } from "./client.js";
 import type { ApprovedMcpTool, McpServerRecord } from "./store.js";
-import { stripTags } from "../security/neutralize.js";
+import { datamark, stripTags } from "../security/neutralize.js";
 
 // Outils MCP confiés à un agent. Règles :
 // - seuls les outils APPROUVÉS par l'administrateur sont proposés ;
@@ -70,7 +71,7 @@ export function approvedSnapshot(definition: McpToolDefinition, access: "read" |
 
 /** Résultat gardé (au-delà, tronqué AVANT nettoyage : temps de traitement borné). */
 export const MAX_RESULT_CHARS = 50_000;
-const neutralize = (text: string) => stripTags(text.slice(0, MAX_RESULT_CHARS), /<\/?\s*mcp_result\b[^>]{0,200}>/gi);
+const neutralize = (text: string) => datamark(stripTags(text.slice(0, MAX_RESULT_CHARS), /<\/?\s*mcp_result\b[^>]{0,200}>/gi));
 const attribute = (text: string) => text.replace(/[<>"&]/g, " ");
 
 export type McpToolEvents = {
@@ -87,7 +88,7 @@ export type McpToolEvents = {
  * l'agent, vérification des empreintes, puis outils prêts pour la boucle.
  */
 export async function mcpToolsFor(
-  servers: (McpServerRecord & { token: string | null })[],
+  servers: (McpServerRecord & { token: string | null; spec?: unknown })[],
   events: McpToolEvents,
   options: {
     signal?: AbortSignal | undefined;
@@ -106,7 +107,7 @@ export async function mcpToolsFor(
       .map(async (server): Promise<AgentTool[]> => {
         const tools: AgentTool[] = [];
         const settings = { url: server.url, token: server.token ?? undefined, checkAddress: options.checkAddress };
-        const client = options.client?.(settings) ?? new McpClient(settings, options.fetcher);
+        const client = options.client?.(settings) ?? connectorClient(server, settings, options.fetcher);
         let current: McpToolDefinition[];
         try {
           current = await client.listTools(options.signal);
@@ -127,7 +128,7 @@ export async function mcpToolsFor(
           tools.push(
             defineTool({
               name,
-              description: `[Serveur MCP « ${server.name} »] ${approved.title ? `${approved.title} : ` : ""}${approved.description}`.slice(0, 1_500),
+              description: `[${server.kind === "openapi" ? "API" : "Serveur MCP"} « ${server.name} »] ${approved.title ? `${approved.title} : ` : ""}${approved.description}`.slice(0, 1_500),
               parameters,
               access: approved.access,
               preview: (args: unknown) => ({
@@ -167,3 +168,10 @@ export function clashingNames(server: { id: string; name: string }, tools: strin
   for (const tool of tools) seen.set(exposedName(server, tool), (seen.get(exposedName(server, tool)) ?? 0) + 1);
   return new Set(tools.filter((tool) => (seen.get(exposedName(server, tool)) ?? 0) > 1));
 }
+
+/** Client d'un connecteur : protocole MCP, ou appels HTTP décrits par une spécification OpenAPI. */
+export function connectorClient(server: { kind?: "mcp" | "openapi"; spec?: unknown }, settings: McpServerSettings, fetcher?: typeof fetch): Pick<McpClient, "listTools" | "callTool"> {
+  if (server.kind === "openapi") return new OpenApiClient(settings, server.spec, fetcher);
+  return new McpClient(settings, fetcher);
+}
+

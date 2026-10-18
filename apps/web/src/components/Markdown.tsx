@@ -1,8 +1,9 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, Network, Shapes } from 'lucide-react'
+import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, Network, Shapes, TriangleAlert } from 'lucide-react'
 import { artifactKind, artifactTitle, useOpenArtifact, type ArtifactKind } from '../lib/artifacts'
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
 import { useI18n } from '../lib/i18n'
+import { hostOf, isTrustedLink, useLinkTrust } from '../lib/link-trust'
 import '../markdown.css'
 
 // Rendu exclusivement en éléments React : le texte est toujours échappé,
@@ -25,12 +26,50 @@ function renderInline(nodes: Inline[]): ReactNode[] {
         return <del key={index}>{renderInline(node.children)}</del>
       case 'link':
         return (
-          <a key={index} href={node.href} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer">
+          <SafeLink key={index} href={node.href}>
             {renderInline(node.children)}
-          </a>
+          </SafeLink>
         )
     }
   })
+}
+
+/**
+ * Lien d'une réponse : cliquable si son domaine est déjà apparu dans la
+ * conversation ; sinon affiché avec son domaine, ouvert au second clic.
+ */
+function SafeLink({ href, children }: { href: string; children: ReactNode }) {
+  const { t } = useI18n()
+  const trusted = useLinkTrust()
+  const [armed, setArmed] = useState(false)
+  if (isTrustedLink(href, trusted)) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer">
+        {children}
+      </a>
+    )
+  }
+  const host = hostOf(href) ?? href
+  return (
+    <span className="md-link-unverified">
+      {children}
+      <button
+        type="button"
+        className={armed ? 'armed' : ''}
+        title={armed ? href : t('link.unverified', { host })}
+        aria-label={armed ? t('link.openConfirm', { host }) : t('link.unverified', { host })}
+        onBlur={() => setArmed(false)}
+        onClick={() => {
+          if (!armed) return setArmed(true)
+          setArmed(false)
+          window.open(href, '_blank', 'noopener,noreferrer')
+        }}
+      >
+        <TriangleAlert size={11} aria-hidden="true" />
+        {armed ? t('link.open') : host}
+      </button>
+    </span>
+  )
 }
 
 /**

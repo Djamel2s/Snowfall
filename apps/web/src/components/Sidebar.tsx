@@ -88,6 +88,8 @@ type SidebarProps = {
   canWrite: boolean
   onPromptsChange: (prompts: Prompt[]) => void
   onUsePrompt: (prompt: Prompt) => void
+  /** Retour d'une connexion OAuth à un outil externe. */
+  connectionNotice?: string | undefined
 }
 
 /** Champ de saisie en place (nouveau projet, renommage). */
@@ -384,6 +386,7 @@ export default function Sidebar(props: SidebarProps) {
             <AgentStudio
               key={agentEditor?.id ?? 'new'}
               agent={agentEditor}
+              agents={props.agents}
               notice={props.agentEditorNotice}
               onClose={props.onAgentEditorClose}
               onSaved={props.onAgentSaved}
@@ -392,7 +395,7 @@ export default function Sidebar(props: SidebarProps) {
           ) : sidebarPanel === 'prompts' ? (
             <PromptLibrary prompts={props.prompts} canWrite={props.canWrite} onChange={props.onPromptsChange} onUse={props.onUsePrompt} />
           ) : sidebarPanel === 'settings' ? (
-            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onConversationsImported={props.onConversationsImported} />
+            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onConversationsImported={props.onConversationsImported} connectionNotice={props.connectionNotice} />
           ) : (
             <>
               <button className="new-chat-button" onClick={props.onNewChat} disabled={creating}>

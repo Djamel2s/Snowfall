@@ -139,7 +139,7 @@ export function codeTool(deps: {
 /** Identifiants des fichiers produits pendant une réponse (pour les rattacher à son message). */
 export function generatedFileIds(turns: { role: string; name?: string; data?: unknown }[]) {
   return turns.flatMap((turn) =>
-    turn.role === "tool" && turn.name === "run_code" && turn.data && typeof turn.data === "object" && Array.isArray((turn.data as { files?: unknown }).files)
+    turn.role === "tool" && (turn.name === "run_code" || turn.name === "generate_image") && turn.data && typeof turn.data === "object" && Array.isArray((turn.data as { files?: unknown }).files)
       ? ((turn.data as { files: unknown[] }).files.filter((id): id is string => typeof id === "string"))
       : [],
   );

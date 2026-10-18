@@ -19,6 +19,8 @@ import type { CodeSandbox } from "./code-tool.js";
 import { MemoryMcpServerStore } from "../mcp/store.js";
 import type { McpDependencies } from "../routes/mcp.js";
 import { startFakeMcpServer } from "../testing/fake-mcp.js";
+import { startFakeOAuthServer } from "../testing/fake-oauth.js";
+import { MemoryMcpConnectionStore } from "../mcp/connections.js";
 import { noopTracer, type RunTracer } from "../observability/tracing.js";
 import { InMemoryUserMemoryStore } from "../memory/store.js";
 import { INJECTION_NOTICE } from "../security/injection.js";
@@ -39,7 +41,7 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], delegates: input.delegates ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
@@ -846,5 +848,187 @@ describe("Injections : contenu suspect dans la base", () => {
     const approval = first.find((item) => item.event === "approval")!.data;
     assert.equal(approval.warning, undefined);
     assert.equal(db.events.filter((event) => event.eventType === "agent.injection_suspected").length, 0);
+  });
+});
+
+describe("MCP en mode OAuth : chacun avec son compte", () => {
+  it("connexion PKCE, actions faites au nom de l'utilisateur, aucun partage entre collègues, renouvellement et déconnexion", async (t) => {
+    const oauth = await startFakeOAuthServer({ clientId: "snowfall", clientSecret: "s3cret", lifetime: 3600 });
+    t.after(() => oauth.close());
+    const fake = await startFakeMcpServer({
+      tools: [{ name: "my_tickets", description: "Mes tickets.", inputSchema: { type: "object", properties: {} } }],
+      accepts: (token) => oauth.accountOf(token) !== undefined,
+      resourceMetadata: () => ({ resource: fake.url, authorization_servers: [oauth.issuer] }),
+      reply: () => "VPN-12",
+    });
+    t.after(() => fake.close());
+    const offered: string[][] = [];
+    const model: ChatModel = {
+      id: "mine",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        offered.push((request.tools ?? []).map((tool) => tool.name));
+        const last = request.turns?.at(-1);
+        if (last?.role === "tool") return void (yield { type: "token", text: "Vu." });
+        const tool = request.tools?.find((item) => item.name.endsWith("_my_tickets"));
+        if (!tool) return void (yield { type: "token", text: "Pas d'accès." });
+        yield { type: "tool_call", call: { id: "m1", name: tool.name, arguments: {} } };
+      },
+    };
+    const db = sharedDatabase();
+    const connections = new MemoryMcpConnectionStore();
+    const api = await instance(db, { model, settings: { tools: ["mcp"] }, mcp: { store: new MemoryMcpServerStore(), connections, allowLocal: true, redirectUri: "http://localhost:5173/mcp/callback" } });
+    t.after(() => api.close());
+    const connect = async (account: string) => {
+      const started = ((await (await api.post(`/mcp-servers/${server.id}/connect`, {})).json()) as { authorizationUrl: string }).authorizationUrl;
+      const back = await oauth.consent(started, account);
+      return { started: new URL(started), back, response: await api.post("/mcp/oauth/callback", { state: back.searchParams.get("state"), code: back.searchParams.get("code") }) };
+    };
+
+    // L'admin ajoute le serveur en mode OAuth : points d'accès découverts chez le serveur.
+    api.as(carol);
+    const created = await api.post("/organization/mcp-servers", { name: "Jira", url: fake.url, oauth: { clientId: "snowfall", clientSecret: "s3cret" } });
+    assert.equal(created.status, 201);
+    const server = ((await created.json()) as { server: { id: string; auth: string } }).server;
+    assert.equal(server.auth, "oauth");
+    // Examen impossible tant que l'admin n'est pas connecté avec son propre compte.
+    assert.equal((await api.post(`/organization/mcp-servers/${server.id}/discover`, {})).status, 409);
+    const admin = await connect("carol@jira");
+    assert.equal(admin.response.status, 200);
+    // Demande conforme : PKCE S256, ressource = ce serveur, retour = page de l'application.
+    assert.equal(admin.started.searchParams.get("code_challenge_method"), "S256");
+    assert.equal(admin.started.searchParams.get("resource"), fake.url);
+    assert.equal(admin.started.searchParams.get("redirect_uri"), "http://localhost:5173/mcp/callback");
+    assert.equal(oauth.state.tokenRequests.at(-1)!.code_verifier?.length, 43);
+    const reviewed = ((await (await api.post(`/organization/mcp-servers/${server.id}/discover`, {})).json()) as { tools: { fingerprint: string }[] }).tools[0]!;
+    assert.equal((await api.post(`/organization/mcp-servers/${server.id}/approve`, { tools: [{ name: "my_tickets", access: "read", fingerprint: reviewed.fingerprint }] })).status, 200);
+
+    // Alice : pas connectée, l'outil n'est pas proposé.
+    api.as(alice);
+    const agent = ((await (await api.post("/agents", { name: "Support", avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", tools: ["mcp"], mcpServers: [server.id] })).json()) as { agent: Agent }).agent;
+    const conversation = async () => ((await (await api.post("/conversations", { agentId: agent.id })).json()) as { conversation: { id: string } }).conversation.id;
+    await events(await api.post(`/conversations/${await conversation()}/messages`, { content: "Mes tickets ?" }));
+    assert.ok(!offered.at(-1)!.some((name) => name.endsWith("_my_tickets")));
+    const listed = ((await (await api.get("/me/mcp-connections")).json()) as { connections: { id: string; connected: boolean }[] }).connections;
+    assert.deepEqual(listed, [{ id: server.id, name: "Jira", status: "approved", connected: false }]);
+
+    // Le state de l'admin ne sert pas à Alice (lié à l'utilisateur, usage unique).
+    const stolen = await connect("alice@jira");
+    assert.equal(stolen.response.status, 200);
+    assert.equal((await api.post("/mcp/oauth/callback", { state: stolen.back.searchParams.get("state"), code: stolen.back.searchParams.get("code") })).status, 400);
+
+    // Connectée : l'appel part avec SON jeton, attribué à son compte chez le fournisseur.
+    await events(await api.post(`/conversations/${await conversation()}/messages`, { content: "Mes tickets ?" }));
+    const call = fake.state.calls.at(-1)!;
+    assert.equal(oauth.accountOf(call.token!), "alice@jira");
+    // Bob n'hérite ni du jeton d'Alice ni de celui de l'admin.
+    api.as(bob);
+    const before = fake.state.calls.length;
+    const bobAgentConversation = ((await (await api.post("/conversations", { agentId: agent.id })).json()) as { conversation: { id: string } }).conversation.id;
+    await events(await api.post(`/conversations/${bobAgentConversation}/messages`, { content: "Mes tickets ?" }));
+    assert.equal(fake.state.calls.length, before);
+
+    // Jeton expiré : renouvelé sans redemander, avec l'indicateur de ressource.
+    api.as(alice);
+    const tokens = (await connections.tokens(alice, server.id))!;
+    await connections.saveTokens(alice, server.id, { ...tokens, expiresAt: new Date(Date.now() - 1000).toISOString() });
+    await events(await api.post(`/conversations/${await conversation()}/messages`, { content: "Mes tickets ?" }));
+    assert.equal(oauth.state.tokenRequests.at(-1)!.grant_type, "refresh_token");
+    assert.equal(oauth.state.tokenRequests.at(-1)!.resource, fake.url);
+    assert.notEqual(fake.state.calls.at(-1)!.token, call.token);
+
+    // Déconnexion : plus de jeton, plus d'outil.
+    assert.equal((await fetch(`${api.base}/mcp-servers/${server.id}/connection`, { method: "DELETE", headers: { origin: ORIGIN } })).status, 204);
+    assert.equal(await connections.tokens(alice, server.id), null);
+    // L'audit trace connexions et déconnexion, jamais un jeton.
+    assert.ok(db.events.some((event) => event.eventType === "mcp.connect" && (event.outcome ?? "success") === "success"));
+    assert.ok(db.events.some((event) => event.eventType === "mcp.connect" && event.outcome === "denied"));
+    assert.ok(db.events.some((event) => event.eventType === "mcp.disconnect"));
+    assert.ok(!JSON.stringify(db.events).includes("at-") && !JSON.stringify(db.events).includes("s3cret"));
+  });
+
+  it("découverte refusée si l'émetteur annoncé ne correspond pas (substitution de fournisseur)", async (t) => {
+    const oauth = await startFakeOAuthServer({ clientId: "snowfall", issuerOverride: "https://evil.example" });
+    t.after(() => oauth.close());
+    const fake = await startFakeMcpServer({ tools: [], resourceMetadata: () => ({ resource: fake.url, authorization_servers: [oauth.issuer] }) });
+    t.after(() => fake.close());
+    const db = sharedDatabase();
+    const api = await instance(db, { settings: { tools: ["mcp"] }, mcp: { store: new MemoryMcpServerStore(), connections: new MemoryMcpConnectionStore(), allowLocal: true, redirectUri: "http://localhost:5173/mcp/callback" } });
+    t.after(() => api.close());
+    api.as(carol);
+    const refused = await api.post("/organization/mcp-servers", { name: "Jira", url: fake.url, oauth: { clientId: "snowfall" } });
+    assert.equal(refused.status, 400);
+    assert.equal(((await refused.json()) as { reason: string }).reason, "oauth_invalid_metadata");
+  });
+});
+
+describe("Sous-agents : consulter un spécialiste", () => {
+  /** Même modèle pour les deux rôles : le Juriste consulte, le spécialiste cherche dans sa base. */
+  function team(seen: ChatRequest[], rhId: () => string): ChatModel {
+    return {
+      id: "team",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        seen.push(request);
+        const names = (request.tools ?? []).map((tool) => tool.name);
+        const last = request.turns?.at(-1);
+        if (names.includes("ask_agent")) {
+          if (last?.role === "tool") return void (yield { type: "token", text: `Selon les RH : ${last.content.includes("27 jours") ? "27 jours" : "inconnu"}.` });
+          return void (yield { type: "tool_call", call: { id: "d1", name: "ask_agent", arguments: { agent: rhId(), task: "Combien de jours de congés payés par an ?" } } });
+        }
+        if (last?.role === "tool") return void (yield { type: "token", text: "Les congés sont de 27 jours ouvrés." });
+        if (names.includes("search_knowledge")) return void (yield { type: "tool_call", call: { id: "s1", name: "search_knowledge", arguments: { query: "congés payés" } } });
+        yield { type: "token", text: "Je ne sais pas." };
+      },
+    };
+  }
+
+  async function setup(t: { after: (fn: () => unknown) => void }, confidential = false) {
+    const db = sharedDatabase();
+    const seen: ChatRequest[] = [];
+    let rh = "";
+    const api = await instance(db, { model: team(seen, () => rh), settings: { tools: ["search_knowledge", "delegate"] } });
+    t.after(() => api.close());
+    const create = async (body: Record<string, unknown>) => ((await (await api.post("/agents", { avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", ...body })).json()) as { agent: Agent }).agent;
+    const specialist = await create({ name: "RH", instructions: "Tu réponds sur les congés et la paie.", tools: ["search_knowledge"] });
+    rh = specialist.id;
+    if (confidential) await db.knowledge.ensureBase(alice, { kind: "agent", agentId: rh }).then((base) => db.knowledge.setConfidential(alice, base.id, true));
+    const uploaded = await fetch(`${api.base}/agents/${rh}/knowledge/files`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/octet-stream", "x-file-name": "conges.md" },
+      body: "# Congés\n\nLes congés payés sont de 27 jours ouvrés par an.",
+    });
+    assert.equal(uploaded.status, 202);
+    await api.knowledge.idle();
+    const lawyer = await create({ name: "Juriste", tools: ["search_knowledge", "delegate"], delegates: [rh, crypto.randomUUID()] });
+    return { db, api, seen, rh, lawyer };
+  }
+
+  it("le Juriste consulte RH : réponse rapportée comme donnée, spécialiste en lecture seule (profondeur 1)", async (t) => {
+    const { db, api, seen, rh, lawyer } = await setup(t);
+    // Un identifiant inconnu est écarté à l'enregistrement.
+    assert.deepEqual(lawyer.delegates, [rh]);
+    const conversation = ((await (await api.post("/conversations", { agentId: lawyer.id })).json()) as { conversation: { id: string } }).conversation.id;
+    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Congés ?" }))).at(-1)!.data as { assistantMessage: { content: string } };
+    assert.equal(done.assistantMessage.content, "Selon les RH : 27 jours.");
+    // Le spécialiste : sa base seulement, ni consultation à son tour, ni écriture, ni web.
+    const specialistRequests = seen.filter((request) => !(request.tools ?? []).some((tool) => tool.name === "ask_agent") && request.instructions?.includes("congés et la paie"));
+    assert.ok(specialistRequests.length >= 1);
+    for (const request of specialistRequests) assert.deepEqual((request.tools ?? []).map((tool) => tool.name), ["search_knowledge"]);
+    // Le résultat revient balisé comme donnée.
+    const parentFinal = seen.filter((request) => (request.tools ?? []).some((tool) => tool.name === "ask_agent")).at(-1)!;
+    assert.match(parentFinal.turns!.at(-1)!.content, /^<agent_result agent="RH">/);
+    const audited = db.events.find((event) => event.eventType === "agent.delegate")!;
+    assert.equal(audited.targetId, rh);
+    assert.equal(audited.details?.from, lawyer.id);
+    assert.ok(!JSON.stringify(db.events).includes("27 jours"));
+  });
+
+  it("base du spécialiste confidentielle + modèle externe : consultation refusée et tracée", async (t) => {
+    const { db, api, lawyer } = await setup(t, true);
+    const conversation = ((await (await api.post("/conversations", { agentId: lawyer.id })).json()) as { conversation: { id: string } }).conversation.id;
+    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Congés ?" }))).at(-1)!.data as { assistantMessage: { content: string } };
+    assert.equal(done.assistantMessage.content, "Selon les RH : inconnu.");
+    assert.ok(db.events.some((event) => event.eventType === "agent.delegate" && event.outcome === "denied" && event.details?.reason === "confidential"));
   });
 });

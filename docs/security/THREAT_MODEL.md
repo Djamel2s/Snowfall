@@ -12,7 +12,7 @@ mesures → risque résiduel → preuve. Les contrôles sont décrits dans
 |---|---|---|
 | Conversations, pièces jointes, bases de connaissances | Confidentiel (parfois restreint : bases « confidentielles ») | PostgreSQL, chiffré par organisation |
 | Clés (DEK par organisation, KEK du KMS), secrets de session | Restreint | OpenBao / Vault, fichiers secrets |
-| Jetons des serveurs MCP | Restreint | PostgreSQL, chiffré |
+| Jetons des serveurs MCP (organisation et personnels OAuth) | Restreint | PostgreSQL, chiffré ; jetons personnels lisibles par leur seul titulaire |
 | Identités et rôles | Confidentiel | Keycloak, `organization_members` |
 | Traces des agents | Confidentiel (masqué) | Langfuse interne, 30 jours |
 | Journal d'audit | Interne, intégrité critique | `audit_events` (append-only), SIEM |
@@ -83,7 +83,19 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Description ou résultat piégé (T, E) | Description et paramètres montrés à l'examen, écriture validée par l'utilisateur, résultat balisé et tronqué | M (même limite que 3.2) | `mcp.test.ts`, test de bout en bout |
 | SSRF vers le réseau interne (I) | HTTPS public, proxy obligatoire en production, liste de domaines, contrôle DNS sans proxy | F | tests d'adresses, config refusée sans proxy |
 | Vol du jeton (I) | Chiffré, jamais renvoyé ni journalisé | F | test « jamais le jeton » |
-| Action attribuée à tort sur le service distant (R) | Audit côté Snowfall (qui, quel outil) | **M** : un seul jeton par serveur | limite documentée |
+| Action attribuée à tort sur le service distant (R) | Mode OAuth : chaque appel avec le jeton de l'utilisateur ; audit côté Snowfall | F en mode OAuth ; **M** en mode jeton partagé | `runs.routes.test.ts` (OAuth) |
+| Vol ou rejeu de la connexion OAuth (S, I) | PKCE S256, state haché lié à l'utilisateur et à usage unique, indicateur de ressource, émetteur vérifié, retour par une page du même site | F | `oauth.test.ts`, test de bout en bout, intégration PostgreSQL |
+| Jeton d'un autre utilisateur ou d'une autre organisation (E) | RLS propriétaire imposée, clés étrangères composites (serveur, organisation) | F | `connections.integration.test.ts` |
+| Spécification OpenAPI piégée (T, I) | Fournie par l'admin et figée, références externes refusées, hôte final contrôlé, paramètres encodés, pas de redirection | F | `openapi.test.ts` |
+
+### 3.4 bis Sous-agents, voix, images
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Escalade par délégation (E) | Spécialiste en lecture seule (sa base), profondeur 1, budget court | F | `runs.routes.test.ts` (sous-agents) |
+| Fuite du confidentiel par un spécialiste (I) | Refus si contexte ou base confidentiels et modèle externe, audité | F | test « base confidentielle » |
+| Fichier audio ou image piégé (T) | Signature vérifiée, taille bornée, antivirus pour les images, rien d'exécuté | F | `audio.test.ts`, `image-tool.test.ts` |
+| Écoute par un artifact (I) | Micro autorisé pour l'application seule, bloqué dans les artifacts | F | en-têtes nginx |
 
 ### 3.5 Artifacts
 
@@ -101,8 +113,8 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 
 ## 4. Risques résiduels prioritaires
 
-1. **Injection de prompt, détection limitée** (M) : l'exfiltration est couverte par la règle de deux ; la détection heuristique n'attrape que les injections recopiées. Restent : document interne piégé (premier appel sortant), liens cliquables dans les réponses. Pistes : marquage des contenus non fiables (spotlighting), liste blanche des domaines de liens, classifieur local facultatif.
+1. **Injection de prompt, détection limitée** (M) : l'exfiltration est couverte par la règle de deux, le marquage des contenus externes et la politique des liens ; la détection heuristique n'attrape que les injections recopiées. Reste : un document interne piégé peut orienter le premier appel sortant. Piste : classifieur local facultatif.
 2. **Contrats des fournisseurs d'IA** (M) : DPA, localisation, non-conservation.
-3. **MCP : jeton par serveur** (M) : OAuth par utilisateur si des écritures sensibles passent par MCP.
+3. **Connecteurs en jeton partagé** (M) : préférer le mode OAuth (compte de chacun) pour les outils qui écrivent ; les connecteurs OpenAPI n'ont pas encore ce mode.
 4. **gVisor non vérifié sur l'hôte de production** : à faire avant d'ouvrir l'interpréteur.
-5. **Pas de test d'intrusion externe**.
+5. **Pas de test d'intrusion externe** : dossier de cadrage prêt (`PENTEST_SCOPE.md`).

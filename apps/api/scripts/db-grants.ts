@@ -54,6 +54,8 @@ const privileges: Record<string, string[]> = {
   conversation_summaries: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   generated_files: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_servers: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  mcp_user_tokens: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  mcp_oauth_states: ["SELECT", "INSERT", "DELETE"],
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via

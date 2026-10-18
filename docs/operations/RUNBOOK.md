@@ -323,3 +323,27 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   utilisateurs s'en plaignent sur un parcours précis, mesurer avec le banc avant
   d'assouplir quoi que ce soit (`agent/exposure.ts`).
 
+## 25. Connecteurs : OAuth par utilisateur et API OpenAPI
+
+- OAuth (MCP) : enregistrer chez le fournisseur un client avec l'adresse de
+  retour `${APP_ORIGIN}/mcp/callback`, puis ajouter le serveur en mode « MCP ·
+  compte de chacun » (identifiant client, secret facultatif). Le domaine du
+  serveur MCP ET celui du serveur d'autorisation doivent être ouverts dans
+  `infra/egress/mcp-domains.txt`. L'administrateur se connecte avec son compte
+  pour examiner les outils.
+- Révoquer un utilisateur : sa connexion disparaît avec son départ ; il peut
+  aussi se déconnecter dans Mon compte → Connexions.
+- OpenAPI : « API OpenAPI », adresse de base de l'API, jeton facultatif, fichier
+  de spécification (JSON, OpenAPI 3). Domaine à ouvrir dans `mcp-domains.txt`.
+
+## 26. Voix et images locales
+
+- Voix (API audio compatible OpenAI, ex. Speaches) : `STT_URL`, `STT_MODEL`,
+  `TTS_URL`, `TTS_MODEL`, `TTS_VOICE`. Images (API images compatible OpenAI) :
+  `IMAGE_URL`, `IMAGE_MODEL`. Ajouter les noms internes à `NO_PROXY`.
+- Avant de les ajouter à `compose.prod.yaml` : figer l'image par empreinte
+  (publiée depuis plus de deux semaines), vérifier la licence du modèle choisi,
+  réseau `backend` sans sortie, lecture seule, utilisateur non root, GPU réservé.
+- Le micro n'est autorisé que pour l'application (`Permissions-Policy`), jamais
+  dans les artifacts.
+

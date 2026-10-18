@@ -4,7 +4,7 @@ import type { Passage } from "../knowledge/service.js";
 import type { WebResult, WebSearchEngine } from "../web/searxng.js";
 import type { CitationRegistry } from "./knowledge-tool.js";
 import { defineTool } from "./tools.js";
-import { stripTags } from "../security/neutralize.js";
+import { datamark, stripTags } from "../security/neutralize.js";
 
 // Recherche web en deux outils : web_search (résultats d'un moteur) et
 // read_webpage (lecture d'une page). Tout ce qui vient du web est une DONNÉE
@@ -41,7 +41,8 @@ export function urlsIn(text: string) {
 }
 
 /** Balises du web neutralisées : une page ne peut pas sortir de son bloc. */
-const neutralize = (text: string) => stripTags(text, /<\/?\s*(web_results|web_result|web_page)\b[^>]*>/gi);
+// Balises retirées, puis texte marqué (voir datamark) : il reste lisible comme « venu du web ».
+const neutralize = (text: string) => datamark(stripTags(text, /<\/?\s*(web_results|web_result|web_page)\b[^>]*>/gi));
 const attribute = (text: string) => text.replace(/[<>"&]/g, " ");
 
 /**

@@ -1,0 +1,1 @@
+ALTER TABLE "tool_usage" DROP CONSTRAINT "tool_usage_meter_check", ADD CONSTRAINT "tool_usage_meter_check" CHECK ("meter" IN ('code', 'web', 'mcp', 'image'));

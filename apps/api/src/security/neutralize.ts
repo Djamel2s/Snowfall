@@ -16,3 +16,17 @@ export function stripTags(text: string, tags: RegExp): string {
   // Construction pathologique : on neutralise tous les chevrons plutôt que de laisser passer.
   return current.replace(/[<>]/g, " ");
 }
+
+/**
+ * Marquage des contenus externes (« datamarking », Microsoft, 2024) : chaque
+ * espace devient « ˆ ». Le prompt système dit au modèle que tout texte ainsi
+ * marqué est une donnée écrite par un inconnu. Contrairement aux balises, le
+ * marquage est partout dans le texte : une consigne glissée au milieu d'une page
+ * reste visiblement « de la page ». Les sauts de ligne sont gardés (structure).
+ */
+export const DATAMARK = "ˆ";
+
+export function datamark(text: string) {
+  return text.replace(/[ \t\u00a0\u2009\u202f]+/g, DATAMARK);
+}
+

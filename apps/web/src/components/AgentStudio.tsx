@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronLeft, Globe, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2 } from 'lucide-react'
+import { Camera, Check, ChevronLeft, Globe, ImagePlus, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2, Users } from 'lucide-react'
 import {
   api,
   toolAccess,
@@ -25,6 +25,8 @@ import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '
 
 type Props = {
   agent: Agent | null
+  /** Agents de l'organisation : spécialistes que celui-ci pourra consulter. */
+  agents?: Agent[]
   /** Message à afficher à l'ouverture (documents refusés juste après la création). */
   notice?: string
   onClose: () => void
@@ -33,7 +35,7 @@ type Props = {
   onDeleted: (id: string) => void
 }
 
-export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted }: Props) {
+export default function AgentStudio({ agent, agents = [], notice, onClose, onSaved, onDeleted }: Props) {
   const { t } = useI18n()
   const [catalog, setCatalog] = useState<ProviderCatalog[] | null>(null)
   const [name, setName] = useState(agent?.name ?? '')
@@ -51,6 +53,8 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
   // Serveurs MCP approuvés par l'admin, et ceux confiés à l'agent.
   const [mcpServers, setMcpServers] = useState<McpServer[]>([])
   const [agentMcp, setAgentMcp] = useState<string[]>(agent?.mcpServers ?? [])
+  const [agentDelegates, setAgentDelegates] = useState<string[]>(agent?.delegates ?? [])
+  const specialists = agents.filter((item) => item.id !== agent?.id)
   // Réglages des réponses (créativité, longueur) ; non réglés : ceux du fournisseur.
   const [parameters, setParameters] = useState<AgentParameters>(agent?.parameters ?? {})
   const [saving, setSaving] = useState(false)
@@ -135,7 +139,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
     setError('')
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], parameters },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], delegates: tools.includes('delegate') ? agentDelegates : [], parameters },
         agent?.id,
       )
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
@@ -289,7 +293,7 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
       {organizationTools.length > 0 && (
         <div className="studio-tools" role="group" aria-label={t('studio.tools')}>
           {organizationTools.map((id) => {
-            const Icon = id === 'search_knowledge' ? Search : id === 'web_search' ? Globe : id === 'code_interpreter' ? SquareTerminal : id === 'mcp' ? Plug : PenLine
+            const Icon = id === 'search_knowledge' ? Search : id === 'web_search' ? Globe : id === 'code_interpreter' ? SquareTerminal : id === 'mcp' ? Plug : id === 'delegate' ? Users : id === 'image_generation' ? ImagePlus : PenLine
             const write = toolAccess[id] === 'write'
             return (
               <button
@@ -323,6 +327,24 @@ export default function AgentStudio({ agent, notice, onClose, onSaved, onDeleted
               <Plug size={13} />
               {server.name}
               {server.tools.some((tool) => tool.access === 'write') && <ShieldCheck size={12} className="studio-tool-guard" />}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tools.includes('delegate') && organizationTools.includes('delegate') && specialists.length > 0 && (
+        <div className="studio-tools" role="group" aria-label={t('studio.delegates')}>
+          {specialists.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="studio-tool"
+              aria-pressed={agentDelegates.includes(item.id)}
+              disabled={!agentDelegates.includes(item.id) && agentDelegates.length >= 5}
+              onClick={() => setAgentDelegates(agentDelegates.includes(item.id) ? agentDelegates.filter((id) => id !== item.id) : [...agentDelegates, item.id])}
+            >
+              <Users size={13} />
+              {item.name}
             </button>
           ))}
         </div>

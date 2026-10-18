@@ -37,8 +37,10 @@ import PromptPicker from './components/PromptPicker'
 import PromptVariables from './components/PromptVariables'
 import { promptVariables, slashQuery } from './lib/prompts'
 import MessageFeedback from './components/MessageFeedback'
+import { DictationButton, ReadAloudButton } from './components/Voice'
 import ArtifactPanel from './components/ArtifactPanel'
 import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
+import { LinkTrust, trustedHosts } from './lib/link-trust'
 import { useArtifactPanel } from './hooks/useArtifactPanel'
 import { useRun } from './hooks/useRun'
 import { useGeneratedFiles } from './hooks/useGeneratedFiles'
@@ -107,6 +109,13 @@ function Snowfall() {
 }
 
 /** Jeton d'un lien de partage, dans le fragment de l'adresse (jamais envoyé au serveur avec elle). */
+/** Retour du fournisseur OAuth sur /mcp/callback (code et state), ou null. */
+const readMcpCallback = () => {
+  if (window.location.pathname !== '/mcp/callback') return null
+  const params = new URLSearchParams(window.location.search)
+  return { state: params.get('state'), code: params.get('code') }
+}
+
 const readShareToken = () => /^#partage=([A-Za-z0-9_-]{43})$/.exec(window.location.hash)?.[1] ?? null
 
 const toConversation = (item: {
@@ -132,14 +141,25 @@ const toConversation = (item: {
 
 function App() {
   const { t } = useI18n()
+  // Retour d'une connexion OAuth à un outil externe (lu une fois, au chargement).
+  const [mcpCallback] = useState(readMcpCallback)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [historyLoading, setHistoryLoading] = useState(true)
   const [loadedId, setLoadedId] = useState<string | null>(null)
   // Conversations créées ici : rien à charger depuis le serveur (sinon le message en cours d'envoi serait écrasé).
   const freshIds = useRef(new Set<string>())
+  // Voix locale (dictée, lecture) : seulement si la plateforme l'a installée.
+  const [voice, setVoice] = useState({ dictation: false, speech: false })
+  useEffect(() => {
+    api.audioCapabilities().then(setVoice).catch(() => undefined)
+  }, [])
   // Mode temporaire : s'applique aux nouvelles conversations jusqu'à ce qu'on le coupe.
   const [temporaryMode, setTemporaryMode] = useState(false)
+  // Retour d'une connexion OAuth (page /mcp/callback) : message affiché dans Mon compte.
+  const [connectionNotice, setConnectionNotice] = useState<string | undefined>(() =>
+    mcpCallback && (!mcpCallback.state || !mcpCallback.code) ? t('connections.failed') : undefined,
+  )
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
   const { artifact, openArtifact, closeArtifact } = useArtifactPanel()
@@ -172,7 +192,7 @@ function App() {
   const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(Boolean(mcpCallback))
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<SearchHit[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -207,6 +227,8 @@ function App() {
 
   const messagesLoading = activeId !== null && loadedId !== activeId
   const activeConversation = conversations.find((conversation) => conversation.id === activeId)
+  // Liens des réponses : cliquables seulement vers les domaines déjà apparus dans la conversation.
+  const linkHosts = useMemo(() => trustedHosts(activeConversation?.messages ?? []), [activeConversation?.messages])
   const listedConversations = useMemo(() => conversations.filter((conversation) => !conversation.temporary), [conversations])
   const temporaryShown = Boolean(activeConversation?.temporary || (!activeConversation && temporaryMode))
   const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
@@ -225,7 +247,7 @@ function App() {
   const canWrite = session.user.role !== 'reader'
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>('chats')
+  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>(mcpCallback ? 'settings' : 'chats')
   const { pinnedIds, togglePinned } = usePinnedConversations()
 
   // Animations réduites à la demande, en plus de la préférence système.
@@ -242,6 +264,23 @@ function App() {
     // chaque fragment saccaderait.
     bottomRef.current?.scrollIntoView({ behavior: streamingText ? 'auto' : 'smooth', block: 'end' })
   }, [activeConversation?.messages, sending, streamingText])
+
+  // Retour du fournisseur OAuth : code et state repartent au serveur en POST
+  // (même site), puis l'adresse est nettoyée (le code ne reste ni dans
+  // l'historique ni dans les journaux).
+  // Un seul envoi : le state est à usage unique (le mode strict de React rejoue les effets).
+  const callbackSent = useRef(false)
+  useEffect(() => {
+    if (!mcpCallback || callbackSent.current) return
+    callbackSent.current = true
+    history.replaceState(null, '', '/')
+    if (!mcpCallback.state || !mcpCallback.code) return
+    api
+      .finishMcpConnection(mcpCallback.state, mcpCallback.code)
+      .then((result) => setConnectionNotice(t('connections.done', { name: result.name })))
+      .catch(() => setConnectionNotice(t('connections.failed')))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Chargement initial : conversations, agents, projets, préférences.
   useEffect(() => {
@@ -554,6 +593,7 @@ function App() {
         tools: agent.tools,
         mcpServers: agent.mcpServers ?? [],
         parameters: agent.parameters ?? {},
+        delegates: (agent.delegates ?? []).filter((id) => id !== agent.id),
       })
       setAgents((current) => [...current, copy])
       openAgentEditor(copy)
@@ -879,6 +919,7 @@ function App() {
 
   return (
     <ArtifactContext.Provider value={openArtifact}>
+    <LinkTrust.Provider value={linkHosts}>
     <main className={`snowfall-app ${artifact ? 'with-artifact' : ''}`}>
       <Snowfall />
 
@@ -958,6 +999,7 @@ function App() {
         prompts={prompts}
         canWrite={canWrite}
         onPromptsChange={setPrompts}
+        connectionNotice={connectionNotice}
         onUsePrompt={applyPrompt}
       />
 
@@ -1154,6 +1196,7 @@ function App() {
                               >
                                 {copiedId === message.id ? <Check size={14} /> : <Copy size={14} />}
                               </button>
+                              {voice.speech && <ReadAloudButton text={message.content} onError={setError} />}
                               {canWrite && (
                                 <MessageFeedback feedback={message.feedback} disabled={sending} onChange={(feedback) => rateMessage(message.id, feedback)} />
                               )}
@@ -1339,6 +1382,17 @@ function App() {
                       event.target.value = ''
                     }}
                   />
+                  {voice.dictation && (
+                    <DictationButton
+                      disabled={!canWrite || messagesLoading}
+                      language={preferences.locale ?? 'fr'}
+                      onError={setError}
+                      onText={(text) => {
+                        setInput((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text))
+                        requestAnimationFrame(() => inputRef.current?.focus())
+                      }}
+                    />
+                  )}
                 </div>
                 <textarea
                   ref={inputRef}
@@ -1382,6 +1436,7 @@ function App() {
       </section>
       {artifact && <ArtifactPanel key={artifact.opening} artifact={artifact} onClose={closeArtifact} />}
     </main>
+    </LinkTrust.Provider>
     </ArtifactContext.Provider>
   )
 }

@@ -5,7 +5,7 @@
 // puis, à l'exécution, l'utilisateur approuve chaque appel d'écriture.
 // Un outil absent d'un niveau n'est même pas proposé au modèle.
 
-export const toolIds = ["search_knowledge", "save_to_knowledge", "web_search", "code_interpreter", "mcp"] as const;
+export const toolIds = ["search_knowledge", "save_to_knowledge", "web_search", "code_interpreter", "mcp", "delegate", "image_generation"] as const;
 export type ToolId = (typeof toolIds)[number];
 
 export const toolAccess: Record<ToolId, "read" | "write"> = {
@@ -20,10 +20,14 @@ export const toolAccess: Record<ToolId, "read" | "write"> = {
   // Serveurs d'outils externes approuvés par l'admin. Écriture par prudence :
   // l'accès réel est fixé outil par outil à l'approbation. Jamais en confidentiel.
   mcp: "write",
+  // Consulter un agent spécialiste : lecture de SA base seulement (voir delegate-tool.ts).
+  delegate: "read",
+  // Images créées par un modèle local : rien ne sort (permis aussi en confidentiel).
+  image_generation: "read",
 };
 
 /** Outils qui demandent un service de la plateforme (SearXNG, bac à sable, MCP activé). */
-export const platformDependentTools: ToolId[] = ["web_search", "code_interpreter", "mcp"];
+export const platformDependentTools: ToolId[] = ["web_search", "code_interpreter", "mcp", "image_generation"];
 
 /**
  * Outils de l'organisation par défaut : ceux de la base de connaissances (les

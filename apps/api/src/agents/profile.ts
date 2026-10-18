@@ -58,6 +58,8 @@ export const agentProfileSchema = z.object({
   tools: z.array(z.enum(toolIds)).max(toolIds.length).default(defaultAgentTools),
   /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
   mcpServers: z.array(z.uuid()).max(10).default([]),
+  /** Agents spécialistes que celui-ci peut consulter (outil « delegate »). */
+  delegates: z.array(z.uuid()).max(5).default([]),
   /** Réglages des réponses ; absents : ceux du fournisseur. */
   parameters: z
     .object({

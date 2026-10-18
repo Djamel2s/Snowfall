@@ -146,7 +146,7 @@ export type AlienAvatar = {
 export type AgentAvatarData = AlienAvatar | { kind: 'image'; data: string }
 
 /** Outils d'agent ; write = demande ton accord à chaque utilisation. */
-export const toolIds = ['search_knowledge', 'save_to_knowledge', 'web_search', 'code_interpreter', 'mcp'] as const
+export const toolIds = ['search_knowledge', 'save_to_knowledge', 'web_search', 'code_interpreter', 'mcp', 'delegate', 'image_generation'] as const
 export type ToolId = (typeof toolIds)[number]
 export const toolAccess: Record<ToolId, 'read' | 'write'> = {
   search_knowledge: 'read',
@@ -155,6 +155,8 @@ export const toolAccess: Record<ToolId, 'read' | 'write'> = {
   code_interpreter: 'read',
   // Accès réel fixé outil par outil par l'admin ; les écritures demandent ton accord.
   mcp: 'write',
+  delegate: 'read',
+  image_generation: 'read',
 }
 
 export type AgentInput = {
@@ -166,6 +168,8 @@ export type AgentInput = {
   tools: ToolId[]
   /** Serveurs MCP approuvés confiés à l'agent (outil « mcp »). */
   mcpServers: string[]
+  /** Agents spécialistes que celui-ci peut consulter (outil « delegate »). */
+  delegates?: string[]
   /** Réglages des réponses ; absents : ceux du fournisseur. */
   parameters?: AgentParameters
 }
@@ -228,6 +232,7 @@ export const toolMeters = [
   { id: 'code', tool: 'code_interpreter' },
   { id: 'web', tool: 'web_search' },
   { id: 'mcp', tool: 'mcp' },
+  { id: 'image', tool: 'image_generation' },
 ] as const satisfies readonly { id: string; tool: ToolId }[]
 export type ToolMeter = (typeof toolMeters)[number]['id']
 
@@ -246,10 +251,17 @@ export type McpServer = {
   id: string
   name: string
   status: 'pending' | 'approved' | 'disabled'
+  /** token : jeton partagé de l'organisation ; oauth : chacun avec son compte. */
+  auth?: 'token' | 'oauth'
+  /** mcp : serveur MCP ; openapi : API décrite par sa spécification. */
+  kind?: 'mcp' | 'openapi'
   url?: string
   hasToken?: boolean
   tools: { name: string; title: string | null; access: 'read' | 'write' }[]
 }
+
+/** Serveur MCP en mode OAuth, et si l'utilisateur y est connecté avec son compte. */
+export type McpConnection = { id: string; name: string; status: 'pending' | 'approved'; connected: boolean }
 
 /** Outil publié par un serveur, à examiner avant approbation. */
 export type McpDiscoveredTool = {
@@ -604,6 +616,18 @@ export const api = {
 
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: 'DELETE' }),
 
+  /** Voix locale disponible sur la plateforme (dictée, lecture). */
+  audioCapabilities: () => request<{ dictation: boolean; speech: boolean }>('/audio/capabilities'),
+  transcribe: async (audio: Blob, type: string, language: 'fr' | 'en') =>
+    (
+      await request<{ text: string }>(`/audio/transcriptions?language=${language}`, {
+        method: 'POST',
+        body: audio,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Audio-Type': type },
+      })
+    ).text,
+  speak: async (text: string) => (await send('/audio/speech', json('POST', { text }))).blob(),
+
   attachmentBlob: async (id: string) => (await send(`/attachments/${id}/content`)).blob(),
 
   getKnowledge: async (kind: KnowledgeOwnerKind, id: string) =>
@@ -663,7 +687,12 @@ export const api = {
 
   // Serveurs MCP : ajout, examen et approbation par un administrateur.
   listMcpServers: async () => (await request<{ servers: McpServer[] }>('/organization/mcp-servers')).servers,
-  createMcpServer: async (input: { name: string; url: string; token?: string }) =>
+  listMcpConnections: async () => (await request<{ connections: McpConnection[] }>('/me/mcp-connections')).connections,
+  /** Adresse du fournisseur OAuth où envoyer l'utilisateur. */
+  connectMcp: async (id: string) => (await request<{ authorizationUrl: string }>(`/mcp-servers/${id}/connect`, json('POST', {}))).authorizationUrl,
+  finishMcpConnection: (state: string, code: string) => request<{ serverId: string; name: string }>('/mcp/oauth/callback', json('POST', { state, code })),
+  disconnectMcp: (id: string) => request<void>(`/mcp-servers/${id}/connection`, { method: 'DELETE' }),
+  createMcpServer: async (input: { name: string; url: string; token?: string; oauth?: { clientId: string; clientSecret?: string; scope?: string }; openapi?: { spec: Record<string, unknown> } }) =>
     (await request<{ server: McpServer }>('/organization/mcp-servers', json('POST', input))).server,
   discoverMcpTools: async (id: string) =>
     (await request<{ tools: McpDiscoveredTool[] }>(`/organization/mcp-servers/${id}/discover`, { method: 'POST' })).tools,

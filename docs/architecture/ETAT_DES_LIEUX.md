@@ -245,9 +245,23 @@ Fait le 18 octobre, première étape (détection des injections) :
   une injection reformulée ne la contourne pas. Aucune validation de plus sur les
   50 essais du banc ; un modèle qui obéit au piège est arrêté avant la fuite.
 
-Suite : marquage des contenus non fiables (spotlighting, mesuré sur le banc) et
-liste blanche des domaines de liens → OAuth MCP par utilisateur → actions OpenAPI → sous-agents → images
-et voix (modèles locaux, GPU disponible) → test d'intrusion externe.
+Puis le reste de la phase 4 :
+- **Marquage des contenus externes** (spotlighting) : pages web et résultats
+  d'outils tiers marqués « ˆ » ; contrôle ajouté à tout le banc (le marqueur ne
+  doit jamais apparaître dans une réponse).
+- **Liens des réponses** : cliquables seulement vers un domaine déjà apparu dans
+  la conversation ; sinon affichés avec leur domaine, ouverts au second clic.
+- **OAuth MCP par utilisateur** : chacun se connecte avec son compte (PKCE,
+  découverte, indicateur de ressource) ; carte « Connexions » dans Mon compte.
+  Test réel en navigateur : un double envoi du code (mode strict de React) aurait
+  fait échouer la connexion, corrigé.
+- **Connecteurs OpenAPI** : une API décrite par sa spécification devient un
+  connecteur, avec toute la chaîne MCP (examen, empreintes, validation, règle de deux).
+- **Sous-agents** : un agent consulte jusqu'à 5 spécialistes, en lecture seule
+  de leur base, profondeur 1, jamais de confidentiel vers un modèle externe.
+- **Voix locale** (dictée, lecture) et **images locales** (`generate_image`) :
+  branchées et testées ; services à déployer (images à figer par empreinte).
+- **Test d'intrusion** : dossier de cadrage prêt pour un prestataire externe.
 
 ## 9. Décisions à prendre
 

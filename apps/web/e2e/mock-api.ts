@@ -20,6 +20,12 @@ export type MockOptions = {
    * (reconnexion).
    */
   approval?: { waiting?: boolean; warning?: boolean; exposure?: boolean }
+  /** Voix locale installée (dictée et lecture). */
+  voice?: boolean
+  /** Outils activés par l'organisation (défaut : base de connaissances). */
+  orgTools?: string[]
+  /** Un serveur MCP en mode OAuth (connexion personnelle). */
+  mcpOAuth?: boolean
 }
 
 const APPROVAL = { id: 'a-1', stepId: 's-1', tool: 'save_to_knowledge', title: 'Enregistrer une note', detail: 'Wifi invités : Snowfall-Guest' }
@@ -58,6 +64,12 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   let branchShown = options.branches?.shown
   let prompts = [{ id: 'p-shared', name: 'Résumé', content: 'Résume ce texte en 3 points.', shared: true, mine: false, updatedAt: now }]
   const temporaryIds = new Set<string>()
+  let mcpConnected = false
+  const audioCalls: { type: string; size: number }[] = []
+  const speechCalls: string[] = []
+  const mcpServers: unknown[] = []
+  const createdConnectors: unknown[] = []
+  const oauthCallbacks: { state: string; code: string }[] = []
   let pendingQuestion: string | null = null
   let memories = [
     { id: 'm-1', content: 'Préfère des réponses en anglais', createdAt: now },
@@ -92,6 +104,23 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       return json(route, { user: { userId: 'u-1', organizationId: ORG, role }, profile: { name: 'Camille Test', email: 'camille@polaris.example' } })
     }
     if (key === 'GET /me/preferences') return json(route, { preferences: { locale: 'fr', sendOnEnter: true, reduceMotion: 'on', memory: false } })
+    // Connexions personnelles (OAuth) : le « fournisseur » renvoie aussitôt sur /mcp/callback.
+    if (key === 'GET /me/mcp-connections') return json(route, { connections: options.mcpOAuth ? [{ id: 'mcp-1', name: 'Jira', status: 'approved', connected: mcpConnected }] : [] })
+    if (key === 'POST /mcp-servers/mcp-1/connect') return json(route, { authorizationUrl: `${url.origin}/mcp/callback?state=${'S'.repeat(43)}&code=code-42` })
+    if (key === 'POST /mcp/oauth/callback') {
+      oauthCallbacks.push(request.postDataJSON() as { state: string; code: string })
+      mcpConnected = true
+      return json(route, { serverId: 'mcp-1', name: 'Jira' })
+    }
+    if (key === 'GET /audio/capabilities') return json(route, { dictation: Boolean(options.voice), speech: Boolean(options.voice) })
+    if (key === 'POST /audio/transcriptions') {
+      audioCalls.push({ type: String(request.headers()['x-audio-type']), size: request.postDataBuffer()?.length ?? 0 })
+      return json(route, { text: 'Combien de jours de congés ?' })
+    }
+    if (key === 'POST /audio/speech') {
+      speechCalls.push((request.postDataJSON() as { text: string }).text)
+      return route.fulfill({ status: 200, contentType: 'audio/mpeg', body: Buffer.concat([Buffer.from('ID3'), Buffer.alloc(32)]) })
+    }
     // Mémoire : deux faits retenus.
     if (key === 'GET /me/memories') return json(route, { memories })
     if (key === 'DELETE /me/memories') {
@@ -125,16 +154,23 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'GET /organization') {
       return json(route, {
         organization: { id: ORG, name: 'Polaris', ...(role === 'owner' || role === 'admin' ? { sso: { alias: null, defaultRole: 'member' } } : {}) },
-        settings: { allowedProviders: ['mistral'], monthlyTokenLimit: 100_000, providerTokenLimits: {}, embeddingProvider: null, linksEnabled: false, linkDomains: [], tools: ['search_knowledge', 'save_to_knowledge'], toolLimits: { web: 500 } },
+        settings: { allowedProviders: ['mistral'], monthlyTokenLimit: 100_000, providerTokenLimits: {}, embeddingProvider: null, linksEnabled: false, linkDomains: [], tools: options.orgTools ?? ['search_knowledge', 'save_to_knowledge'], toolLimits: { web: 500 } },
         configuredProviders: ['mistral'],
         embeddingProviders: [],
-        platformTools: options.platformTools ?? ['search_knowledge', 'save_to_knowledge'],
+        platformTools: options.platformTools ?? ['search_knowledge', 'save_to_knowledge', 'delegate'],
       })
     }
     if (key === 'GET /organization/members') {
       return json(route, { members: [{ userId: 'u-1', email: 'camille@polaris.example', role, joinedAt: now, monthlyTokens: 1000 }], invitations: [] })
     }
-    if (key === 'GET /organization/mcp-servers') return json(route, { servers: [] })
+    if (key === 'GET /organization/mcp-servers') return json(route, { servers: mcpServers })
+    if (key === 'POST /organization/mcp-servers') {
+      const body = request.postDataJSON() as { name: string; url: string; openapi?: unknown }
+      createdConnectors.push(body)
+      const server = { id: id(), name: body.name, status: 'pending', kind: body.openapi ? 'openapi' : 'mcp', auth: 'token', url: body.url, hasToken: false, tools: [] }
+      mcpServers.push(server)
+      return json(route, { server }, 201)
+    }
     if (key === 'POST /conversations') {
       const body = (request.postDataJSON() ?? {}) as { agentId?: string; temporary?: boolean }
       const conversation = { id: id(), title: 'Nouvelle conversation', agentId: body.agentId ?? null, model: null, projectId: null, knowledge: { agent: true, project: true }, createdAt: now, updatedAt: now }
@@ -280,5 +316,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels }
+  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls }
 }

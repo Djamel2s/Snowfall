@@ -94,7 +94,11 @@ import { parseImport } from "./conversations/import.js";
 import { MemoryPromptStore, PostgresPromptStore, type PromptStore } from "./prompts/store.js";
 import { InMemoryUserMemoryStore, PostgresUserMemoryStore, type UserMemoryStore } from "./memory/store.js";
 import { registerMemoryRoutes } from "./routes/memory.js";
+import { registerAudioRoutes } from "./routes/audio.js";
+import { OpenAiCompatibleSpeech } from "./audio/speech.js";
 import { memoryTool } from "./agent/memory-tool.js";
+import { delegateTool, type Delegate } from "./agent/delegate-tool.js";
+import { imageTool, OpenAiCompatibleImages, type ImageGenerator } from "./agent/image-tool.js";
 import { carriesNotice, guardTools } from "./agent/injection-guard.js";
 import { UnixSocketOcr, type DocumentOcr } from "./ocr/client.js";
 import { PostgresAgentRatingStore, type AgentRating, type AgentRatingStore } from "./agents/ratings.js";
@@ -102,6 +106,8 @@ import { registerPromptRoutes } from "./routes/prompts.js";
 import { MemoryShareStore, PostgresShareStore, SHARE_DURATIONS, type ShareStore } from "./shares/store.js";
 import { meterOf, MemoryToolUsageStore, type OrganizationSettings, type ToolUsageStore } from "./workspace/settings.js";
 import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
+import { PostgresMcpConnectionStore } from "./mcp/connections.js";
+import { bearerFor } from "./mcp/user-token.js";
 import { PostgresMcpServerStore } from "./mcp/store.js";
 import { publicAddressOnly } from "./mcp/client.js";
 import { mcpToolsFor } from "./mcp/tools.js";
@@ -227,6 +233,10 @@ export type AppDependencies = {
   memories?: UserMemoryStore;
   /** OCR local des documents numérisés (absent : non lus). */
   ocr?: DocumentOcr;
+  /** Génération d'images locale (absent : outil indisponible). */
+  images?: ImageGenerator;
+  /** Voix locale : dictée et lecture à voix haute (absent : désactivée). */
+  speech?: OpenAiCompatibleSpeech;
   /** Taux de réponses utiles par agent (agrégat de l'organisation). */
   agentRatings?: AgentRatingStore;
   /** Traces des agents (OpenTelemetry → Langfuse). Absent : aucune trace. */
@@ -743,12 +753,14 @@ export function createAppServer(deps: AppDependencies) {
             !platformDependentTools.includes(id) ||
             (id === "web_search" && deps.webSearch !== undefined) ||
             (id === "code_interpreter" && deps.sandbox !== undefined) ||
-            (id === "mcp" && deps.mcp !== undefined),
+            (id === "mcp" && deps.mcp !== undefined) ||
+            (id === "image_generation" && deps.images !== undefined),
         ),
     });
-    if (deps.mcp) registerMcpRoutes(api, kit, deps.mcp);
+    if (deps.mcp) registerMcpRoutes(api, kit, { ...deps.mcp, redirectUri: deps.mcp.redirectUri ?? `${appOrigin}/mcp/callback` });
     registerPromptRoutes(api, kit, prompts);
     registerMemoryRoutes(api, kit, memories);
+    registerAudioRoutes(api, kit, deps.speech ?? new OpenAiCompatibleSpeech(undefined, undefined));
 
     if (deps.attachments) registerAttachmentRoutes(api, kit, deps.attachments, deps.scanner, deps.ocr);
     if (deps.knowledge) {
@@ -1111,7 +1123,7 @@ export function createAppServer(deps: AppDependencies) {
       selection: ModelSelection | undefined,
       plan: KnowledgePlan,
       permitted: Set<ToolId>,
-      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number } },
+      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number }; images: { count: number } },
     ): AgentTool[] {
       if (!models.supportsTools?.(selection)) return [];
       const tools: AgentTool[] = plan.mode === "agent" ? [...plan.tools] : [];
@@ -1138,6 +1150,17 @@ export function createAppServer(deps: AppDependencies) {
             scanner: deps.scanner,
             saveFile: (file) => generatedFiles.create(user, context.conversationId, file),
             runs: context.codeRuns,
+          }),
+        );
+      }
+      // Images : modèle local, rien ne sort (permis même en confidentiel).
+      if (permitted.has("image_generation") && deps.images) {
+        tools.push(
+          imageTool({
+            generator: deps.images,
+            scanner: deps.scanner,
+            saveFile: (file) => generatedFiles.create(user, context.conversationId, file),
+            images: context.images,
           }),
         );
       }
@@ -1172,7 +1195,18 @@ export function createAppServer(deps: AppDependencies) {
     ): Promise<AgentTool[]> {
       if (!deps.mcp || !agent?.mcpServers.length || !permitted.has("mcp") || confidential || !models.supportsTools?.(selection)) return [];
       const store = deps.mcp.store;
-      const servers = (await Promise.all(agent.mcpServers.map((id) => store.connection(user, id)))).filter((server) => server !== null);
+      const known = (await Promise.all(agent.mcpServers.map((id) => store.connection(user, id)))).filter((server) => server !== null);
+      // Jeton de chaque serveur : celui de l'organisation, ou celui de l'utilisateur
+      // (OAuth). Pas connecté : le serveur n'est pas proposé pour cette réponse.
+      const tokenDeps = { connections: deps.mcp.connections, fetcher: deps.mcp.fetcher, checkAddress: deps.mcp.checkAddress, allowLocal: deps.mcp.allowLocal };
+      const servers = (
+        await Promise.all(
+          known.map(async (server) => {
+            const token = await bearerFor(server, user, tokenDeps);
+            return token === null ? null : { ...server, token: token ?? null };
+          }),
+        )
+      ).filter((server) => server !== null);
       const audit = (eventType: string, server: { id: string }, details: Record<string, string>, outcome?: "denied" | "failure") =>
         void kit
           .record(request, user, { eventType, targetType: "mcp_server", targetId: server.id, ...(outcome ? { outcome } : {}), details: { ...details, agentId: agent.id } })
@@ -1187,6 +1221,48 @@ export function createAppServer(deps: AppDependencies) {
         },
         { signal, checkAddress: deps.mcp.checkAddress, ...(deps.mcp.fetcher ? { fetcher: deps.mcp.fetcher } : {}) },
       );
+    }
+
+    /** Spécialistes que l'agent peut consulter : agents existants de l'organisation, sauf lui-même. */
+    async function delegatesOf(user: AuthenticatedUser, agent: Agent): Promise<Delegate[]> {
+      const found = await Promise.all(agent.delegates.filter((id) => id !== agent.id).map((id) => agents!.get(user, id)));
+      const delegates: Delegate[] = [];
+      for (const item of found) {
+        if (!item) continue;
+        const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: item.id }) : null;
+        const provider = models.providerFor({ provider: item.provider, model: item.model });
+        delegates.push({
+          id: item.id,
+          name: item.name,
+          summary: item.instructions.replace(/\s+/g, " ").slice(0, 160),
+          confidential: Boolean(base?.confidential),
+          local: provider === "local" || provider === "echo",
+        });
+      }
+      return delegates;
+    }
+
+    /**
+     * Le spécialiste répond : son modèle, ses instructions, SA base seulement,
+     * 3 étapes et 90 secondes au plus. Quota vérifié avant, tokens comptés après.
+     */
+    async function consult(user: AuthenticatedUser, delegate: Delegate, task: string, signal: AbortSignal) {
+      const specialist = await agents!.get(user, delegate.id);
+      if (!specialist) return null;
+      const selection: ModelSelection = { provider: specialist.provider, model: specialist.model };
+      const provider = models.providerFor(selection);
+      if (deps.settings) {
+        const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
+        if (!checkQuota(settings, usage, provider).allowed) return null;
+      }
+      const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: specialist.id }) : null;
+      const tools = base && deps.knowledge && models.supportsTools?.(selection) ? [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], new CitationRegistry())] : [];
+      const result = await runnerFor(selection)(
+        { message: task, instructions: specialist.instructions, ...(tools.length ? { tools, maxSteps: 3 } : {}) },
+        { signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) },
+      );
+      if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
+      return { content: result.content, steps: result.steps ?? 0 };
     }
 
     /**
@@ -1449,8 +1525,24 @@ export function createAppServer(deps: AppDependencies) {
           web: new WebSession(run.request.content).seed(earlier),
           conversationId: run.conversationId,
           codeRuns: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "run_code").length },
+          images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
+        // Sous-agents : spécialistes consultés en lecture seule (profondeur 1).
+        if (agent && permitted.has("delegate") && agent.delegates.length && agents && models.supportsTools?.(selection)) {
+          const delegates = await delegatesOf(user, agent);
+          if (delegates.length) {
+            tools.push(
+              delegateTool({
+                delegates,
+                parentLocal: provider === "local" || provider === "echo",
+                parentConfidential: confidential,
+                run: (delegate, task, signal) => consult(user, delegate, task, signal),
+                audit: (event) => kit.record(request, user, { eventType: "agent.delegate", targetType: "agent", ...event, details: { ...event.details, from: agent.id } }),
+              }),
+            );
+          }
+        }
         // Mémoire : activée par l'utilisateur, jamais en conversation temporaire ni
         // confidentielle (rien n'en sort, rien n'y entre).
         const memoryOn = !conversation.temporary && !confidential && deps.preferences ? (await deps.preferences.get(user)).memory : false;
@@ -2137,7 +2229,15 @@ export function createAppServer(deps: AppDependencies) {
       const approved = tools.includes("mcp") && deps.mcp
         ? new Set((await deps.mcp.store.list(user)).filter((server) => server.status !== "pending").map((server) => server.id))
         : new Set<string>();
-      return { ...parsed.data, tools, mcpServers: parsed.data.mcpServers.filter((id) => approved.has(id)) };
+      // Spécialistes consultables : agents de l'organisation, jamais lui-même (vérifié aussi à l'exécution).
+      const existingId = (request.params as { id?: string } | undefined)?.id;
+      const known = tools.includes("delegate") ? new Set((await store.list(user)).map((item) => item.id)) : new Set<string>();
+      return {
+        ...parsed.data,
+        tools,
+        mcpServers: parsed.data.mcpServers.filter((id) => approved.has(id)),
+        delegates: parsed.data.delegates.filter((id) => known.has(id) && id !== existingId),
+      };
     }
 
     const view = (user: AuthenticatedUser, agent: Agent) => ({
@@ -2530,7 +2630,7 @@ export function createProductionServer() {
     // Serveurs MCP : sortie par le proxy (HTTPS_PROXY), domaines dans infra/egress/mcp-domains.txt.
     // Sans proxy (développement) : chaque nom est résolu et doit viser une adresse publique.
     ...(config.mcpEnabled
-      ? { mcp: { store: new PostgresMcpServerStore(pool, keyring), ...(process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY === "1" ? {} : { checkAddress: publicAddressOnly }) } }
+      ? { mcp: { store: new PostgresMcpServerStore(pool, keyring), connections: new PostgresMcpConnectionStore(pool, keyring), ...(process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY === "1" ? {} : { checkAddress: publicAddressOnly }) } }
       : {}),
     generatedFiles: new PostgresGeneratedFileStore(pool, keyring),
     shares: new PostgresShareStore(pool, keyring),
@@ -2538,6 +2638,8 @@ export function createProductionServer() {
     ...(ocr ? { ocr } : {}),
     memories: new PostgresUserMemoryStore(pool, keyring),
     agentRatings: new PostgresAgentRatingStore(pool),
+    speech: new OpenAiCompatibleSpeech(config.speech.stt, config.speech.tts),
+    ...(config.images ? { images: new OpenAiCompatibleImages(config.images) } : {}),
     // Traces vers Langfuse auto-hébergé, si configuré.
     ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),
     summarize: createSummarizer((selection) => models.runner(selection)),
@@ -2613,6 +2715,7 @@ export function createProductionServer() {
       rerank: config.knowledge.rerank?.model ?? "off",
       antivirus: config.antivirus ? `clamav://${config.antivirus.host}:${config.antivirus.port}` : "off",
       ocr: config.ocrSocket ? "local" : "off",
+      voice: `${config.speech.stt ? "dictée" : "-"}/${config.speech.tts ? "lecture" : "-"}`,
     },
     "Fournisseurs LLM configurés",
   );

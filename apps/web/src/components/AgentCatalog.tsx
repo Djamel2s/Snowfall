@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { BookOpen, Copy, Globe, Pencil, Plug, Plus, Search, SquareTerminal, ThumbsUp } from 'lucide-react'
+import { BookOpen, Copy, Globe, ImagePlus, Pencil, Plug, Plus, Search, SquareTerminal, ThumbsUp, Users } from 'lucide-react'
 import type { Agent, ToolId } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
@@ -22,6 +22,8 @@ const toolIcons: Partial<Record<ToolId, typeof Globe>> = {
   web_search: Globe,
   code_interpreter: SquareTerminal,
   mcp: Plug,
+  delegate: Users,
+  image_generation: ImagePlus,
 }
 
 /**

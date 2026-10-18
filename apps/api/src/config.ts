@@ -104,6 +104,15 @@ const envSchema = z.object({
   SANDBOX_SOCKET: z.string().optional(),
   // OCR local des documents numérisés : socket Unix du service (ex. /run/ocr/ocr.sock). Absent : non lus.
   OCR_SOCKET: z.string().optional(),
+  // Voix locale (API audio compatible OpenAI, ex. Speaches) : dictée et lecture. Absent : désactivée.
+  STT_URL: z.url().optional(),
+  STT_MODEL: z.string().min(1).max(200).optional(),
+  TTS_URL: z.url().optional(),
+  TTS_MODEL: z.string().min(1).max(200).optional(),
+  TTS_VOICE: z.string().min(1).max(100).optional(),
+  // Génération d'images locale (API images compatible OpenAI). Absent : indisponible.
+  IMAGE_URL: z.url().optional(),
+  IMAGE_MODEL: z.string().min(1).max(200).optional(),
   // Serveurs d'outils MCP (ajoutés et approuvés par les admins). Désactivé par défaut.
   MCP_ENABLED: z.enum(["true", "false"]).default("false"),
   // Traces des agents (OpenTelemetry → Langfuse auto-hébergé). Absent : aucune trace.
@@ -164,6 +173,8 @@ export type AppConfig = {
   webSearchUrl: string | undefined;
   sandboxSocket: string | undefined;
   ocrSocket: string | undefined;
+  speech: { stt?: { baseUrl: string; model: string }; tts?: { baseUrl: string; model: string; voice?: string } };
+  images: { baseUrl: string; model: string } | undefined;
   mcpEnabled: boolean;
   knowledge: {
     embeddingModels: { mistral: string; openai: string; google: string; local: string | undefined };
@@ -352,6 +363,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     webSearchUrl: e.WEB_SEARCH_URL ? e.WEB_SEARCH_URL.replace(/\/$/, "") : undefined,
     sandboxSocket: e.SANDBOX_SOCKET || undefined,
     ocrSocket: e.OCR_SOCKET || undefined,
+    images: e.IMAGE_URL && e.IMAGE_MODEL ? { baseUrl: e.IMAGE_URL, model: e.IMAGE_MODEL } : undefined,
+    speech: {
+      ...(e.STT_URL && e.STT_MODEL ? { stt: { baseUrl: e.STT_URL, model: e.STT_MODEL } } : {}),
+      ...(e.TTS_URL && e.TTS_MODEL ? { tts: { baseUrl: e.TTS_URL, model: e.TTS_MODEL, ...(e.TTS_VOICE ? { voice: e.TTS_VOICE } : {}) } } : {}),
+    },
     mcpEnabled: e.MCP_ENABLED === "true",
     knowledge: {
       embeddingModels: {

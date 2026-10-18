@@ -1449,3 +1449,18 @@
 .approval-warning { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 8px; padding: 8px 10px; border-radius: 9px; background: rgba(245, 166, 35, .12); color: #f6d38f; font-size: 12px; line-height: 1.45; }
 .approval-warning svg { flex-shrink: 0; margin-top: 2px; }
 .approval-exposure { margin: 0 0 8px; color: #a9bbd4; font-size: 12px; line-height: 1.45; }
+
+/* Connexions personnelles aux outils externes (OAuth). */
+.connections-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; padding: 0; list-style: none; }
+.connections-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, .03); }
+.connections-list li > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.connections-list strong { color: #dbe6f5; font-size: 12.5px; }
+.connections-list small { color: #7d8ca4; font-size: 11px; }
+.connections-notice { color: #a7d7b8; }
+.mcp-mode { grid-column: 1 / -1; }
+.mcp-spec { grid-column: 1 / -1; cursor: pointer; }
+
+/* Dictée : le bouton pulse pendant l'enregistrement. */
+.dictation-button.recording { color: #ff8f9c; animation: dictation-pulse 1.2s ease-in-out infinite; }
+@keyframes dictation-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .dictation-button.recording { animation: none; } }

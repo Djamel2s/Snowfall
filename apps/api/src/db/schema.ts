@@ -446,7 +446,7 @@ export const toolUsage = pgTable.withRLS(
   },
   (table) => [
     primaryKey({ columns: [table.organizationId, table.period, table.meter, table.userId] }),
-    check("tool_usage_meter_check", sql`${table.meter} IN ('code', 'web', 'mcp')`),
+    check("tool_usage_meter_check", sql`${table.meter} IN ('code', 'web', 'mcp', 'image')`),
     check("tool_usage_period_check", sql`${table.period} = date_trunc('month', ${table.period})::date`),
     check("tool_usage_calls_check", sql`${table.calls} >= 0`),
     tenantPolicy("tool_usage_tenant", table.organizationId),
@@ -941,6 +941,55 @@ export const prompts = pgTable.withRLS(
   ],
 );
 
+// ---- Connexions personnelles aux serveurs MCP (OAuth) ---------------------------
+// Jetons de l'utilisateur pour un serveur MCP en mode OAuth : chiffrés, lisibles
+// par lui seul (pas même un administrateur). Effacés avec le serveur ou au départ
+// du membre.
+export const mcpUserTokens = pgTable.withRLS(
+  "mcp_user_tokens",
+  {
+    serverId: uuid("server_id").notNull().references(() => mcpServers.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.serverId, table.userId] }),
+    foreignKey({
+      name: "mcp_user_tokens_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    tenantPolicy("mcp_user_tokens_owner", table.organizationId, table.userId),
+  ],
+);
+
+// Demandes de connexion en cours : state (haché) et secret PKCE (chiffré),
+// à usage unique, 10 minutes.
+export const mcpOauthStates = pgTable.withRLS(
+  "mcp_oauth_states",
+  {
+    stateHash: text("state_hash").primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    serverId: uuid("server_id").notNull().references(() => mcpServers.id, { onDelete: "cascade" }),
+    verifier: text("verifier").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("mcp_oauth_states_hash_check", sql`${table.stateHash} ~ '^[0-9a-f]{64}$'`),
+    foreignKey({
+      name: "mcp_oauth_states_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    tenantPolicy("mcp_oauth_states_owner", table.organizationId, table.userId),
+  ],
+);
+
 // ---- Mémoire de l'utilisateur ---------------------------------------------------
 // Faits courts retenus à sa demande (validation de chaque ajout). Privée :
 // seul l'utilisateur la lit, l'administrateur non plus. Contenu chiffré.
@@ -1041,7 +1090,15 @@ export const mcpServers = pgTable.withRLS(
       .references(() => organizations.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     url: text("url").notNull(),
+    // mcp : serveur MCP ; openapi : API décrite par sa spécification (même chaîne d'outils).
+    kind: text("kind").notNull().default("mcp"),
+    // Spécification OpenAPI fournie par l'administrateur (figée), chiffrée.
+    spec: text("spec"),
+    // token : un jeton pour toute l'organisation ; oauth : chaque utilisateur avec son compte.
+    auth: text("auth").notNull().default("token"),
     token: text("token"),
+    // Configuration OAuth (points d'accès découverts, client) : chiffrée.
+    oauth: text("oauth"),
     // Outils approuvés : [{ name, description, inputSchema, access, fingerprint }].
     tools: text("tools"),
     status: text("status").notNull().default("pending"),
@@ -1052,6 +1109,8 @@ export const mcpServers = pgTable.withRLS(
   (table) => [
     index("mcp_servers_organization_idx").on(table.organizationId),
     check("mcp_servers_status_check", sql`${table.status} IN ('pending', 'approved', 'disabled')`),
+    check("mcp_servers_kind_check", sql`(${table.kind} = 'mcp' AND ${table.spec} IS NULL) OR (${table.kind} = 'openapi' AND ${table.spec} IS NOT NULL AND ${table.auth} = 'token')`),
+    check("mcp_servers_auth_check", sql`(${table.auth} = 'token' AND ${table.oauth} IS NULL) OR (${table.auth} = 'oauth' AND ${table.oauth} IS NOT NULL AND ${table.token} IS NULL)`),
     check("mcp_servers_name_check", sql`length(${table.name}) BETWEEN 1 AND 60`),
     tenantPolicy("mcp_servers_tenant", table.organizationId),
   ],

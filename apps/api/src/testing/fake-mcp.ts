@@ -15,16 +15,35 @@ export type FakeMcpTool = {
  * tools/list, réponses JSON ou SSE, appels enregistrés. Ses outils sont
  * modifiables à chaud, pour simuler un serveur qui change après approbation.
  */
-export async function startFakeMcpServer(options: { tools: FakeMcpTool[]; token?: string; sse?: boolean; reply?: (name: string, args: unknown) => string }) {
+export async function startFakeMcpServer(options: {
+  tools: FakeMcpTool[];
+  token?: string;
+  /** Jeton accepté (OAuth : émis par le faux fournisseur) ; remplace token. */
+  accepts?: (token: string) => boolean;
+  /** Métadonnées de ressource protégée (RFC 9728) servies en GET. */
+  resourceMetadata?: () => Record<string, unknown>;
+  sse?: boolean;
+  reply?: (name: string, args: unknown) => string;
+}) {
   const state = {
     tools: options.tools,
-    calls: [] as { name: string; arguments: unknown; session: string | undefined }[],
+    calls: [] as { name: string; arguments: unknown; session: string | undefined; token?: string }[],
     unauthorized: 0,
   };
   const server = http.createServer((request, response) => {
     let body = "";
     request.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
     request.on("end", () => {
+      if (request.method === "GET" && options.resourceMetadata && request.url?.startsWith("/.well-known/oauth-protected-resource")) {
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(options.resourceMetadata()));
+        return;
+      }
+      const bearer = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1];
+      if (options.accepts && !(bearer && options.accepts(bearer))) {
+        state.unauthorized++;
+        response.writeHead(401).end();
+        return;
+      }
       if (options.token && request.headers.authorization !== `Bearer ${options.token}`) {
         state.unauthorized++;
         response.writeHead(401).end();
@@ -51,7 +70,7 @@ export async function startFakeMcpServer(options: { tools: FakeMcpTool[]; token?
         }
         case "tools/call": {
           const name = message.params?.name as string;
-          state.calls.push({ name, arguments: message.params?.arguments, session });
+          state.calls.push({ name, arguments: message.params?.arguments, session, ...(bearer ? { token: bearer } : {}) });
           result = { content: [{ type: "text", text: options.reply?.(name, message.params?.arguments) ?? `ok:${name}` }] };
           break;
         }

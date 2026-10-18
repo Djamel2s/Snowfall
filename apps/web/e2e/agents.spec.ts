@@ -71,3 +71,19 @@ test('studio : réglages des réponses enregistrés avec l’agent', async ({ pa
   await page.getByRole('button', { name: /Enregistrer/ }).first().click()
   expect(((await saved).postDataJSON() as { parameters: unknown }).parameters).toEqual({ creativity: 'precise', length: 'concise' })
 })
+
+test('studio : consulter des agents — choix des spécialistes enregistré avec l’agent', async ({ page }) => {
+  await mockApi(page, { agents, orgTools: ['search_knowledge', 'save_to_knowledge', 'delegate'] })
+  await openAgents(page)
+  await page.getByRole('button', { name: 'Modifier Juriste' }).click()
+  await page.getByRole('group', { name: 'Outils' }).getByRole('button', { name: /Consulter des agents/ }).click()
+  const specialists = page.getByRole('group', { name: /Agents consultables/ })
+  // Un agent ne se consulte pas lui-même.
+  await expect(specialists.getByRole('button', { name: 'Juriste' })).toHaveCount(0)
+  await specialists.getByRole('button', { name: 'Support RH' }).click()
+  const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().includes('/api/agents/'))
+  await page.getByRole('button', { name: /Enregistrer/ }).first().click()
+  const body = (await saved).postDataJSON() as { tools: string[]; delegates: string[] }
+  expect(body.tools).toContain('delegate')
+  expect(body.delegates).toEqual(['agent-supportrh'])
+})

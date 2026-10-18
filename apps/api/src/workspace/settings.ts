@@ -25,12 +25,13 @@ export type OrganizationSettings = {
  * Catégories d'outils comptées : leur coût n'apparaît pas dans les tokens
  * (calcul dans le bac à sable, requêtes au moteur de recherche, service tiers).
  */
-export const toolMeters = ["code", "web", "mcp"] as const;
+export const toolMeters = ["code", "web", "mcp", "image"] as const;
 export type ToolMeter = (typeof toolMeters)[number];
 
 /** Catégorie d'un outil exposé au modèle (null : non compté). */
 export function meterOf(toolName: string): ToolMeter | null {
   if (toolName === "run_code") return "code";
+  if (toolName === "generate_image") return "image";
   if (toolName === "web_search" || toolName === "read_webpage") return "web";
   if (toolName.startsWith("mcp_")) return "mcp";
   return null;

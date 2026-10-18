@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Check, ListChecks, Plus, Trash2 } from 'lucide-react'
+import { Check, FileJson, ListChecks, Plus, Trash2 } from 'lucide-react'
 import { api, ApiError, type McpDiscoveredTool, type McpServer } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
@@ -12,7 +12,11 @@ type Choice = { selected: boolean; access: 'read' | 'write' }
 export default function McpSettings({ onError }: { onError: (message: string) => void }) {
   const { t } = useI18n()
   const [servers, setServers] = useState<McpServer[]>([])
-  const [form, setForm] = useState({ name: '', url: '', token: '' })
+  const [form, setForm] = useState({ name: '', url: '', token: '', mode: 'token' as 'token' | 'oauth' | 'openapi', clientId: '', clientSecret: '', scope: '' })
+  // Connecteur OpenAPI : spécification lue dans le navigateur, envoyée telle quelle (JSON).
+  const [spec, setSpec] = useState<{ name: string; value: Record<string, unknown> } | null>(null)
+  // Serveurs OAuth : l'admin examine les outils avec SON compte (connexion d'abord).
+  const [connected, setConnected] = useState<Set<string>>(new Set())
   const [open, setOpen] = useState<string | null>(null)
   const [tools, setTools] = useState<McpDiscoveredTool[]>([])
   const [choices, setChoices] = useState<Record<string, Choice>>({})
@@ -29,6 +33,13 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
       cancelled = true
     }
   }, [onError])
+
+  useEffect(() => {
+    api
+      .listMcpConnections()
+      .then((items) => setConnected(new Set(items.filter((item) => item.connected).map((item) => item.id))))
+      .catch(() => undefined)
+  }, [servers])
 
   async function act(action: () => Promise<void>) {
     setBusy(true)
@@ -47,9 +58,18 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
   function add(event: FormEvent) {
     event.preventDefault()
     void act(async () => {
-      const server = await api.createMcpServer({ name: form.name.trim(), url: form.url.trim(), ...(form.token.trim() ? { token: form.token.trim() } : {}) })
+      const oauth = form.mode === 'oauth'
+        ? { clientId: form.clientId.trim(), ...(form.clientSecret.trim() ? { clientSecret: form.clientSecret.trim() } : {}), ...(form.scope.trim() ? { scope: form.scope.trim() } : {}) }
+        : undefined
+      const server = await api.createMcpServer({
+        name: form.name.trim(),
+        url: form.url.trim(),
+        ...(oauth ? { oauth } : form.token.trim() ? { token: form.token.trim() } : {}),
+        ...(form.mode === 'openapi' && spec ? { openapi: { spec: spec.value } } : {}),
+      })
+      setSpec(null)
       setServers((current) => [...current, server])
-      setForm({ name: '', url: '', token: '' })
+      setForm({ name: '', url: '', token: '', mode: 'token', clientId: '', clientSecret: '', scope: '' })
     })
   }
 
@@ -70,6 +90,10 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
   }
 
   function examine(server: McpServer) {
+    if (server.auth === 'oauth' && !connected.has(server.id)) {
+      void act(async () => window.location.assign(await api.connectMcp(server.id)))
+      return
+    }
     if (open === server.id) {
       setOpen(null)
       return
@@ -104,6 +128,7 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
                   {server.name}
                 </span>
                 <small>
+                  {server.kind === 'openapi' ? `${t('mcp.kind.openapi')} · ` : ''}
                   {t(`mcp.status.${server.status}`)}
                   {server.url ? ` · ${new URL(server.url).host}` : ''}
                   {server.tools.length ? ` · ${server.tools.length}` : ''}
@@ -210,16 +235,57 @@ export default function McpSettings({ onError }: { onError: (message: string) =>
       <form className="settings-invite mcp-add" onSubmit={add}>
         <input aria-label={t('mcp.name')} placeholder={t('mcp.name')} value={form.name} maxLength={60} onChange={(event) => setForm({ ...form, name: event.target.value })} />
         <input type="url" aria-label="URL" placeholder={t('mcp.url')} value={form.url} maxLength={2000} onChange={(event) => setForm({ ...form, url: event.target.value })} />
-        <input
-          type="password"
-          autoComplete="off"
-          aria-label={t('mcp.token')}
-          placeholder={t('mcp.token')}
-          value={form.token}
-          maxLength={4000}
-          onChange={(event) => setForm({ ...form, token: event.target.value })}
-        />
-        <button type="submit" aria-label={t('mcp.add')} title={t('mcp.add')} disabled={busy || !form.name.trim() || !form.url.trim()}>
+        <div className="settings-segmented mcp-mode" role="radiogroup" aria-label={t('mcp.mode')}>
+          {(['token', 'oauth', 'openapi'] as const).map((mode) => (
+            <button key={mode} type="button" role="radio" aria-checked={form.mode === mode} onClick={() => setForm({ ...form, mode })}>
+              {t(`mcp.mode.${mode}`)}
+            </button>
+          ))}
+        </div>
+        {form.mode === 'openapi' && (
+          <label className="chat-actions-item mcp-spec">
+            <FileJson size={14} />
+            {spec ? spec.name : t('mcp.spec')}
+            <input
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (!file) return
+                if (file.size > 1024 * 1024) return onError(t('mcp.specTooLarge'))
+                void file
+                  .text()
+                  .then((text) => setSpec({ name: file.name, value: JSON.parse(text) as Record<string, unknown> }))
+                  .catch(() => onError(t('mcp.specInvalid')))
+              }}
+            />
+          </label>
+        )}
+        {form.mode !== 'oauth' ? (
+          <input
+            type="password"
+            autoComplete="off"
+            aria-label={t('mcp.token')}
+            placeholder={t('mcp.token')}
+            value={form.token}
+            maxLength={4000}
+            onChange={(event) => setForm({ ...form, token: event.target.value })}
+          />
+        ) : (
+          <>
+            <input aria-label={t('mcp.clientId')} placeholder={t('mcp.clientId')} value={form.clientId} maxLength={500} onChange={(event) => setForm({ ...form, clientId: event.target.value })} />
+            <input type="password" autoComplete="off" aria-label={t('mcp.clientSecret')} placeholder={t('mcp.clientSecret')} value={form.clientSecret} maxLength={4000} onChange={(event) => setForm({ ...form, clientSecret: event.target.value })} />
+            <input aria-label={t('mcp.scope')} placeholder={t('mcp.scope')} value={form.scope} maxLength={500} onChange={(event) => setForm({ ...form, scope: event.target.value })} />
+          </>
+        )}
+        <button
+          type="submit"
+          aria-label={t('mcp.add')}
+          title={t('mcp.add')}
+          disabled={busy || !form.name.trim() || !form.url.trim() || (form.mode === 'oauth' && !form.clientId.trim()) || (form.mode === 'openapi' && !spec)}
+        >
           <Plus size={14} />
         </button>
       </form>

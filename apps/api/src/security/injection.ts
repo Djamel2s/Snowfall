@@ -34,7 +34,8 @@ const fold = (text: string) =>
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .replace(/[’‘`]/g, "'")
-    .replace(/\s+/g, " ")
+    // Texte marqué (datamark) : « ˆ » se lit comme une espace.
+    .replace(/[\sˆ]+/g, " ")
     .toLowerCase();
 
 const ASSISTANT = "(?:l'|les |un |une |the |an |any )?(?:assistant|assistants|ia|ai|llm|modele|model|agent|chatbot|bot)s?";

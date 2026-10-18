@@ -85,3 +85,36 @@ test('mémoire : désactivée par défaut, activée, faits visibles et oubliable
   await card.getByRole('button', { name: 'Cliquer encore pour tout oublier' }).click()
   await expect(card.getByText('Rien de retenu pour l’instant.')).toBeVisible()
 })
+
+test('connexion OAuth à un outil externe : retour du fournisseur, code renvoyé en POST, adresse nettoyée', async ({ page }, info) => {
+  const api = await mockApi(page, { mcpOAuth: true })
+  await openSettings(page)
+  const card = page.getByRole('region', { name: 'Connexions' })
+  await expect(card).toContainText('Non connecté')
+  await card.getByRole('button', { name: 'Se connecter à Jira' }).click()
+
+  // Retour sur /mcp/callback : le code part au serveur, l'adresse redevient « / ».
+  await expect.poll(() => api.oauthCallbacks).toEqual([{ state: 'S'.repeat(43), code: 'code-42' }])
+  await expect(page).toHaveURL(/\/$/)
+  const after = page.getByRole('region', { name: 'Connexions' })
+  await expect(after.getByRole('status')).toHaveText('Connecté à Jira.')
+  await expect(after).toContainText('Connecté avec ton compte')
+  await after.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: info.outputPath('connexions.png') })
+})
+
+test('connecteur OpenAPI : la spécification est lue dans le navigateur et envoyée avec l’adresse de base', async ({ page }) => {
+  const api = await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
+  await openSettings(page)
+  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
+  await page.getByRole('radio', { name: 'API OpenAPI' }).click()
+  await page.getByLabel('Nom').last().fill('Tickets')
+  await page.getByLabel('URL').fill('https://api.example.com/v2')
+  const spec = { openapi: '3.1.0', info: { title: 'Tickets', version: '1' }, paths: { '/tickets': { get: { operationId: 'list' } } } }
+  await page.locator('.mcp-spec input[type=file]').setInputFiles({ name: 'tickets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spec)) })
+  await expect(page.locator('.mcp-spec')).toContainText('tickets.json')
+  await page.getByRole('button', { name: 'Ajouter le serveur' }).click()
+  await expect.poll(() => api.createdConnectors).toEqual([{ name: 'Tickets', url: 'https://api.example.com/v2', openapi: { spec } }])
+  await expect(page.getByText(/^API · /)).toBeVisible()
+})

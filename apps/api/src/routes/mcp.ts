@@ -1,8 +1,12 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { McpClient, McpError, toolFingerprint, validateMcpUrl, type McpServerSettings } from "../mcp/client.js";
+import { McpError, toolFingerprint, validateMcpUrl, type McpServerSettings } from "../mcp/client.js";
+import type { McpConnectionStore } from "../mcp/connections.js";
+import { authorizationUrl, discoverOAuth, exchangeCode, hashState, newState, OAuthError, pkce } from "../mcp/oauth.js";
 import type { McpServerRecord, McpServerStore } from "../mcp/store.js";
-import { approvedSnapshot, clashingNames, exposedName, schemaValidator, validToolName } from "../mcp/tools.js";
+import { bearerFor } from "../mcp/user-token.js";
+import { approvedSnapshot, clashingNames, connectorClient, exposedName, schemaValidator, validToolName } from "../mcp/tools.js";
+import { OpenApiError, parseOpenApi } from "../mcp/openapi.js";
 import type { RouteKit } from "./kit.js";
 
 // Serveurs MCP de l'organisation. Seul un administrateur ajoute un serveur,
@@ -11,6 +15,10 @@ import type { RouteKit } from "./kit.js";
 
 export type McpDependencies = {
   store: McpServerStore;
+  /** Connexions personnelles (serveurs en mode OAuth). Absent : mode OAuth indisponible. */
+  connections?: McpConnectionStore;
+  /** Adresse de retour OAuth (page de l'application) ; fixée par le serveur, jamais par la requête. */
+  redirectUri?: string;
   /** Tests seulement : faux serveur MCP local en HTTP. */
   allowLocal?: boolean;
   fetcher?: typeof fetch;
@@ -20,11 +28,27 @@ export type McpDependencies = {
 
 const idParams = z.object({ id: z.uuid() });
 
-const createSchema = z.object({
-  name: z.string().trim().min(1).max(60),
-  url: z.string().trim().max(2_000),
-  token: z.string().trim().min(1).max(4_000).optional(),
-}).strict();
+const createSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60),
+    url: z.string().trim().max(2_000),
+    token: z.string().trim().min(1).max(4_000).optional(),
+    // Mode OAuth : chaque utilisateur se connecte avec son compte. Client enregistré par l'admin chez le fournisseur.
+    oauth: z
+      .object({
+        clientId: z.string().trim().min(1).max(500),
+        clientSecret: z.string().trim().min(1).max(4_000).optional(),
+        scope: z.string().trim().max(500).regex(/^[\x21\x23-\x5b\x5d-\x7e ]*$/).optional(),
+      })
+      .strict()
+      .optional(),
+    // Connecteur OpenAPI : spécification (JSON) de l'API ; url = adresse de base de l'API.
+    openapi: z.object({ spec: z.record(z.string(), z.unknown()) }).strict().optional(),
+  })
+  .strict()
+  .refine((body) => !(body.oauth && body.token) && !(body.openapi && body.oauth));
+
+const callbackSchema = z.object({ state: z.string().regex(/^[A-Za-z0-9_-]{43}$/), code: z.string().min(1).max(2_000) }).strict();
 
 const approveSchema = z.object({
   // Empreinte de la définition EXAMINÉE (renvoyée par /discover) : on approuve ce
@@ -43,6 +67,8 @@ function view(server: McpServerRecord, admin: boolean) {
     id: server.id,
     name: server.name,
     status: server.status,
+    kind: server.kind,
+    auth: server.auth,
     ...(admin ? { url: server.url, hasToken: server.hasToken, updatedAt: server.updatedAt } : {}),
     tools: server.tools.map((tool) => ({ name: tool.name, title: tool.title ?? null, access: tool.access })),
   };
@@ -59,11 +85,21 @@ const host = (url: string) => {
 export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: McpDependencies) {
   const { store } = deps;
 
+  const tokenDeps = { connections: deps.connections, fetcher: deps.fetcher, checkAddress: deps.checkAddress, allowLocal: deps.allowLocal };
+
+  /**
+   * Client vers le serveur, avec le jeton de l'organisation (mode token) ou
+   * celui de l'utilisateur courant (mode OAuth : l'admin examine avec SON compte).
+   * needsConnection : mode OAuth, utilisateur pas (ou plus) connecté.
+   */
   const connect = async (user: Parameters<McpServerStore["connection"]>[0], id: string) => {
     const server = await store.connection(user, id);
     if (!server) return null;
-    return { server, client: new McpClient({ url: server.url, token: server.token ?? undefined, checkAddress: deps.checkAddress }, deps.fetcher) };
+    const token = await bearerFor(server, user, tokenDeps);
+    if (token === null) return { server, client: null };
+    return { server, client: connectorClient(server, { url: server.url, token: token ?? undefined, checkAddress: deps.checkAddress }, deps.fetcher) };
   };
+  const connectionRequired = (reply: FastifyReply) => reply.code(409).send({ error: "Conflict", reason: "connect_required" });
 
   // Tous les membres : les auteurs d'agents choisissent parmi les serveurs approuvés.
   api.get("/organization/mcp-servers", async (request, reply) => {
@@ -87,12 +123,30 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     } catch {
       return reply.code(400).send({ error: "Invalid request", reason: "invalid_url" });
     }
-    const server = await store.create(user, { name: body.data.name, url: url.href, token: body.data.token });
+    let oauth;
+    if (body.data.oauth) {
+      if (!deps.connections || !deps.redirectUri) return reply.code(400).send({ error: "Invalid request", reason: "oauth_unavailable" });
+      try {
+        // Points d'accès découverts chez le serveur MCP lui-même, puis vérifiés (HTTPS, adresse publique).
+        oauth = await discoverOAuth(url.href, body.data.oauth, { fetcher: deps.fetcher, checkAddress: deps.checkAddress, allowLocal: deps.allowLocal });
+      } catch (error) {
+        return reply.code(400).send({ error: "Invalid request", reason: error instanceof OAuthError ? `oauth_${error.code}` : "oauth_discovery_failed" });
+      }
+    }
+    if (body.data.openapi) {
+      try {
+        // Lue dès l'ajout : une spécification illisible est refusée tout de suite.
+        parseOpenApi(body.data.openapi.spec);
+      } catch (error) {
+        return reply.code(400).send({ error: "Invalid request", reason: error instanceof OpenApiError ? error.code : "invalid_spec" });
+      }
+    }
+    const server = await store.create(user, { name: body.data.name, url: url.href, token: body.data.token, oauth, ...(body.data.openapi ? { spec: body.data.openapi.spec } : {}) });
     await kit.record(request, user, {
       eventType: "mcp.server_create",
       targetType: "mcp_server",
       targetId: server.id,
-      details: { host: url.host },
+      details: { host: url.host, auth: server.auth, kind: server.kind },
     });
     return reply.code(201).send({ server: view(server, true) });
   });
@@ -107,6 +161,7 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     if (!params.success) return reply.code(400).send({ error: "Invalid request" });
     const connection = await connect(user, params.data.id);
     if (!connection) return reply.code(404).send({ error: "Not found" });
+    if (!connection.client) return connectionRequired(reply);
     try {
       const tools = await connection.client.listTools();
       const clashes = clashingNames(connection.server, tools.map((tool) => tool.name));
@@ -141,6 +196,7 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
     const connection = await connect(user, params.data.id);
     if (!connection) return reply.code(404).send({ error: "Not found" });
+    if (!connection.client) return connectionRequired(reply);
 
     let live;
     try {
@@ -221,6 +277,74 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
       targetId: params.data.id,
       details: { host: host(server.url) },
     });
+    return reply.code(204).send();
+  });
+
+  // ---- Connexions personnelles (serveurs en mode OAuth) ------------------------
+
+  /** Serveurs OAuth proposés à l'utilisateur, et s'il y est connecté. */
+  api.get("/me/mcp-connections", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!deps.connections) return { connections: [] };
+    const admin = kit.isAdmin(user);
+    const connected = new Set(await deps.connections.connected(user));
+    const servers = (await store.list(user)).filter((server) => server.auth === "oauth" && (server.status === "approved" || (admin && server.status === "pending")));
+    return { connections: servers.map((server) => ({ id: server.id, name: server.name, status: server.status, connected: connected.has(server.id) })) };
+  });
+
+  /** Début de connexion : adresse du fournisseur, avec state et PKCE gardés côté serveur. */
+  api.post("/mcp-servers/:id/connect", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+    if (!deps.connections || !deps.redirectUri) return reply.code(404).send({ error: "Not found" });
+    const server = await store.connection(user, params.data.id);
+    const allowed = server && server.auth === "oauth" && server.oauth && (server.status === "approved" || (kit.isAdmin(user) && server.status === "pending"));
+    if (!allowed) return reply.code(404).send({ error: "Not found" });
+    const state = newState();
+    const { verifier, challenge } = pkce();
+    await deps.connections.savePending(user, hashState(state), { serverId: server.id, verifier });
+    return { authorizationUrl: authorizationUrl(server.oauth!, { state, challenge, redirectUri: deps.redirectUri, resource: server.url }) };
+  });
+
+  /**
+   * Retour du fournisseur : la page /mcp/callback de l'application transmet code
+   * et state en POST (même site : cookie de session et contrôle d'origine
+   * habituels). Le state est à usage unique et lié à l'utilisateur qui a commencé.
+   */
+  api.post("/mcp/oauth/callback", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!deps.connections || !deps.redirectUri) return reply.code(404).send({ error: "Not found" });
+    const body = callbackSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+    const pending = await deps.connections.takePending(user, hashState(body.data.state));
+    if (!pending) {
+      await kit.record(request, user, { eventType: "mcp.connect", outcome: "denied", targetType: "user", targetId: user.userId, details: { reason: "invalid_state" } });
+      return reply.code(400).send({ error: "Invalid request", reason: "invalid_state" });
+    }
+    const server = await store.connection(user, pending.serverId);
+    if (!server || server.auth !== "oauth" || !server.oauth) return reply.code(404).send({ error: "Not found" });
+    try {
+      const tokens = await exchangeCode(server.oauth, { code: body.data.code, verifier: pending.verifier, redirectUri: deps.redirectUri, resource: server.url }, { fetcher: deps.fetcher, checkAddress: deps.checkAddress, allowLocal: deps.allowLocal });
+      await deps.connections.saveTokens(user, server.id, tokens);
+    } catch (error) {
+      await kit.record(request, user, { eventType: "mcp.connect", outcome: "failure", targetType: "mcp_server", targetId: server.id, details: { reason: error instanceof OAuthError ? error.code : "token_failed" } });
+      return reply.code(502).send({ error: "Connection failed", reason: "token_failed" });
+    }
+    await kit.record(request, user, { eventType: "mcp.connect", targetType: "mcp_server", targetId: server.id });
+    return { serverId: server.id, name: server.name };
+  });
+
+  api.delete("/mcp-servers/:id/connection", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    const params = idParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+    if (!deps.connections || !(await deps.connections.deleteTokens(user, params.data.id))) return reply.code(404).send({ error: "Not found" });
+    await kit.record(request, user, { eventType: "mcp.disconnect", targetType: "mcp_server", targetId: params.data.id });
     return reply.code(204).send();
   });
 }

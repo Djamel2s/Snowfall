@@ -42,6 +42,8 @@ conversations et les documents, traitement à grande échelle possible.
 | Liens de partage | Instantané chiffré d'une conversation, lisible dans l'organisation | 1, 7 ou 30 jours (révocable) |
 | Bibliothèque de prompts | Textes de prompts, privés ou partagés | Jusqu'à suppression par l'auteur |
 | Retours 👍👎 | Note, commentaire chiffré ; taux par agent agrégé (5 personnes au moins) | Avec la réponse notée |
+| Connexions aux outils externes (OAuth) | Jetons de l'utilisateur, chiffrés, lisibles par lui seul | Jusqu'à déconnexion, échec de renouvellement, suppression du connecteur ou départ |
+| Dictée | Audio transcrit par un service local | Aucune : jamais conservé |
 
 ### Destinataires et flux
 
@@ -52,6 +54,8 @@ conversations et les documents, traitement à grande échelle possible.
 | Serveurs MCP | Arguments des appels d'outils | Serveurs approuvés par un administrateur ; écritures validées par l'utilisateur ; jamais en confidentiel |
 | Modèles locaux (embeddings, reclassement, éventuellement génération) | Textes | Sur la plateforme : rien ne sort |
 | OCR local | Documents numérisés | Sur la plateforme, conteneur sans réseau : rien ne sort |
+| Voix et images locales | Audio dicté, texte lu, descriptions d'images | Services auto-hébergés : rien ne sort |
+| Outils externes en mode OAuth | Arguments des appels, au nom de l'utilisateur | Serveur approuvé par un administrateur ; connexion choisie par l'utilisateur |
 | Fournisseur d'IA de la réponse | Mémoire de l'utilisateur (s'il l'a activée) | Jamais en conversation temporaire ni confidentielle |
 
 Transferts hors UE : à compléter selon les fournisseurs autorisés (localisation,
