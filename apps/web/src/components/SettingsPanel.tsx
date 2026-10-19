@@ -9,9 +9,11 @@ import {
   toolMeters,
   type Invitation,
   type Member,
+  type ModelSelection,
   type Organization,
   type OrganizationSettings,
   type Preferences,
+  type ProviderCatalog,
   type ProviderId,
   type Role,
   type Usage,
@@ -23,6 +25,7 @@ import McpSettings from './McpSettings'
 import MyDataSettings from './MyDataSettings'
 import MemorySettings from './MemorySettings'
 import McpConnections from './McpConnections'
+import DecisionWorkshop from './DecisionWorkshop'
 
 type Props = {
   preferences: Preferences
@@ -66,6 +69,49 @@ function Meter({ label, used, limit }: { label: string; used: number; limit: num
   )
 }
 
+type Routing = { fast: ModelSelection; strong: ModelSelection }
+
+/** Routage automatique : deux modèles publiés, parmi les fournisseurs autorisés. */
+function RoutingSettings({ value, choices, onChange }: { value: Routing | null; choices: ProviderCatalog[]; onChange: (value: Routing | null) => void }) {
+  const { t } = useI18n()
+  const options = choices.flatMap((provider) => provider.models.map((model) => ({ key: `${provider.id}:${model.id}`, selection: { provider: provider.id, model: model.id }, label: `${providerMeta[provider.id].label} · ${model.label}` })))
+  if (!options.length && !value) return null
+  const keyOf = (selection: ModelSelection) => `${selection.provider}:${selection.model}`
+  const pick = (key: string) => options.find((option) => option.key === key)?.selection
+  return (
+    <>
+      <label className="settings-row settings-switch">
+        <span>
+          {t('settings.routing')}
+          <small>{t('settings.routingHint')}</small>
+        </span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={value !== null}
+          disabled={!value && !options.length}
+          onChange={(event) => onChange(event.target.checked && options[0] ? { fast: options[0].selection, strong: (options.at(-1) ?? options[0]).selection } : null)}
+        />
+      </label>
+      {value &&
+        (['fast', 'strong'] as const).map((role) => (
+          <label key={role} className="settings-field">
+            <span>{t(role === 'fast' ? 'settings.routingFast' : 'settings.routingStrong')}</span>
+            <select value={keyOf(value[role])} onChange={(event) => { const selection = pick(event.target.value); if (selection) onChange({ ...value, [role]: selection }) }}>
+              {/* Modèle enregistré retiré du catalogue : affiché tel quel, l'API le refusera. */}
+              {!pick(keyOf(value[role])) && <option value={keyOf(value[role])}>{keyOf(value[role])}</option>}
+              {options.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+    </>
+  )
+}
+
 export default function SettingsPanel({ preferences, onPreferencesChange, onConversationsImported, connectionNotice }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
   const session = getSession()
@@ -89,6 +135,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
   // Ce qui me concerne, ou l'organisation (administrateurs), rubrique par rubrique.
   const [view, setView] = useState<'account' | 'organization'>('account')
   const [section, setSection] = useState<Section>('models')
+  // Modèles publiés, pour le routage automatique (administrateurs).
+  const [catalog, setCatalog] = useState<ProviderCatalog[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -107,6 +155,7 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
       })
       .catch(fail)
     if (isAdmin) {
+      api.listModels().then((value) => !cancelled && setCatalog(value)).catch(fail)
       api
         .listMembers()
         .then((value) => {
@@ -332,6 +381,26 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
                   )
                 })}
               </div>
+
+              <label className="settings-row settings-switch">
+                <span>
+                  {t('sensitive.setting')}
+                  <small>{t('sensitive.settingHint')}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={(draft.sensitiveData ?? 'local') === 'local'}
+                  onChange={(event) => setDraft({ ...draft, sensitiveData: event.target.checked ? 'local' : 'off' })}
+                />
+              </label>
+
+              <RoutingSettings
+                value={draft.modelRouting ?? null}
+                choices={catalog.filter((provider) => provider.available && draft.allowedProviders.includes(provider.id))}
+                onChange={(modelRouting) => setDraft({ ...draft, modelRouting })}
+              />
+              <DecisionWorkshop onError={setError} />
 
               <h3>{t('settings.quotas')}</h3>
               <label className="settings-field">

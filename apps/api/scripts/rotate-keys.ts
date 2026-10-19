@@ -8,18 +8,19 @@
 //       Crée une nouvelle version de DEK (toutes les organisations, ou une
 //       seule) ; les nouvelles écritures l'utilisent aussitôt. --reencrypt
 //       rechiffre aussi les données existantes avec cette nouvelle version.
+//   npm run keys:rotate -- --verify [--org <uuid>]
+//       Compte, table par table, les valeurs encore chiffrées avec une version
+//       antérieure (code de sortie 2 s'il en reste) : à zéro, l'ancienne clé ne
+//       sert plus à rien.
 import { randomBytes } from "node:crypto";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
-import { profileAad } from "../src/agents/store.js";
-import { attachmentAad } from "../src/attachments/store.js";
 import { loadKmsConfig } from "../src/config.js";
-import { messageAad, titleAad } from "../src/conversations/store.js";
 import { parseMasterKey } from "../src/crypto/envelope.js";
-import { keyVersionOf, organizationKeyContext, OrganizationKeyring } from "../src/crypto/keyring.js";
+import { organizationKeyContext, OrganizationKeyring } from "../src/crypto/keyring.js";
+import { reencryptTable, staleValues, tablesFor } from "../src/crypto/rotation.js";
 import { createKeyEncryption } from "../src/crypto/vault.js";
-import { projectNameAad } from "../src/projects/store.js";
 
 dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
@@ -32,7 +33,7 @@ const option = (name: string) => {
 
 const migrationUrl = process.env.DATABASE_MIGRATION_URL;
 if (!migrationUrl) throw new Error("DATABASE_MIGRATION_URL est obligatoire.");
-if (flag("--kek") === flag("--dek")) {
+if (!flag("--verify") && flag("--kek") === flag("--dek")) {
   throw new Error("Préciser --kek ou --dek (voir l'en-tête du script).");
 }
 
@@ -107,109 +108,66 @@ async function rotateDek(organizationId: string) {
   });
 }
 
-type Tenant = { organizationId: string; userId: string };
-
-/** Rechiffre une valeur si elle n'utilise pas encore la dernière version de clé. */
-async function refresh(client: PoolClient, tenant: Tenant, latest: number, stored: string | null, aad: string, binary = false) {
-  if (stored === null || keyVersionOf(stored) === latest) return null;
-  if (binary) {
-    const bytes = await keyring.decryptBytes(client, tenant.organizationId, stored, aad);
-    return keyring.encryptBytes(client, tenant.organizationId, bytes, aad);
-  }
-  const plain = await keyring.decrypt(client, tenant.organizationId, stored, aad);
-  return keyring.encrypt(client, tenant.organizationId, plain, aad);
-}
-
+/**
+ * Rechiffre, avec la version de clé la plus récente, TOUTES les colonnes chiffrées
+ * de l'organisation (inventaire unique : src/crypto/rotation.ts) : d'abord les
+ * données de l'organisation, puis celles de chaque membre, sous leur RLS.
+ */
 async function reencrypt(organizationId: string, latest: number) {
   let updated = 0;
-
-  // Agents : niveau organisation.
-  updated += await inTenant(organizationId, null, async (client) => {
-    const rows = await client.query<{ id: string; profile_enc: string }>(
-      "SELECT id, profile_enc FROM agents WHERE organization_id = $1",
-      [organizationId],
-    );
-    let count = 0;
-    for (const row of rows.rows) {
-      const tenant = { organizationId, userId: "" };
-      const next = await refresh(client, tenant, latest, row.profile_enc, profileAad(organizationId, row.id));
-      if (next) {
-        await client.query("UPDATE agents SET profile_enc = $2 WHERE id = $1", [row.id, next]);
-        count++;
-      }
+  for (const target of tablesFor(false)) {
+    updated += await inTenant(organizationId, null, (client) => reencryptTable(client, keyring, target, { organizationId, userId: "" }, latest));
+  }
+  for (const userId of await members(organizationId)) {
+    for (const target of tablesFor(true)) {
+      updated += await inTenant(organizationId, userId, (client) => reencryptTable(client, keyring, target, { organizationId, userId }, latest));
     }
-    return count;
-  });
-
-  // Données personnelles : sous le contexte de chaque membre (RLS par utilisateur).
-  const members = await pool.query<{ user_id: string }>(
-    "SELECT user_id FROM organization_members WHERE organization_id = $1",
-    [organizationId],
-  );
-  for (const { user_id: userId } of members.rows) {
-    const tenant = { organizationId, userId };
-    updated += await inTenant(organizationId, userId, async (client) => {
-      let count = 0;
-      const conversations = await client.query<{ id: string; title: string | null }>(
-        "SELECT id, title FROM conversations WHERE organization_id = $1 AND user_id = $2",
-        [organizationId, userId],
-      );
-      for (const row of conversations.rows) {
-        const next = await refresh(client, tenant, latest, row.title, titleAad(tenant, row.id));
-        if (next) {
-          await client.query("UPDATE conversations SET title = $2 WHERE id = $1", [row.id, next]);
-          count++;
-        }
-      }
-
-      const messages = await client.query<{ id: string; conversation_id: string; role: "user" | "assistant"; content: string }>(
-        "SELECT id, conversation_id, role, content FROM messages WHERE organization_id = $1 AND user_id = $2",
-        [organizationId, userId],
-      );
-      for (const row of messages.rows) {
-        const next = await refresh(client, tenant, latest, row.content, messageAad(tenant, row.conversation_id, row.id, row.role));
-        if (next) {
-          await client.query("UPDATE messages SET content = $2 WHERE id = $1", [row.id, next]);
-          count++;
-        }
-      }
-
-      const projects = await client.query<{ id: string; name: string }>(
-        "SELECT id, name FROM projects WHERE organization_id = $1 AND user_id = $2",
-        [organizationId, userId],
-      );
-      for (const row of projects.rows) {
-        const next = await refresh(client, tenant, latest, row.name, projectNameAad(tenant, row.id));
-        if (next) {
-          await client.query("UPDATE projects SET name = $2 WHERE id = $1", [row.id, next]);
-          count++;
-        }
-      }
-
-      const files = await client.query<{ id: string; name: string; content: string; extracted_text: string | null }>(
-        "SELECT id, name, content, extracted_text FROM attachments WHERE organization_id = $1 AND user_id = $2",
-        [organizationId, userId],
-      );
-      for (const row of files.rows) {
-        const name = await refresh(client, tenant, latest, row.name, attachmentAad(tenant, row.id, "name"));
-        const content = await refresh(client, tenant, latest, row.content, attachmentAad(tenant, row.id, "content"), true);
-        const text = await refresh(client, tenant, latest, row.extracted_text, attachmentAad(tenant, row.id, "text"));
-        if (name || content || text) {
-          await client.query(
-            `UPDATE attachments SET name = coalesce($2, name), content = coalesce($3, content),
-               extracted_text = coalesce($4, extracted_text) WHERE id = $1`,
-            [row.id, name, content, text],
-          );
-          count++;
-        }
-      }
-      return count;
-    });
   }
   return updated;
 }
 
+/**
+ * Membres actuels ET anciens : un départ efface conversations, projets, mémoire et
+ * connexions (cascade), mais pas les prompts. La RLS par personne interdit de les
+ * lister sans connaître leur auteur : on reprend toute personne ayant agi dans
+ * l'organisation selon l'audit (chaque prompt y est tracé à sa création).
+ */
+async function members(organizationId: string) {
+  const rows = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM organization_members WHERE organization_id = $1
+     UNION SELECT DISTINCT actor_user_id FROM audit_events WHERE organization_id = $1 AND actor_user_id IS NOT NULL`,
+    [organizationId],
+  );
+  return rows.rows.map((row) => row.user_id);
+}
+
+/** Valeurs encore chiffrées avec une version antérieure, table par table (preuve avant de retirer une clé). */
+async function verify(organizationId: string) {
+  const latest = await inTenant(organizationId, null, async (client) =>
+    Number((await client.query<{ version: number }>("SELECT max(version) AS version FROM organization_keys WHERE organization_id = $1", [organizationId])).rows[0]?.version ?? 0),
+  );
+  const stale = new Map<string, number>();
+  for (const target of tablesFor(false)) {
+    stale.set(target.table, (stale.get(target.table) ?? 0) + (await inTenant(organizationId, null, (client) => staleValues(client, target, { organizationId, userId: "" }, latest))));
+  }
+  for (const userId of await members(organizationId)) {
+    for (const target of tablesFor(true)) {
+      stale.set(target.table, (stale.get(target.table) ?? 0) + (await inTenant(organizationId, userId, (client) => staleValues(client, target, { organizationId, userId }, latest))));
+    }
+  }
+  const total = [...stale.values()].reduce((sum, count) => sum + count, 0);
+  console.log(`Organisation ${organizationId} : version ${latest}, ${total} valeur(s) sur une version antérieure.`);
+  for (const [table, count] of stale) if (count) console.log(`  ${table} : ${count}`);
+  return total;
+}
+
 async function main() {
+  if (flag("--verify")) {
+    let total = 0;
+    for (const organizationId of await organizations()) total += await verify(organizationId);
+    if (total) process.exitCode = 2;
+    return;
+  }
   if (flag("--kek")) {
     await rotateKek();
     return;

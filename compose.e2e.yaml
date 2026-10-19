@@ -1,0 +1,49 @@
+# Pile JETABLE pour le test de bout en bout sur la vraie pile (scripts/e2e-real.mjs).
+# Projet compose distinct (« snowfall-e2e »), aucun nom de conteneur fixe, autres
+# ports, aucune donnée persistante : elle ne touche jamais la pile de développement.
+# Les secrets sont générés à chaque passage par le script.
+services:
+  db:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: snowfall
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${E2E_DB_ADMIN_PASSWORD:?généré par scripts/e2e-real.mjs}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "127.0.0.1:${E2E_DB_PORT:-55480}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d snowfall"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: e2e-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${E2E_KEYCLOAK_ADMIN_PASSWORD:?généré par scripts/e2e-real.mjs}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${E2E_KEYCLOAK_DB_PASSWORD:?généré par scripts/e2e-real.mjs}
+      KC_HEALTH_ENABLED: "true"
+      SNOWFALL_OIDC_CLIENT_SECRET: ${E2E_OIDC_CLIENT_SECRET:?généré par scripts/e2e-real.mjs}
+      SNOWFALL_APP_ORIGIN: ${E2E_APP_ORIGIN:-http://localhost:55173}
+      SNOWFALL_BACKCHANNEL_LOGOUT_URL: http://host.docker.internal:${E2E_API_PORT:-3101}/auth/backchannel-logout
+      SNOWFALL_SMTP_HOST: localhost
+      SNOWFALL_SMTP_PORT: "1025"
+      SNOWFALL_SMTP_FROM: no-reply@snowfall.local
+    command: start-dev --import-realm
+    ports:
+      - "127.0.0.1:${E2E_KEYCLOAK_PORT:-58080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infra/keycloak/themes:/opt/keycloak/themes:ro
+      - ./infra/keycloak/realm:/opt/keycloak/data/import:ro

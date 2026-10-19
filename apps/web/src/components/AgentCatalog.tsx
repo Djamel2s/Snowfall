@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { BookOpen, Copy, Globe, ImagePlus, Pencil, Plug, Plus, Search, SquareTerminal, ThumbsUp, Users } from 'lucide-react'
+import { AlarmClock, BookOpen, Copy, Globe, ImagePlus, Pencil, Plug, Plus, Search, SquareTerminal, ThumbsUp, Users } from 'lucide-react'
 import type { Agent, ToolId } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
@@ -14,6 +14,8 @@ type Props = {
   onEdit: (agent: Agent) => void
   onDuplicate: (agent: Agent) => void
   onCreate?: (() => void) | undefined
+  /** Planifier une tâche récurrente avec cet agent. */
+  onSchedule?: ((agent: Agent) => void) | undefined
 }
 
 /** Outils montrés sur la carte : ce qui distingue un agent d'un autre, pas tout. */
@@ -31,7 +33,7 @@ const toolIcons: Partial<Record<ToolId, typeof Globe>> = {
  * modèle, outils), une recherche, et le filtre « les miens ». Cliquer une carte
  * démarre une conversation ; modifier et dupliquer apparaissent au survol.
  */
-export default function AgentCatalog({ agents, activeAgentId, currentUserId, modelLabel, onStart, onEdit, onDuplicate, onCreate }: Props) {
+export default function AgentCatalog({ agents, activeAgentId, currentUserId, modelLabel, onStart, onEdit, onDuplicate, onCreate, onSchedule }: Props) {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [mineOnly, setMineOnly] = useState(false)
@@ -106,6 +108,11 @@ export default function AgentCatalog({ agents, activeAgentId, currentUserId, mod
                 {agent.canEdit && (
                   <button type="button" aria-label={t('sidebar.editAgent', { name: agent.name })} title={t('common.edit')} onClick={() => onEdit(agent)}>
                     <Pencil size={12} />
+                  </button>
+                )}
+                {onSchedule && (
+                  <button type="button" aria-label={t('schedules.new', { name: agent.name })} title={t('schedules.schedule')} onClick={() => onSchedule(agent)}>
+                    <AlarmClock size={12} />
                   </button>
                 )}
                 {onCreate && (

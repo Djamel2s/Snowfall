@@ -19,13 +19,15 @@ export type MockOptions = {
    * validation. waiting : une conversation existante a déjà une réponse en pause
    * (reconnexion).
    */
-  approval?: { waiting?: boolean; warning?: boolean; exposure?: boolean }
+  approval?: { waiting?: boolean; warning?: boolean; exposure?: boolean; team?: boolean }
   /** Voix locale installée (dictée et lecture). */
   voice?: boolean
   /** Outils activés par l'organisation (défaut : base de connaissances). */
   orgTools?: string[]
   /** Un serveur MCP en mode OAuth (connexion personnelle). */
   mcpOAuth?: boolean
+  /** Donnée sensible dans le message : bascule en local, ou refus (aucun modèle local). */
+  sensitive?: 'local' | 'blocked'
 }
 
 const APPROVAL = { id: 'a-1', stepId: 's-1', tool: 'save_to_knowledge', title: 'Enregistrer une note', detail: 'Wifi invités : Snowfall-Guest' }
@@ -56,7 +58,21 @@ const ORG = '11111111-1111-4111-8111-111111111111'
 export async function mockApi(page: Page, options: MockOptions = {}) {
   const role = options.role ?? 'admin'
   const unknown: string[] = []
-  const feedbackCalls: { messageId: string; rating: 'up' | 'down' | null; comment?: string }[] = []
+  const feedbackCalls: { messageId: string; rating: 'up' | 'down' | null; comment?: string; share?: boolean }[] = []
+  // Qualité des agents : un cas proposé (partagé par un collègue), puis ceux qu'on ajoute.
+  const qualityCases: { id: string; status: 'proposed' | 'active'; origin: 'feedback' | 'manual'; question: string; comment: string | null; rubric: string | null; createdAt: string }[] = [
+    { id: 'case-1', status: 'proposed', origin: 'feedback', question: 'Combien de jours de congés ?', comment: 'Il manque la source.', rubric: null, createdAt: '2026-10-17T08:00:00.000Z' },
+  ]
+  const qualityVersions: { id: string; version: number; instructions: string; source: string; score: { passed: number; total: number; mean: number } | null; createdAt: string }[] = [
+    { id: 'v-1', version: 1, instructions: 'Tu es Juriste.', source: 'edit', score: null, createdAt: '2026-10-17T08:00:00.000Z' },
+  ]
+  const appliedProposals: string[] = []
+  // Atelier : exemples (un sur trois en test), modèles entraînés.
+  const decisionExamples: { id: string; text: string; label: string; split: 'train' | 'test'; createdAt: string }[] = []
+  const decisionModels: { id: string; version: number; status: string; deployable: boolean; metrics: unknown; createdAt: string }[] = []
+  const decisionCalls: string[] = []
+  const schedules: Record<string, unknown>[] = []
+  const scheduleRuns: string[] = []
   const conversations: { id: string; title: string; agentId: string | null; model: null; projectId: null; knowledge: { agent: boolean; project: boolean }; createdAt: string; updatedAt: string }[] = []
   const messages = new Map<string, { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[]>()
   let counter = 0
@@ -69,6 +85,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const speechCalls: string[] = []
   const mcpServers: unknown[] = []
   const createdConnectors: unknown[] = []
+  const savedSettings: Record<string, unknown>[] = []
   const oauthCallbacks: { state: string; code: string }[] = []
   let pendingQuestion: string | null = null
   let memories = [
@@ -136,6 +153,87 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'GET /conversations') return json(route, { conversations })
     if (key === 'GET /projects') return json(route, { projects: [] })
     if (key === 'GET /agents') return json(route, { agents: options.agents ?? [] })
+    if (method === 'GET' && /^\/agents\/[^/]+\/knowledge$/.test(path)) {
+      return json(route, { knowledge: { id: null, confidential: false, canManage: true, embeddingModel: null, linksEnabled: false, sources: [] } })
+    }
+    if (key === 'GET /me/schedules') return json(route, { schedules })
+    if (key === 'POST /me/schedules') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      const schedule = { ...body, id: id(), conversationId: id(), rule: body.kind === 'schedule' ? { cadence: body.cadence, hour: body.hour, ...(body.weekday !== undefined ? { weekday: body.weekday } : {}) } : null, enabled: true, nextRunAt: body.kind === 'schedule' ? '2026-10-26T08:00:00.000Z' : null, lastRunAt: null, lastStatus: null }
+      schedules.push(schedule)
+      return json(route, { schedule }, 201)
+    }
+    const schedulePath = /^\/me\/schedules\/([^/]+)(\/run)?$/.exec(path)
+    if (schedulePath && method === 'POST' && schedulePath[2]) {
+      scheduleRuns.push(schedulePath[1]!)
+      return json(route, { ok: true }, 202)
+    }
+    if (schedulePath && method === 'PATCH') {
+      const schedule = schedules.find((item) => item.id === schedulePath[1])!
+      Object.assign(schedule, request.postDataJSON() as Record<string, unknown>)
+      return json(route, { schedule })
+    }
+    if (schedulePath && method === 'DELETE') {
+      schedules.splice(schedules.findIndex((item) => item.id === schedulePath[1]), 1)
+      return route.fulfill({ status: 204 })
+    }
+    if (path.startsWith('/organization/decision/routing')) {
+      const sub = path.slice('/organization/decision/routing'.length)
+      decisionCalls.push(`${method} ${sub || '/'}`)
+      if (method === 'GET' && sub === '') return json(route, { available: true, labels: { positive: 'complexe', negative: 'simple' }, examples: [...decisionExamples].reverse(), models: [...decisionModels].reverse() })
+      if (method === 'POST' && sub === '/examples') {
+        const body = request.postDataJSON() as { examples: { text: string; label: string }[] }
+        const created = body.examples.map((item) => ({ ...item, id: id(), split: (decisionExamples.length % 3 === 2 ? 'test' : 'train') as 'train' | 'test', createdAt: now }))
+        for (const item of created) decisionExamples.push({ ...item, split: decisionExamples.length % 3 === 2 ? 'test' : 'train' })
+        return json(route, { examples: created }, 201)
+      }
+      if (method === 'POST' && sub === '/train') {
+        const model = { id: id(), version: decisionModels.length + 1, status: 'candidate', deployable: true, metrics: { candidate: { tp: 12, fn: 0, tn: 12, fp: 0 }, baseline: { tp: 10, fn: 2, tn: 12, fp: 0 }, baselineKind: 'zero_shot', baselineVersion: null, train: 40, test: 24 }, createdAt: now }
+        decisionModels.push(model)
+        return json(route, { model })
+      }
+      const activate = /^\/models\/([^/]+)\/activate$/.exec(sub)
+      if (method === 'POST' && activate) {
+        for (const model of decisionModels) if (model.status === 'active') model.status = 'retired'
+        decisionModels.find((model) => model.id === activate[1])!.status = 'active'
+        return json(route, { ok: true })
+      }
+    }
+    const qualityPath = /^\/agents\/([^/]+)\/quality(\/.*)?$/.exec(path)
+    if (qualityPath) {
+      const sub = qualityPath[2] ?? ''
+      if (method === 'GET' && sub === '') return json(route, { versions: [...qualityVersions].reverse(), cases: qualityCases })
+      if (method === 'POST' && sub === '/cases') {
+        const body = request.postDataJSON() as { question: string; rubric: string }
+        const created = { id: id(), status: 'active' as const, origin: 'manual' as const, question: body.question, comment: null, rubric: body.rubric, createdAt: now }
+        qualityCases.unshift(created)
+        return json(route, { case: created }, 201)
+      }
+      const casePath = /^\/cases\/([^/]+)$/.exec(sub)
+      if (method === 'PUT' && casePath) {
+        const item = qualityCases.find((entry) => entry.id === casePath[1])!
+        Object.assign(item, { status: 'active', rubric: (request.postDataJSON() as { rubric: string }).rubric })
+        return json(route, { case: item })
+      }
+      if (method === 'POST' && sub === '/improve') {
+        const total = qualityCases.filter((item) => item.status === 'active').length
+        const cases = Object.fromEntries(qualityCases.map((item) => [item.id, { passed: false, reason: 'sec' }]))
+        const after = Object.fromEntries(qualityCases.map((item) => [item.id, { passed: true, reason: 'poli' }]))
+        qualityVersions[qualityVersions.length - 1]!.score = { passed: 0, total, mean: 1 }
+        const body = sse([
+          ['progress', { phase: 'before', done: total, total }],
+          ['progress', { phase: 'proposal', done: 0, total: 1 }],
+          ['result', { kind: 'proposed', judge: 'mistral:mistral-large-latest', before: { score: { passed: 0, total, mean: 1 }, cases }, after: { score: { passed: total, total, mean: 5 }, cases: after }, heldOut: null, proposalId: '11111111-1111-4111-8111-111111111111', instructions: 'Tu es Juriste. Cite toujours la source.' }],
+        ])
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body })
+      }
+      if (method === 'POST' && sub === '/apply') {
+        appliedProposals.push((request.postDataJSON() as { proposalId: string }).proposalId)
+        const version = { id: id(), version: qualityVersions.length + 1, instructions: 'Tu es Juriste. Cite toujours la source.', source: 'improvement', score: { passed: 2, total: 2, mean: 5 }, createdAt: now }
+        qualityVersions.push(version)
+        return json(route, { agent: { id: qualityPath[1], instructions: version.instructions }, version })
+      }
+    }
     const agentPath = /^\/agents\/([^/]+)$/.exec(path)
     if (method === 'PUT' && agentPath) {
       const input = request.postDataJSON() as Record<string, unknown>
@@ -146,7 +244,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       return json(route, { agent: { ...input, id: id(), createdBy: 'u-1', canEdit: true } }, 201)
     }
     if (key === 'GET /models') {
-      return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
+      return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
     }
     if (key === 'GET /usage') {
       return json(route, { usage: { period: '2026-10-01', total: { inputTokens: 1200, outputTokens: 300 }, byProvider: { mistral: { inputTokens: 1200, outputTokens: 300 } }, mine: { inputTokens: 800, outputTokens: 200 }, tools: { web: 42 } }, limits: { monthly: 100_000, providers: {}, tools: { web: 500 } } })
@@ -159,6 +257,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         embeddingProviders: [],
         platformTools: options.platformTools ?? ['search_knowledge', 'save_to_knowledge', 'delegate'],
       })
+    }
+    if (key === 'PUT /organization/settings') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      savedSettings.push(body)
+      return json(route, { settings: body })
     }
     if (key === 'GET /organization/members') {
       return json(route, { members: [{ userId: 'u-1', email: 'camille@polaris.example', role, joinedAt: now, monthlyTokens: 1000 }], invitations: [] })
@@ -294,11 +397,22 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
             contentType: 'text/event-stream',
             body: sse([
               ['token', { text: "Je l'enregistre. " }],
-              ['step', { id: APPROVAL.stepId, name: APPROVAL.tool, status: 'running' }],
-              ['approval', { ...APPROVAL, ...(options.approval.warning ? { warning: true } : {}), ...(options.approval.exposure ? { exposure: true, title: 'Envoyer une recherche sur le web', detail: 'verification 7731-ZETA' } : {}) }],
+              ...(options.approval.team
+                ? ([
+                    ['step', { id: 'd1', name: 'delegate_task', status: 'running', summary: 'RH' }],
+                    ['step', { id: 'd1/k1', name: 'search_knowledge', status: 'done', agent: 'RH', parent: 'd1' }],
+                  ] as [string, unknown][])
+                : []),
+              ['step', { id: APPROVAL.stepId, name: APPROVAL.tool, status: 'running', ...(options.approval.team ? { agent: 'RH', parent: 'd1' } : {}) }],
+              ['approval', { ...APPROVAL, ...(options.approval.team ? { onBehalfOf: 'RH' } : {}), ...(options.approval.warning ? { warning: true } : {}), ...(options.approval.exposure ? { exposure: true, title: 'Envoyer une recherche sur le web', detail: 'verification 7731-ZETA' } : {}) }],
               ['paused', {}],
             ]),
           })
+        }
+        // Comme le serveur : un n° de sécurité sociale bascule la conversation en local, ou la refuse.
+        if (options.sensitive && /1 85 05 78 006 084 91/.test(content)) {
+          if (options.sensitive === 'blocked') return json(route, { error: 'Local model required', reason: 'sensitive_requires_local', categories: ['nir'] }, 409)
+          Object.assign(conversations.find((item) => item.id === conversationId) ?? {}, { sensitive: true })
         }
         const answer = options.answer ?? 'Bonjour !'
         const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
@@ -316,5 +430,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls }
+  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns }
 }

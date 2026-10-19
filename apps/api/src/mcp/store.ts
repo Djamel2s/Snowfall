@@ -48,8 +48,9 @@ export type McpConnection = McpServerRecord & { token: string | null; oauth: OAu
 
 export type McpServerInput = { name: string; url: string; token?: string | undefined; oauth?: OAuthServerConfig | undefined; spec?: unknown };
 
-type Field = "url" | "token" | "tools" | "oauth" | "spec";
-const aad = (tenant: TenantContext, id: string, field: Field) => `mcp-server-${field}:${tenant.organizationId}:${id}`;
+export type Field = "url" | "token" | "tools" | "oauth" | "spec";
+export const mcpServerAad = (tenant: TenantContext, id: string, field: Field) => `mcp-server-${field}:${tenant.organizationId}:${id}`;
+const aad = mcpServerAad;
 
 type Row = { id: string; name: string; url: string; kind: "mcp" | "openapi"; auth: McpAuthMode; token: string | null; oauth: string | null; spec: string | null; tools: string | null; status: McpServerStatus; updatedAt: string };
 const COLUMNS = `id, name, url, kind, auth, token, oauth, spec, tools, status, updated_at AS "updatedAt"`;

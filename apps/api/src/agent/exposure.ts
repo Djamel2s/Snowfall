@@ -17,9 +17,9 @@ export type Exposure = { untrusted: boolean; sensitive: boolean };
 const isMcp = (name: string) => name.startsWith("mcp_");
 
 /** Résultats écrits par des inconnus. */
-const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name);
+const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name) || name === "delegate_task";
 /** Résultats tirés des données de l'organisation. */
-const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "ask_agent";
+const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "delegate_task";
 /** Appels dont les arguments quittent la plateforme. */
 export const isOutbound = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name);
 

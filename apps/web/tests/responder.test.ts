@@ -47,4 +47,10 @@ describe('Liste des agents et modèles', () => {
     assert.deepEqual(fallback, { kind: 'model', provider: 'anthropic', model: 'x', label: 'x' })
     assert.equal(resolveResponder(undefined, agents, providers, null).kind, 'default')
   })
+
+  it('conversation sensible : le libellé est celui du modèle local qui répond vraiment', () => {
+    const withLocal = [...providers, { id: 'local' as const, available: true, models: [{ id: 'llama', label: 'Llama local' }] }]
+    const shown = resolveResponder({ agentId: null, model: { provider: 'mistral', model: 'mistral-small-latest' }, sensitive: true }, [], withLocal, null)
+    assert.deepEqual(shown, { kind: 'model', provider: 'local', model: 'llama', label: 'Llama local' })
+  })
 })

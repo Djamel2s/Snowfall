@@ -86,6 +86,7 @@ jobs:
       - run: docker build -f apps/web/Dockerfile -t snowfall-web:ci .
       - run: docker build -t snowfall-sandbox:ci apps/sandbox
       - run: docker build -t snowfall-ocr:ci apps/ocr
+      - run: docker build -t snowfall-decision:ci apps/decision
       # Vulnérabilités connues des images (système et dépendances embarquées).
       - name: Scan de l'image API
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -115,6 +116,17 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+      - name: Scan de l'image de décision
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: snowfall-decision:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      # Décision dans son image, sans réseau : entrées hostiles, identité, et
+      # mesure du routage sur le jeu tenu à l'écart (régression du modèle = échec).
+      - name: Tests du service de décision
+        run: docker run --rm --network none --read-only --tmpfs /run/decision:uid=10201,gid=10012,mode=0750 --tmpfs /tmp -v "$PWD/apps/decision:/t:ro" -v "$PWD/apps/api/src/decision:/cases:ro" snowfall-decision:ci python3 -I /t/decision_test.py
       # OCR dans son image, sans réseau : scan lu, fichier corrompu, utilisateur
       # dédié, environnement nettoyé, délai.
       - name: Tests de l'OCR
@@ -148,6 +160,25 @@ jobs:
       - run: npm ci
       - run: npx -w @snowfall/web playwright install --with-deps chromium
       - run: npm run e2e -w @snowfall/web
+        env:
+          CI: "true"
+
+  # Parcours sur la VRAIE pile (Keycloak + TOTP, API, Postgres) : pile jetable,
+  # secrets générés, puis vérifications en base (chiffré au repos, RLS, audit).
+  e2e-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx -w @snowfall/web playwright install --with-deps chromium
+      - run: npm run e2e:real
         env:
           CI: "true"
 

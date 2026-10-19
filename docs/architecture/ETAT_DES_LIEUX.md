@@ -1,4 +1,36 @@
-# État des lieux — 17 octobre 2026
+# État des lieux — 17 octobre 2026 (mise à jour le 19 octobre)
+
+## 0. Mise à jour du 19 octobre
+
+Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
+gardées telles quelles pour l'historique. Depuis :
+
+- **Phases 3, 4 et 5 faites** : confort (branches, partage, export, prompts,
+  mémoire, temporaire, OCR), sécurité avancée (détection d'injections, règle de
+  deux, marquage des contenus externes, liens vérifiés, OAuth MCP par
+  utilisateur, connecteurs OpenAPI), voix et images locales, équipes d'agents,
+  carte animée, routage des modèles, amélioration continue, atelier
+  d'entraînement, agents planifiés.
+- **Données sensibles** : détection locale avant tout envoi externe (n° de
+  sécurité sociale, IBAN, carte, santé d'une personne) ; la conversation passe
+  sur un modèle local et y reste, sinon l'envoi est refusé.
+- **Preuve** : `SECURITY_BASELINE.md`, `THREAT_MODEL.md`, `AIPD.md`,
+  `PENTEST_SCOPE.md` et le runbook sont tenus à jour à chaque fonction.
+
+**Ce qui manque avant de se dire « au top » (par priorité) :**
+
+1. Test d'intrusion externe (cadrage prêt). (Parcours sur la vraie pile : fait le
+   19 octobre, `npm run e2e:real`, rejoué en CI ; un parcours, pas toutes les
+   fonctions.)
+2. gVisor vérifié sur l'hôte de production ; OpenBao en cluster ou adossé à un
+   HSM. (Rotation des clés : complète depuis le 19 octobre, avec preuve `--verify`.)
+3. AIPD finalisée et signée, registre des traitements, DPA signés avec les
+   fournisseurs d'IA, durées de conservation fixées.
+4. Preuves d'exploitation : supervision, réponse à incident, restauration testée.
+5. Souveraineté : hébergeur qualifié (SecNumCloud ; HDS pour la santé),
+   fournisseurs européens ou locaux seulement si l'on vise la souveraineté.
+6. Évaluation des agents à relancer (quota du fournisseur épuisé lors des
+   derniers changements).
 
 > Pause volontaire après les phases 1 et 2 du cadrage
 > ([CADRAGE_HARNESS.md](CADRAGE_HARNESS.md)) : ce qui est fait, les écarts avec
@@ -49,7 +81,7 @@ puis le confort LibreChat, dans l'ordre de la section 8.
 | Sorties structurées (JSON validé) | Non fait | Utile pour MCP et futures actions OpenAPI |
 | Artifacts : HTML, **React**, Mermaid, SVG, documents | HTML, SVG, Mermaid | React (isolé) à évaluer |
 
-## 4. Sécurité : niveau réel
+## 4. Sécurité : niveau réel (au 17 octobre — voir la section 0)
 
 **Forces.** Les contrôles d'infrastructure et de données sont du niveau attendu
 pour une certification. Chaque outil d'agent a été pensé contre l'injection de
@@ -75,7 +107,7 @@ humaine, anti-exfiltration des adresses).
    bout en bout dans un navigateur.
 6. **Aucun test d'intrusion externe** à ce jour.
 
-## 5. Parité LibreChat
+## 5. Parité LibreChat (au 17 octobre — depuis : sous-agents, images, voix, OpenAPI faits)
 
 | Fonction | État | Priorité |
 |---|---|---|
@@ -262,6 +294,60 @@ Puis le reste de la phase 4 :
 - **Voix locale** (dictée, lecture) et **images locales** (`generate_image`) :
   branchées et testées ; services à déployer (images à figer par empreinte).
 - **Test d'intrusion** : dossier de cadrage prêt pour un prestataire externe.
+
+### Phase 5 — Équipes d'agents et plateforme qui s'améliore (validée le 18 octobre)
+
+Avant de commencer : base migrée, essai réel des phases 3 et 4, commit.
+
+1. **Équipes d'agents** : un agent délègue de vraies tâches à des sous-agents
+   (spécialisés ou non). Validations qui remontent à l'utilisateur (« Agent RH,
+   pour le Juriste »), jamais plus de droits que l'agent qui délègue ni que
+   l'utilisateur, budget global (tokens, étapes, profondeur 2 à 3).
+2. **Graphe animé** : carte de l'organisation (agents, sous-agents, bases,
+   outils, connecteurs), construction des équipes en tirant des liens ; vue en
+   direct d'une réponse (qui travaille, quel outil, ce qui remonte), rejouable.
+3. **Service de décision local** (modèle de décision typée, ex. Laya, Apache 2.0,
+   sur le GPU, sans réseau) : routage des modèles (simple → petit modèle, complexe →
+   gros), choix du sous-agent, tri des besoins (base, web, rien). Mesuré sur le banc.
+4. **Détection d'injections apprise** : le même service, entraîné sur nos cas,
+   mesuré sur un jeu tenu à l'écart neuf (référence : heuristique 0/12 sur v2).
+5. **Amélioration continue** : 👎 → cas d'évaluation proposé → optimisation du
+   prompt → nouvelle version proposée seulement si meilleure ET sans régression ;
+   score de qualité mesuré par agent, versions d'agents.
+6. **Atelier d'entraînement (administrateurs)** : modèles locaux seulement
+   (LoRA, petits modèles de décision), données choisies et validées, déploiement
+   seulement si le modèle bat le précédent sur le banc. Pas d'entraînement sur les
+   conversations sans base légale (RGPD).
+7. **Agents planifiés et déclencheurs** (veille hebdomadaire, document ajouté).
+
+Jev (modèle de décision fermé, API hébergée) écarté : chaque décision partirait
+chez un tiers.
+
+Avancement (18 octobre) :
+
+- **1. Équipes** : fait. Délégation réelle sur deux niveaux, validations « pour
+  le compte de », droits en intersection, budget commun, sous-fils durables.
+- **2. Graphe** : fait. Carte animée (d3-force), liens tirés pour composer une
+  équipe, agents au travail qui pulsent, clavier et mobile (cadrage automatique).
+- **3. Décision locale** : fait pour le routage des modèles. Laya mesuré sans
+  entraînement : 17/24 au choix brut, 22/24 avec un seuil choisi sur
+  l'entraînement (une seule mesure sur le test). Combiné à l'heuristique,
+  « complexe » au moindre doute. Choix du sous-agent et tri des besoins : pas
+  faits (pas de jeu de mesure encore).
+- **4. Injections apprises** : mesuré, **rejeté pour l'instant** (11/12 attaques,
+  6/12 faux positifs sur v2). À reprendre avec l'atelier d'entraînement (6).
+- **5. Amélioration continue** : fait. 👎 partagé avec accord → cas proposé →
+  validé par l'auteur ; « Améliorer » mesure, propose, remesure (un cas sur trois
+  tenu à l'écart de l'optimiseur), présente seulement si meilleur et sans
+  régression ; versions d'instructions avec score, restauration.
+- **6. Atelier d'entraînement** : fait. Exemples écrits par les administrateurs,
+  tête entraînée localement sur les embeddings de Laya, mesurée sur une part de
+  test figée, déployée seulement si meilleure. Mesure de référence (banc) :
+  routage 22/24 → 24/24 ; injections 3/12 faux positifs, toujours non déployé.
+  LoRA de grands modèles : non (pas de GPU ici, pas de mesure honnête possible).
+- **7. Agents planifiés et déclencheurs** : fait. Chaque jour, chaque semaine ou
+  à l'arrivée d'un document ; exécutés par la route des messages, au nom de
+  l'auteur, écritures en attente de sa validation.
 
 ## 9. Décisions à prendre
 

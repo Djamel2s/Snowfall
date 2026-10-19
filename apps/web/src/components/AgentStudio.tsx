@@ -21,6 +21,7 @@ import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
 import KnowledgePanel from './KnowledgePanel'
+import AgentQuality from './AgentQuality'
 import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
 
 type Props = {
@@ -40,6 +41,8 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
   const [catalog, setCatalog] = useState<ProviderCatalog[] | null>(null)
   const [name, setName] = useState(agent?.name ?? '')
   const [instructions, setInstructions] = useState(agent?.instructions ?? '')
+  // Instructions enregistrées côté serveur (une amélioration appliquée les change).
+  const [savedInstructions, setSavedInstructions] = useState(agent?.instructions ?? '')
   const [avatar, setAvatar] = useState<AgentAvatarData>(agent?.avatar ?? defaultAlien)
   // Dernier alien composé, conservé si on passe par une photo puis revient.
   const [alien, setAlien] = useState<AlienAvatar>(
@@ -142,6 +145,7 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], delegates: tools.includes('delegate') ? agentDelegates : [], parameters },
         agent?.id,
       )
+      setSavedInstructions(saved.instructions)
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
         onSaved(saved)
         return
@@ -386,6 +390,19 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         <KnowledgePanel kind="agents" ownerId={agent.id} />
       ) : (
         <KnowledgePanel kind="agents" draft={draft} onDraftChange={setDraft} confidentialAllowed={provider === 'local'} />
+      )}
+
+      {/* Qualité : auteur ou administrateur d'un agent déjà créé. */}
+      {agent?.canEdit && (
+        <AgentQuality
+          agentId={agent.id}
+          instructions={savedInstructions}
+          dirty={instructions.trim() !== savedInstructions.trim()}
+          onApplied={(next) => {
+            setSavedInstructions(next)
+            setInstructions(next)
+          }}
+        />
       )}
 
       {error && <p className="studio-error" role="alert">{error}</p>}

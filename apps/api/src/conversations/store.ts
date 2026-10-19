@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { decryptMeta, type AttachmentMeta } from "../attachments/store.js";
 import type { OrganizationKeyring } from "../crypto/keyring.js";
+import { redactSensitive } from "../security/sensitive.js";
 import { withTenant } from "../db/tenant.js";
 import type { ModelSelection } from "../llm/types.js";
 
@@ -43,6 +44,8 @@ export type ConversationSummary = {
   projectId: string | null;
   /** Présent (true) seulement pour une conversation temporaire. */
   temporary?: true;
+  /** Présent (true) dès qu'une donnée sensible y a été détectée : modèle local à jamais. */
+  sensitive?: true;
   createdAt: string;
   updatedAt: string;
 };
@@ -102,6 +105,8 @@ export interface ConversationStore {
   get(owner: ConversationOwner, conversationId: string): Promise<ConversationSummary | null>;
   /** Conversations temporaires échues, toutes organisations (purge). */
   expiredTemporary?(): Promise<ExpiredConversation[]>;
+  /** Donnée sensible détectée : la conversation reste sur un modèle local (définitif). */
+  markSensitive(owner: ConversationOwner, conversationId: string): Promise<void>;
   /** Changer l'agent ou le modèle n'est possible que tant que la conversation est vide. */
   update(
     owner: ConversationOwner,
@@ -183,6 +188,7 @@ type ConversationRow = {
   useProjectKnowledge: boolean;
   projectId: string | null;
   temporary: boolean;
+  sensitive: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -190,7 +196,7 @@ type ConversationRow = {
 const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId", project_id AS "projectId",
   model_provider AS "modelProvider", model_id AS "modelId",
   use_agent_knowledge AS "useAgentKnowledge", use_project_knowledge AS "useProjectKnowledge",
-  temporary, created_at AS "createdAt", updated_at AS "updatedAt"`;
+  temporary, sensitive, created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 const modelOf = (row: ConversationRow): ModelSelection | null =>
   row.modelProvider && row.modelId ? { provider: row.modelProvider, model: row.modelId } : null;
@@ -245,6 +251,7 @@ export class PostgresConversationStore implements ConversationStore {
       knowledge: knowledgeOf(row),
       projectId: row.projectId,
       ...(row.temporary ? { temporary: true as const } : {}),
+      ...(row.sensitive ? { sensitive: true as const } : {}),
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
         : await this.keyring.decrypt(
@@ -388,6 +395,12 @@ export class PostgresConversationStore implements ConversationStore {
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       };
+    });
+  }
+
+  markSensitive(owner: ConversationOwner, conversationId: string) {
+    return withTenant(this.pool, owner, async (client) => {
+      await client.query("UPDATE conversations SET sensitive = true WHERE id = $1 AND user_id = $2 AND organization_id = $3", [conversationId, owner.userId, owner.organizationId]);
     });
   }
 
@@ -690,7 +703,8 @@ export class PostgresConversationStore implements ConversationStore {
       const title = current.title ?? await this.keyring.encrypt(
         client,
         owner.organizationId,
-        (userContent || userMessage.attachments?.[0]?.name || DEFAULT_CONVERSATION_TITLE).slice(0, 80),
+        // Titre visible partout (liste, recherche) : jamais d'identifiant sensible en clair.
+        redactSensitive(userContent || userMessage.attachments?.[0]?.name || DEFAULT_CONVERSATION_TITLE).slice(0, 80),
         titleAad(owner, conversationId),
       );
 

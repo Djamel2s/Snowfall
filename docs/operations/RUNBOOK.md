@@ -56,7 +56,8 @@ puis `npm run keys:rotate -- --kek`. Conserver `SNOWFALL_MASTER_KEY`.
 |---|---|
 | Rotation de la KEK (planifiée, annuelle) | `vault write -f transit/keys/snowfall/rotate` puis `npm run keys:rotate -- --kek` |
 | Nouvelle clé de données pour toutes les organisations | `npm run keys:rotate -- --dek` |
-| Compromission supposée d'une organisation | `npm run keys:rotate -- --dek --org <uuid> --reencrypt` |
+| Compromission supposée d'une organisation | `npm run keys:rotate -- --dek --org <uuid> --reencrypt`, puis `npm run keys:rotate -- --verify --org <uuid>` (doit afficher 0) avant de retirer l'ancienne version |
+| Preuve pour un audit | `npm run keys:rotate -- --verify` : valeurs restantes sur une ancienne version, table par table (code de sortie 2 s'il en reste) |
 
 Chaque valeur chiffrée porte la version de sa clé : les données anciennes restent
 lisibles après une rotation ; `--reencrypt` les rechiffre avec la nouvelle version.
@@ -346,4 +347,51 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   réseau `backend` sans sortie, lecture seule, utilisateur non root, GPU réservé.
 - Le micro n'est autorisé que pour l'application (`Permissions-Policy`), jamais
   dans les artifacts.
+
+## 27. Routage des modèles (service de décision)
+
+- Démarrer : `docker compose -f compose.yaml -f compose.prod.yaml --profile decision up -d decision`,
+  puis côté API `DECISION_SOCKET=/run/decision/decision.sock` et redémarrer l'API.
+  Sans service : le routage marche quand même, à l'heuristique seule.
+- Activer : Paramètres › Organisation › Modèles et quotas › Routage automatique,
+  choisir le modèle rapide et le puissant (fournisseurs autorisés seulement).
+- Vérifier : les journaux de l'API montrent `model routed` avec `source: engine`
+  (le service a répondu) ou `heuristic` (repli). Jamais le texte de la question.
+- Changer de révision du modèle : nouvelle révision et empreintes dans le
+  `Dockerfile` et `fetch_model.py`, puis la CI rejoue le jeu tenu à l'écart
+  (`decision_test.py`) ; en dessous de 21/24, ne pas déployer. Changer la
+  formulation de la question (`ROUTING_QUESTION`) oblige à remesurer le seuil.
+- Atelier (Organisation › Modèles et quotas › Entraîner le décideur) : il faut au
+  moins 5 exemples de chaque sorte en entraînement ET en test. « Revenir à la
+  base » désactive la tête entraînée (les autres instances suivent sous 60 s).
+  Une nouvelle révision du modèle Laya rend les têtes existantes inutilisables :
+  le routage repasse à l'heuristique ; réentraîner.
+
+## 28 ter. Parcours sur la vraie pile
+
+- `npm run e2e:real` : monte une pile jetable (projet compose `snowfall-e2e`,
+  ports 55480, 58080, 3101, 55173), génère ses secrets, n'utilise jamais le
+  `.env` du dépôt (fichier d'environnement dédié via `SNOWFALL_ENV_FILE`), joue
+  le parcours, puis démonte tout. `--keep` laisse la pile en place pour regarder.
+- Aucun fournisseur d'IA n'est appelé (modèle local de développement) : aucun
+  quota consommé, aucune donnée ne sort.
+
+## 28 bis. Données sensibles
+
+- Activé par défaut (Organisation › Modèles et quotas › Protéger les données
+  sensibles). Désactiver est tracé (`security.sensitive_policy`).
+- Sans modèle local publié (fournisseur « local » autorisé et configuré), une
+  donnée sensible bloque l'envoi : installer un modèle local avant d'ouvrir la
+  plateforme à des services qui en manipulent (RH, paie, santé au travail).
+- Suivi : `security.sensitive_detected` (catégories et action : `rerouted_local`,
+  `kept_local`, `blocked`), jamais les valeurs.
+
+## 28. Agents planifiés
+
+- Le planificateur tourne dans chaque instance de l'API (chaque minute) ; une
+  seule exécute une tâche donnée (bail de 20 minutes en base). Rien à démarrer.
+- Une tâche échoue trois fois de suite : elle se met en pause (l'auteur la
+  réactive). Audit : `agent.schedule_run` (statut, jamais le texte).
+- L'en-tête `X-Snowfall-Internal` ne doit jamais traverser le proxy : vérifier
+  qu'il est bien effacé (`infra/nginx/snowfall.conf`) après toute modification.
 

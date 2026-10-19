@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
 import { MemoryPromptStore, promptVariables } from "../prompts/store.js";
+import type { ModelRegistry } from "../llm/registry.js";
 import { createAppServer, type AppDependencies } from "../server.js";
 import type { AuditEvent } from "../audit/audit.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
@@ -168,7 +169,14 @@ describe("Quotas et fournisseurs autorisés", () => {
     const { store: settings } = fakeSettings();
     const members = { organization: async () => ({ id: ORG, name: "Org", sso: { alias: null, defaultRole: "member" } }) } as unknown as MemberStore;
     const asMember = setup({ settings, members });
-    const asAdmin = setup({ settings, members, user: admin });
+    // Catalogue publié : deux modèles Mistral (le routage n'accepte que ceux-là).
+    const published: ModelRegistry = {
+      catalog: async () => [],
+      isAllowed: async ({ provider, model }) => provider === "mistral" && ["mistral-small-latest", "mistral-large-latest"].includes(model),
+      runner: () => async () => ({ content: "ok", model: "fake" }),
+      providerFor: (selection) => selection?.provider ?? "echo",
+    };
+    const asAdmin = setup({ settings, members, user: admin, models: published });
     t.after(() => Promise.all([asMember.app.close(), asAdmin.app.close()]));
     const payload = { allowedProviders: ["mistral"], monthlyTokenLimit: 5000, providerTokenLimits: { mistral: 1000 } };
     const put = (body: unknown) => ({ ...post("/organization/settings", body), method: "PUT" as const });
@@ -180,6 +188,16 @@ describe("Quotas et fournisseurs autorisés", () => {
     assert.equal(saved.statusCode, 200);
     assert.deepEqual(saved.json().settings.allowedProviders, ["mistral"]);
     assert.ok(asAdmin.events.some((event) => event.eventType === "organization.settings_update"));
+
+    // Routage : deux modèles publiés, chez des fournisseurs autorisés ; rien d'autre.
+    const routing = (fast: unknown, strong: unknown = { provider: "mistral", model: "mistral-large-latest" }) => put({ ...payload, modelRouting: { fast, strong } });
+    assert.equal((await asAdmin.app.inject(routing({ provider: "anthropic", model: "claude-opus-5-5" }))).statusCode, 400);
+    assert.equal((await asAdmin.app.inject(routing({ provider: "mistral", model: "inexistant" }))).statusCode, 400);
+    assert.equal((await asAdmin.app.inject(routing({ provider: "mistral", model: "mistral-small-latest", url: "http://evil" }))).statusCode, 400);
+    assert.equal((await settings.get(admin)).modelRouting, null);
+    assert.equal((await asAdmin.app.inject(routing({ provider: "mistral", model: "mistral-small-latest" }))).statusCode, 200);
+    assert.equal((await settings.get(admin)).modelRouting?.fast.model, "mistral-small-latest");
+    assert.equal((await asAdmin.app.inject(put({ ...payload, modelRouting: null }))).statusCode, 200);
   });
 });
 

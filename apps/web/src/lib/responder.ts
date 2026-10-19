@@ -23,14 +23,19 @@ export function modelLabel(providers: ProviderCatalog[], selection: ModelSelecti
 
 /** Résout l'agent / le modèle d'une conversation pour l'affichage. */
 export function resolveResponder(
-  conversation: { agentId: string | null; model: ModelSelection | null } | undefined,
+  conversation: { agentId: string | null; model: ModelSelection | null; sensitive?: boolean } | undefined,
   agents: Agent[],
   providers: ProviderCatalog[],
   defaultModel: ModelSelection | null,
 ): Responder {
   const agent = conversation?.agentId ? agents.find((item) => item.id === conversation.agentId) : undefined
   if (agent) return { kind: 'agent', agent }
-  const selection = conversation?.model ?? defaultModel
+  let selection = conversation?.model ?? defaultModel
+  // Conversation sensible : c'est un modèle local qui répond, quoi qu'on ait choisi.
+  if (conversation?.sensitive && selection?.provider !== 'local') {
+    const local = providers.find((provider) => provider.id === 'local' && provider.available)?.models[0]
+    selection = local ? { provider: 'local', model: local.id } : selection
+  }
   if (selection) return { kind: 'model', ...selection, label: modelLabel(providers, selection) }
   return { kind: 'default' }
 }

@@ -184,6 +184,9 @@ type RunRow = {
 const COLUMNS = "id, conversation_id, status, request, progress, lease_owner, lease_until, cancel_requested";
 
 /** Runs sous RLS (propriétaire seul) ; demande et avancement chiffrés. */
+/** AAD d'un run (exportée pour la rotation des clés). */
+export const runAad = (tenant: TenantContext, id: string, field: "request" | "progress") => `agent-run-${field}:${tenant.organizationId}:${tenant.userId}:${id}`;
+
 export class PostgresRunStore implements RunStore {
   constructor(
     private readonly pool: Pool,
@@ -191,7 +194,7 @@ export class PostgresRunStore implements RunStore {
   ) {}
 
   private aad(tenant: TenantContext, id: string, field: "request" | "progress") {
-    return `agent-run-${field}:${tenant.organizationId}:${tenant.userId}:${id}`;
+    return runAad(tenant, id, field);
   }
 
   private seal(client: PoolClient, tenant: TenantContext, id: string, field: "request" | "progress", value: unknown) {

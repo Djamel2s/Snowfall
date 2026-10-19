@@ -92,10 +92,53 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 
 | Menace | Mesures | Résiduel | Preuve |
 |---|---|---|---|
-| Escalade par délégation (E) | Spécialiste en lecture seule (sa base), profondeur 1, budget court | F | `runs.routes.test.ts` (sous-agents) |
+| Escalade par délégation (E) | Outils du sous-agent = intersection avec ceux de l'appelant, profondeur 2, écritures et sorties validées par l'utilisateur (« pour le compte de »), exposition héritée (règle de deux) | F | `runs.routes.test.ts` (« Équipes d'agents ») |
+| Écriture rejouée à la reprise (T) | Chaque sous-agent a son fil durable (`runId~clé`), effacé avec le run parent seulement | F | `runs.integration.test.ts` (sous-fils) |
+| Équipe qui épuise les ressources (D) | Budget de tokens commun à l'équipe, 15 min par délégation, quota vérifié avant | M : un sous-agent gourmand prive les autres | tests d'équipe |
 | Fuite du confidentiel par un spécialiste (I) | Refus si contexte ou base confidentiels et modèle externe, audité | F | test « base confidentielle » |
 | Fichier audio ou image piégé (T) | Signature vérifiée, taille bornée, antivirus pour les images, rien d'exécuté | F | `audio.test.ts`, `image-tool.test.ts` |
 | Écoute par un artifact (I) | Micro autorisé pour l'application seule, bloqué dans les artifacts | F | en-têtes nginx |
+
+### 3.4 ter Routage des modèles (service de décision)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Question confiée à un tiers (I) | Service local, sans réseau, socket réservé au groupe de l'API, rien journalisé | F | `decision_test.py` (CI) |
+| Modèle de décision substitué (T) | Révision figée, empreintes SHA-256 vérifiées au build, formats exécutables refusés | F | `fetch_model.py` |
+| Routage vers un modèle non autorisé (E) | Modèles publiés et fournisseurs autorisés vérifiés à l'enregistrement puis à chaque usage | F | `routes.test.ts`, `runs.routes.test.ts` (routage) |
+| Réponse du service hostile ou absente (D) | Taille bornée, 3 s, repli sur l'heuristique | F | `routing.test.ts` |
+| Qualité dégradée (question complexe jugée simple) | « complexe » si l'heuristique ou le modèle le dit ; mesure rejouée en CI | M : 2/24 complexes manqués | mesure tenue à l'écart |
+
+### 3.4 quater Amélioration continue des agents
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Question d'un utilisateur exposée sans accord (I) | Partage sur case décochée par défaut, sans réponse ni nom ; refusé en temporaire ou confidentiel ; retrait = effacement | F | `runs.routes.test.ts` (« Amélioration continue »), `quality.integration.test.ts` |
+| Cas piégé qui glisse une consigne dans les instructions (T, E) | Cas balisés comme données, consigne de ne rien recopier, proposition lue en entier et appliquée par l'auteur seulement | M : l'auteur doit relire | `improve.test.ts` (cas piégé) |
+| Score gonflé par surapprentissage (T) | Un cas sur trois tenu à l'écart de l'optimiseur ; toute régression refuse | M : peu de cas, juge LLM | `improve.test.ts` |
+| Proposition substituée à l'application (T) | Seule la proposition mesurée par le serveur s'applique, une fois, si l'agent n'a pas changé | F | tests de route |
+| Coût incontrôlé (D) | Auteur ou admin, 30 cas, une amélioration à la fois, 10 min, quota avant chaque appel | F | tests de route |
+
+### 3.4 quinquies Atelier d'entraînement et agents planifiés
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Entraînement sur des données personnelles (I) | Exemples écrits par les administrateurs seulement, jamais tirés des conversations ; chiffrés | M : dépend de ce qu'ils saisissent (consigne affichée) | revue, `workshop.integration.test.ts` |
+| Décideur dégradé déployé (T) | Mesure sur la part de test figée ; déployable seulement si meilleur ET aucune question complexe perdue ; contrainte en base | M : part de test réutilisée | `workshop.test.ts`, `decision_test.py` |
+| Tête substituée ou d'une autre révision (T) | Tête chiffrée, immuable ; le service refuse une autre révision ou une forme invalide | F | `decision_test.py` |
+| Tâche planifiée qui agit sans personne (E) | Même route qu'un message ; écritures en attente de l'auteur, puis refus | F | `runs.routes.test.ts` (« Agents planifiés ») |
+| Identité interne forgée (S) | Jeton aléatoire 256 bits, usage unique, 30 s, en mémoire ; en-tête effacé par nginx | F | test « en-tête interne forgé » |
+| Double exécution entre instances (T) | File sans contenu, prise à bail atomique (SKIP LOCKED), bail conservé pendant l'exécution | F | `schedules.integration.test.ts` |
+| Tâche d'un ancien membre (E) | Jamais prise en charge (jointure sur les membres) ; lecteur : ignorée | F | tests d'intégration et de route |
+
+### 3.4 sexies Données sensibles
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Donnée sensible envoyée par mégarde à un fournisseur externe (I) | Détection locale avant tout envoi ; bascule définitive en local, sinon refus ; titre masqué ; mémoire refusée | M : images, formes obfusquées, autres catégories art. 9 | `sensitive.test.ts`, `runs.routes.test.ts` (« Données sensibles ») |
+| Conversation sensible qui ressort (I) | Traitée comme confidentielle : ni traces, ni web, ni spécialiste externe, ni partage, ni cas d'évaluation | F | tests de route |
+| Retrait du marquage (T) | Drapeau à sens unique, imposé par trigger | F | `store.integration.test.ts` |
+| Valeur sensible dans l'audit ou les journaux (I) | Seules les catégories sont tracées | F | test « catégorie tracée sans la valeur » |
 
 ### 3.5 Artifacts
 
@@ -113,7 +156,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 
 ## 4. Risques résiduels prioritaires
 
-1. **Injection de prompt, détection limitée** (M) : l'exfiltration est couverte par la règle de deux, le marquage des contenus externes et la politique des liens ; la détection heuristique n'attrape que les injections recopiées. Reste : un document interne piégé peut orienter le premier appel sortant. Piste : classifieur local facultatif.
+1. **Injection de prompt, détection limitée** (M) : l'exfiltration est couverte par la règle de deux, le marquage des contenus externes et la politique des liens ; la détection heuristique n'attrape que les injections recopiées. Reste : un document interne piégé peut orienter le premier appel sortant. Classifieur local mesuré (Laya) : 11/12 attaques, mais 6/12 faux positifs sur v2 — non déployé.
 2. **Contrats des fournisseurs d'IA** (M) : DPA, localisation, non-conservation.
 3. **Connecteurs en jeton partagé** (M) : préférer le mode OAuth (compte de chacun) pour les outils qui écrivent ; les connecteurs OpenAPI n'ont pas encore ce mode.
 4. **gVisor non vérifié sur l'hôte de production** : à faire avant d'ouvrir l'interpréteur.

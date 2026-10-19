@@ -22,8 +22,8 @@ export interface McpConnectionStore {
 
 export const PENDING_TTL_MS = 10 * 60 * 1000;
 
-const tokenAad = (tenant: TenantContext, serverId: string, field: "access" | "refresh") => `mcp-user-token-${field}:${tenant.organizationId}:${tenant.userId}:${serverId}`;
-const verifierAad = (tenant: TenantContext, stateHash: string) => `mcp-oauth-verifier:${tenant.organizationId}:${tenant.userId}:${stateHash}`;
+export const tokenAad = (tenant: TenantContext, serverId: string, field: "access" | "refresh") => `mcp-user-token-${field}:${tenant.organizationId}:${tenant.userId}:${serverId}`;
+export const verifierAad = (tenant: TenantContext, stateHash: string) => `mcp-oauth-verifier:${tenant.organizationId}:${tenant.userId}:${stateHash}`;
 
 export class PostgresMcpConnectionStore implements McpConnectionStore {
   constructor(

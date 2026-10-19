@@ -23,6 +23,8 @@ export type WorkspaceDependencies = {
   platformTools?: () => ToolId[];
   /** Appels d'outils du mois (quotas des outils). */
   toolUsage?: ToolUsageStore | undefined;
+  /** Le modèle existe chez ce fournisseur (catalogue de la plateforme). */
+  isModelAllowed?: (selection: { provider: ProviderId; model: string }) => Promise<boolean>;
 };
 
 const uuidParams = z.object({ id: z.uuid() });
@@ -47,6 +49,17 @@ const settingsSchema = z.object({
     .optional(),
   tools: z.array(z.enum(toolIds)).max(toolIds.length).optional(),
   toolLimits: z.partialRecord(z.enum(toolMeters), z.number().int().positive().max(10_000_000)).optional(),
+  // Données sensibles : « local » (défaut) ou « off » ; absent = inchangé.
+  sensitiveData: z.enum(["local", "off"]).optional(),
+  // Routage automatique : null = désactivé ; absent = inchangé.
+  modelRouting: z
+    .object({
+      fast: z.object({ provider: z.enum(providerIds), model: z.string().min(1).max(120) }).strict(),
+      strong: z.object({ provider: z.enum(providerIds), model: z.string().min(1).max(120) }).strict(),
+    })
+    .strict()
+    .nullable()
+    .optional(),
 }).strict();
 
 const preferencesSchema = z.object({
@@ -143,7 +156,24 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       ) {
         return reply.code(400).send({ error: "Invalid request" });
       }
+      // Routage : deux modèles existants, chez des fournisseurs autorisés par l'organisation.
+      const modelRouting = body.data.modelRouting === undefined ? current.modelRouting : body.data.modelRouting;
+      // Revalidé seulement s'il change : un modèle retiré du catalogue ne bloque pas les autres réglages
+      // (à l'usage, il retombe sur le modèle par défaut).
+      if (modelRouting && JSON.stringify(modelRouting) !== JSON.stringify(current.modelRouting)) {
+        for (const selection of [modelRouting.fast, modelRouting.strong]) {
+          const allowedHere = selection.provider === "local" || body.data.allowedProviders.includes(selection.provider);
+          if (!allowedHere || (deps.isModelAllowed && !(await deps.isModelAllowed(selection)))) return reply.code(400).send({ error: "Invalid request", reason: "routing_model" });
+        }
+      }
+      const sensitiveData = body.data.sensitiveData ?? current.sensitiveData;
+      // Désactiver la protection est une décision tracée à part.
+      if (sensitiveData !== current.sensitiveData) {
+        await kit.record(request, user, { eventType: "security.sensitive_policy", details: { value: sensitiveData } });
+      }
       const saved = await settings.update(user, {
+        sensitiveData,
+        modelRouting,
         allowedProviders: [...new Set(body.data.allowedProviders)],
         monthlyTokenLimit: body.data.monthlyTokenLimit,
         providerTokenLimits: body.data.providerTokenLimits,

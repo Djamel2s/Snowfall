@@ -166,6 +166,31 @@ describe("Exécution durable : PostgreSQL (RLS, chiffrement, bail)", { skip: !ap
     await runs.finish(a, run.id);
   });
 
+  it("sous-fils d'équipe : séparés du run, chiffrés à part, effacés avec lui", async () => {
+    const own = (await new PostgresConversationStore(pool, keyring).create(a, "Équipe")).id;
+    const run = (await runs.create(a, own, request, "instance-1", 60_000))!;
+    const saver = new EncryptedCheckpointSaver(pool, keyring, a);
+    const model: ChatModel = { id: "s", supportsTools: false, async *stream(): AsyncIterable<ChatChunk> { yield { type: "token", text: "Sous-agent." }; } };
+    const runner = createChatRunner(model);
+    await runner({ message: "principal" }, { durable: { checkpointer: saver, threadId: run.id } });
+    await runner({ message: SECRET }, { durable: { checkpointer: saver, threadId: `${run.id}~d1` } });
+    const main = await saver.getTuple({ configurable: { thread_id: run.id } });
+    const sub = await saver.getTuple({ configurable: { thread_id: `${run.id}~d1` } });
+    assert.ok(main && sub);
+    assert.equal(main.config.configurable?.thread_id, run.id);
+    assert.equal(sub.config.configurable?.thread_id, `${run.id}~d1`);
+    // Clé invalide (séparateur ou caractère dangereux) : refusée.
+    await assert.rejects(saver.getTuple({ configurable: { thread_id: `${run.id}~a'b` } }), /CHECKPOINT_INVALID_THREAD/);
+    // Chiffré, et l'AAD lie le contenu à SON sous-fil : copié sous le fil principal, il ne se déchiffre pas.
+    const raw = await withTenant(owner, a, (client) => client.query("SELECT checkpoint FROM agent_checkpoints WHERE run_id = $1 AND thread_key = 'd1'", [run.id]));
+    assert.ok(!JSON.stringify(raw.rows).includes(SECRET));
+    await withTenant(owner, a, (client) => client.query("UPDATE agent_checkpoints SET thread_key = 'd2' WHERE run_id = $1 AND thread_key = 'd1'", [run.id]));
+    await assert.rejects(saver.getTuple({ configurable: { thread_id: `${run.id}~d2` } }));
+    await saver.deleteThread(run.id);
+    const left = await withTenant(owner, a, (client) => client.query("SELECT count(*)::int AS n FROM agent_checkpoints WHERE run_id = $1", [run.id]));
+    assert.equal(left.rows[0]!.n, 0);
+  });
+
   it("refuse tout contenu non chiffré (contrainte)", async () => {
     const run = (await runs.create(a, conversationId, request, "instance-1", 60_000))!;
     await assert.rejects(

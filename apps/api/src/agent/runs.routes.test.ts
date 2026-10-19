@@ -25,6 +25,9 @@ import { noopTracer, type RunTracer } from "../observability/tracing.js";
 import { InMemoryUserMemoryStore } from "../memory/store.js";
 import { INJECTION_NOTICE } from "../security/injection.js";
 import { defaultPreferences, type Preferences } from "../workspace/preferences.js";
+import type { DecisionEngine } from "../decision/routing.js";
+import { MemoryQualityStore } from "../quality/store.js";
+import { MemoryScheduleStore } from "../schedules/store.js";
 
 const ORIGIN = "http://localhost:5173";
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -45,14 +48,20 @@ function fakeAgents(): AgentStore {
       agents.set(agent.id, agent);
       return agent;
     },
-    update: async () => null,
+    update: async (_tenant, id, input: AgentInput) => {
+      const existing = agents.get(id);
+      if (!existing) return null;
+      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? [], delegates: input.delegates ?? [], parameters: input.parameters ?? {}, updatedAt: new Date().toISOString() };
+      agents.set(id, agent);
+      return agent;
+    },
     delete: async (_tenant, id) => agents.delete(id),
   };
 }
 
 const registry: ModelRegistry = {
   catalog: async () => [{ id: "mistral", available: true, models: [{ id: "mistral-small-latest", label: "mistral-small" }] }],
-  isAllowed: async ({ provider, model }) => provider === "mistral" && model === "mistral-small-latest",
+  isAllowed: async ({ provider, model }) => provider === "mistral" && (model === "mistral-small-latest" || model === "mistral-large-latest"),
   providerFor: (selection) => selection?.provider ?? "echo",
   supportsTools: () => true,
   runner: () => async () => ({ content: "ok", model: "fake" }),
@@ -104,6 +113,10 @@ async function instance(
     tracer?: RunTracer;
     preferences?: Partial<Preferences>;
     memories?: InMemoryUserMemoryStore;
+    decision?: DecisionEngine;
+    quality?: MemoryQualityStore;
+    schedules?: MemoryScheduleStore;
+    registry?: ModelRegistry;
   } = {},
 ) {
   let current = alice;
@@ -124,7 +137,7 @@ async function instance(
     authenticate: async () => current,
     conversationStore: db.conversations,
     agents: db.agents,
-    models: registry,
+    models: options.registry ?? registry,
     settings: settingsStore,
     knowledge,
     audit,
@@ -137,6 +150,9 @@ async function instance(
     ...(options.tracer ? { tracer: options.tracer } : {}),
     ...(options.preferences ? { preferences: { get: async () => ({ ...defaultPreferences, ...options.preferences }), update: async (_tenant, next) => next } } : {}),
     ...(options.memories ? { memories: options.memories } : {}),
+    ...(options.decision ? { decision: options.decision } : {}),
+    ...(options.quality ? { quality: options.quality } : {}),
+    ...(options.schedules ? { schedules: options.schedules, scheduleIntervalMs: 40 } : {}),
     ...(options.timing ? { runTiming: options.timing } : {}),
     runChat: options.runChat ?? createChatRunner(options.model ?? notingModel),
   });
@@ -962,9 +978,13 @@ describe("MCP en mode OAuth : chacun avec son compte", () => {
   });
 });
 
-describe("Sous-agents : consulter un spécialiste", () => {
-  /** Même modèle pour les deux rôles : le Juriste consulte, le spécialiste cherche dans sa base. */
-  function team(seen: ChatRequest[], rhId: () => string): ChatModel {
+describe("Équipes d'agents : déléguer des tâches", () => {
+  /**
+   * Un seul modèle scripté pour toute l'équipe ; le rôle se lit dans les
+   * instructions. Le Juriste délègue à RH ; RH cherche puis veut enregistrer une
+   * note (écriture) ; Archiviste (niveau 2) n'a plus le droit de déléguer.
+   */
+  function team(seen: ChatRequest[], ids: { rh: () => string; archivist: () => string }): ChatModel {
     return {
       id: "team",
       supportsTools: true,
@@ -972,63 +992,447 @@ describe("Sous-agents : consulter un spécialiste", () => {
         seen.push(request);
         const names = (request.tools ?? []).map((tool) => tool.name);
         const last = request.turns?.at(-1);
-        if (names.includes("ask_agent")) {
-          if (last?.role === "tool") return void (yield { type: "token", text: `Selon les RH : ${last.content.includes("27 jours") ? "27 jours" : "inconnu"}.` });
-          return void (yield { type: "tool_call", call: { id: "d1", name: "ask_agent", arguments: { agent: rhId(), task: "Combien de jours de congés payés par an ?" } } });
+        const role = request.instructions ?? "";
+        if (role.includes("Juriste")) {
+          if (last?.role === "tool") return void (yield { type: "token", text: `Synthèse : ${last.content.includes("noté") ? "RH a noté" : "rien"}.` });
+          return void (yield { type: "tool_call", call: { id: "d1", name: "delegate_task", arguments: { agent: ids.rh(), task: "Enregistre la règle des congés dans ta base." } } });
         }
-        if (last?.role === "tool") return void (yield { type: "token", text: "Les congés sont de 27 jours ouvrés." });
-        if (names.includes("search_knowledge")) return void (yield { type: "tool_call", call: { id: "s1", name: "search_knowledge", arguments: { query: "congés payés" } } });
-        yield { type: "token", text: "Je ne sais pas." };
+        if (role.includes("RH")) {
+          if (last?.role === "tool" && last.name === "save_to_knowledge") return void (yield { type: "token", text: last.content.startsWith("Note") ? "C'est noté." : "Pas enregistré." });
+          if (last?.role === "tool" && last.name === "delegate_task") {
+            return void (yield { type: "tool_call", call: { id: "w1", name: "save_to_knowledge", arguments: { title: "Congés", content: "Les congés payés sont de 27 jours ouvrés par an." } } });
+          }
+          if (names.includes("delegate_task")) return void (yield { type: "tool_call", call: { id: "d2", name: "delegate_task", arguments: { agent: ids.archivist(), task: "Classe la note des congés." } } });
+          return void (yield { type: "tool_call", call: { id: "w1", name: "save_to_knowledge", arguments: { title: "Congés", content: "Les congés payés sont de 27 jours ouvrés par an." } } });
+        }
+        // Archiviste : répond simplement.
+        yield { type: "token", text: "Classé." };
       },
     };
   }
 
-  async function setup(t: { after: (fn: () => unknown) => void }, confidential = false) {
+  async function setup(t: { after: (fn: () => unknown) => void }, options: { confidential?: boolean } = {}) {
     const db = sharedDatabase();
     const seen: ChatRequest[] = [];
-    let rh = "";
-    const api = await instance(db, { model: team(seen, () => rh), settings: { tools: ["search_knowledge", "delegate"] } });
+    const ids = { rh: "", archivist: "" };
+    const api = await instance(db, { model: team(seen, { rh: () => ids.rh, archivist: () => ids.archivist }), settings: { tools: ["search_knowledge", "save_to_knowledge", "delegate"] } });
     t.after(() => api.close());
-    const create = async (body: Record<string, unknown>) => ((await (await api.post("/agents", { avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", ...body })).json()) as { agent: Agent }).agent;
-    const specialist = await create({ name: "RH", instructions: "Tu réponds sur les congés et la paie.", tools: ["search_knowledge"] });
-    rh = specialist.id;
-    if (confidential) await db.knowledge.ensureBase(alice, { kind: "agent", agentId: rh }).then((base) => db.knowledge.setConfidential(alice, base.id, true));
-    const uploaded = await fetch(`${api.base}/agents/${rh}/knowledge/files`, {
-      method: "POST",
-      headers: { origin: ORIGIN, "content-type": "application/octet-stream", "x-file-name": "conges.md" },
-      body: "# Congés\n\nLes congés payés sont de 27 jours ouvrés par an.",
-    });
-    assert.equal(uploaded.status, 202);
-    await api.knowledge.idle();
-    const lawyer = await create({ name: "Juriste", tools: ["search_knowledge", "delegate"], delegates: [rh, crypto.randomUUID()] });
-    return { db, api, seen, rh, lawyer };
+    const create = async (body: Record<string, unknown>) => ((await (await api.post("/agents", { avatar: alien, provider: "mistral", model: "mistral-small-latest", ...body })).json()) as { agent: Agent }).agent;
+    const archivist = await create({ name: "Archiviste", instructions: "Tu es l'Archiviste.", tools: ["search_knowledge", "delegate"] });
+    ids.archivist = archivist.id;
+    const rh = await create({ name: "RH", instructions: "Tu es l'agent RH.", tools: ["search_knowledge", "save_to_knowledge", "delegate"], delegates: [archivist.id] });
+    ids.rh = rh.id;
+    if (options.confidential) await db.knowledge.ensureBase(alice, { kind: "agent", agentId: rh.id }).then((base) => db.knowledge.setConfidential(alice, base.id, true));
+    // Le Juriste peut écrire et déléguer, mais pas chercher sur le web.
+    const lawyer = await create({ name: "Juriste", instructions: "Tu es le Juriste.", tools: ["search_knowledge", "save_to_knowledge", "delegate"], delegates: [rh.id, crypto.randomUUID()] });
+    const conversation = ((await (await api.post("/conversations", { agentId: lawyer.id })).json()) as { conversation: { id: string } }).conversation.id;
+    return { db, api, seen, rh, lawyer, archivist, conversation };
   }
 
-  it("le Juriste consulte RH : réponse rapportée comme donnée, spécialiste en lecture seule (profondeur 1)", async (t) => {
-    const { db, api, seen, rh, lawyer } = await setup(t);
-    // Un identifiant inconnu est écarté à l'enregistrement.
-    assert.deepEqual(lawyer.delegates, [rh]);
-    const conversation = ((await (await api.post("/conversations", { agentId: lawyer.id })).json()) as { conversation: { id: string } }).conversation.id;
-    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Congés ?" }))).at(-1)!.data as { assistantMessage: { content: string } };
-    assert.equal(done.assistantMessage.content, "Selon les RH : 27 jours.");
-    // Le spécialiste : sa base seulement, ni consultation à son tour, ni écriture, ni web.
-    const specialistRequests = seen.filter((request) => !(request.tools ?? []).some((tool) => tool.name === "ask_agent") && request.instructions?.includes("congés et la paie"));
-    assert.ok(specialistRequests.length >= 1);
-    for (const request of specialistRequests) assert.deepEqual((request.tools ?? []).map((tool) => tool.name), ["search_knowledge"]);
-    // Le résultat revient balisé comme donnée.
-    const parentFinal = seen.filter((request) => (request.tools ?? []).some((tool) => tool.name === "ask_agent")).at(-1)!;
-    assert.match(parentFinal.turns!.at(-1)!.content, /^<agent_result agent="RH">/);
-    const audited = db.events.find((event) => event.eventType === "agent.delegate")!;
-    assert.equal(audited.targetId, rh);
-    assert.equal(audited.details?.from, lawyer.id);
-    assert.ok(!JSON.stringify(db.events).includes("27 jours"));
+  it("l'écriture du sous-agent remonte en validation « pour le compte de », puis reprend sans être regénérée", async (t) => {
+    const { db, api, seen, rh, lawyer, conversation } = await setup(t);
+    assert.deepEqual(lawyer.delegates, [rh.id]);
+    const first = await events(await api.post(`/conversations/${conversation}/messages`, { content: "Fais noter la règle des congés." }));
+    const approval = first.find((item) => item.event === "approval")!.data;
+    assert.equal(approval.onBehalfOf, "RH");
+    assert.match(String(approval.detail), /27 jours ouvrés/);
+    assert.equal(first.at(-1)!.event, "paused");
+    // Étapes du sous-agent remontées sous l'appel de délégation.
+    assert.ok(first.some((item) => item.event === "step" && item.data.agent === "RH" && item.data.parent === "d1"));
+    const rhCallsBefore = seen.filter((request) => request.instructions?.includes("agent RH")).length;
+
+    const resumed = await events(await api.post(`/conversations/${conversation}/approvals/${String(approval.id)}`, { approved: true }));
+    const done = resumed.at(-1)!.data as { assistantMessage: { content: string } };
+    assert.equal(done.assistantMessage.content, "Synthèse : RH a noté.");
+    // Reprise depuis le point de reprise : RH n'a pas redemandé son écriture au modèle.
+    const rhAfter = seen.filter((request) => request.instructions?.includes("agent RH")).slice(rhCallsBefore);
+    assert.ok(rhAfter.every((request) => request.turns!.at(-1)!.role === "tool"));
+    await api.knowledge.idle();
+    const base = await db.knowledge.findBase(alice, { kind: "agent", agentId: rh.id });
+    assert.equal((await db.knowledge.listSources(alice, base!.id)).length, 1);
+    assert.ok(db.events.some((event) => event.eventType === "agent.delegate" && event.details?.from === lawyer.id && event.targetId === rh.id));
   });
 
-  it("base du spécialiste confidentielle + modèle externe : consultation refusée et tracée", async (t) => {
-    const { db, api, lawyer } = await setup(t, true);
-    const conversation = ((await (await api.post("/conversations", { agentId: lawyer.id })).json()) as { conversation: { id: string } }).conversation.id;
-    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Congés ?" }))).at(-1)!.data as { assistantMessage: { content: string } };
-    assert.equal(done.assistantMessage.content, "Selon les RH : inconnu.");
+  it("aucune escalade : le sous-agent n'a que l'intersection des outils ; profondeur bornée", async (t) => {
+    const { api, seen, conversation } = await setup(t);
+    const first = await events(await api.post(`/conversations/${conversation}/messages`, { content: "Fais noter la règle des congés." }));
+    assert.ok(first.some((item) => item.event === "approval"));
+    const rhTools = seen.filter((request) => request.instructions?.includes("agent RH")).flatMap((request) => (request.tools ?? []).map((tool) => tool.name));
+    // RH peut déléguer (niveau 1) ; l'Archiviste (niveau 2) non. Jamais de web : le Juriste ne l'a pas.
+    assert.ok(rhTools.includes("save_to_knowledge"));
+    assert.ok(!rhTools.includes("web_search"));
+    const archivistTools = seen.filter((request) => request.instructions?.includes("Archiviste")).flatMap((request) => (request.tools ?? []).map((tool) => tool.name));
+    assert.ok(!archivistTools.includes("delegate_task"));
+  });
+
+  it("refus de l'utilisateur : rien n'est écrit, la réponse continue", async (t) => {
+    const { db, api, rh, conversation } = await setup(t);
+    const first = await events(await api.post(`/conversations/${conversation}/messages`, { content: "Fais noter la règle des congés." }));
+    const approval = first.find((item) => item.event === "approval")!.data;
+    const resumed = await events(await api.post(`/conversations/${conversation}/approvals/${String(approval.id)}`, { approved: false }));
+    assert.equal((resumed.at(-1)!.data as { assistantMessage: { content: string } }).assistantMessage.content, "Synthèse : rien.");
+    const base = await db.knowledge.findBase(alice, { kind: "agent", agentId: rh.id });
+    assert.equal(base ? (await db.knowledge.listSources(alice, base.id)).length : 0, 0);
+  });
+
+  it("base du sous-agent confidentielle + modèle externe : délégation refusée et tracée", async (t) => {
+    const { db, api, conversation } = await setup(t, { confidential: true });
+    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Fais noter la règle des congés." }))).at(-1)!.data as { assistantMessage: { content: string } };
+    assert.equal(done.assistantMessage.content, "Synthèse : rien.");
     assert.ok(db.events.some((event) => event.eventType === "agent.delegate" && event.outcome === "denied" && event.details?.reason === "confidential"));
+  });
+});
+
+describe("Routage des modèles", () => {
+  const fast = { provider: "mistral" as const, model: "mistral-small-latest" };
+  const strong = { provider: "mistral" as const, model: "mistral-large-latest" };
+  const answering: ChatModel = { id: "a", supportsTools: true, async *stream() { yield { type: "token", text: "Réponse." }; } };
+
+  async function setup(t: { after: (fn: () => unknown) => void }, settings: Partial<OrganizationSettings>, decision?: DecisionEngine, chosen?: typeof fast) {
+    const models: string[] = [];
+    const tracer: RunTracer = { ...noopTracer, startRun: (info) => (models.push(info.model ?? ""), noopTracer.startRun(info)) };
+    const api = await instance(sharedDatabase(), { model: answering, tracer, settings, ...(decision ? { decision } : {}) });
+    t.after(() => api.close());
+    const conversation = ((await (await api.post("/conversations", chosen ? { model: chosen } : {})).json()) as { conversation: { id: string } }).conversation.id;
+    const ask = async (content: string) => void (await events(await api.post(`/conversations/${conversation}/messages`, { content })));
+    return { api, models, ask, conversation };
+  }
+
+  it("question simple → modèle rapide ; complexe → puissant ; le décideur voit la question, pas plus", async (t) => {
+    const asked: string[] = [];
+    const decision: DecisionEngine = { decide: async (text) => (asked.push(text), { choice: "simple", probabilities: { simple: 0.9, complexe: 0.1 }, confidence: 0.9 }) };
+    const { models, ask } = await setup(t, { modelRouting: { fast, strong } }, decision);
+    await ask("Bonjour, ça va ?");
+    // Mot d'analyse : l'heuristique tranche « complexe » sans même consulter le décideur.
+    await ask("Analyse les risques de la migration du serveur.");
+    assert.deepEqual(models, ["mistral:mistral-small-latest", "mistral:mistral-large-latest"]);
+    assert.deepEqual(asked, ["Bonjour, ça va ?"]);
+  });
+
+  it("décideur sûr d'une question complexe (P ≥ seuil) : modèle puissant", async (t) => {
+    const decision: DecisionEngine = { decide: async () => ({ choice: "complexe", probabilities: { simple: 0.1, complexe: 0.9 }, confidence: 0.9 }) };
+    const { models, ask } = await setup(t, { modelRouting: { fast, strong } }, decision);
+    await ask("Et pour demain ?");
+    assert.deepEqual(models, ["mistral:mistral-large-latest"]);
+  });
+
+  it("décideur en panne : repli sur l'heuristique, la réponse arrive quand même", async (t) => {
+    const decision: DecisionEngine = { decide: async () => { throw new Error("socket absent"); } };
+    const { models, ask } = await setup(t, { modelRouting: { fast, strong } }, decision);
+    await ask("Bonjour !");
+    assert.deepEqual(models, ["mistral:mistral-small-latest"]);
+  });
+
+  it("désactivé, modèle choisi par l'utilisateur ou modèle retiré du catalogue : pas de routage", async (t) => {
+    const off = await setup(t, {});
+    await off.ask("Bonjour !");
+    assert.deepEqual(off.models, ["echo"]);
+
+    // Choix explicite de l'utilisateur : respecté, même pour une question simple.
+    const chosen = await setup(t, { modelRouting: { fast, strong } }, undefined, strong);
+    await chosen.ask("Bonjour !");
+    assert.deepEqual(chosen.models, ["mistral:mistral-large-latest"]);
+
+    const gone = await setup(t, { modelRouting: { fast: { provider: "mistral", model: "retire" }, strong } });
+    await gone.ask("Bonjour !");
+    assert.deepEqual(gone.models, ["echo"]);
+
+    // Fournisseur du modèle rapide retiré par l'organisation depuis le réglage.
+    const revoked = await setup(t, { modelRouting: { fast, strong }, allowedProviders: ["anthropic"] });
+    await revoked.ask("Bonjour !");
+    assert.deepEqual(revoked.models, ["echo"]);
+  });
+});
+
+describe("Amélioration continue des agents", () => {
+  /**
+   * Un seul modèle scripté : l'agent n'est poli que si ses instructions le
+   * disent ; le juge lit la réponse ; l'optimiseur propose « Sois poli ».
+   */
+  const polite: ChatModel = {
+    id: "polite",
+    supportsTools: true,
+    async *stream(request: ChatRequest) {
+      const message = request.turns?.at(-1)?.content ?? "";
+      if (message.startsWith("Tu améliores")) return void (yield { type: "token", text: "<instructions>Sois poli.</instructions>" });
+      if (message.startsWith("Tu évalues")) {
+        const answer = /<reponse>\n([\s\S]*?)\n<\/reponse>/.exec(message)?.[1] ?? "";
+        return void (yield { type: "token", text: answer.startsWith("Bonjour") ? '{"verdict":"pass","score":5,"reason":"poli"}' : '{"verdict":"fail","score":1,"reason":"sec"}' });
+      }
+      yield { type: "token", text: (request.instructions ?? "").includes("poli") ? "Bonjour ! Voici." : "Non." };
+    },
+  };
+
+  type QualityView = {
+    versions: { id: string; version: number; source: string; instructions: string; score: { passed: number } | null }[];
+    cases: { id: string; status: string; question: string; comment: string | null }[];
+  };
+
+  async function setup(t: { after: (fn: () => unknown) => void }) {
+    const api = await instance(sharedDatabase(), { model: polite, quality: new MemoryQualityStore() });
+    t.after(() => api.close());
+    api.as(alice);
+    const agent = ((await (await api.post("/agents", { name: "Accueil", avatar: alien, instructions: "Réponds.", provider: "mistral", model: "mistral-small-latest", tools: ["search_knowledge"] })).json()) as { agent: Agent }).agent;
+    const put = (url: string, payload: unknown) => api.app.inject({ method: "PUT", url, headers: { origin: ORIGIN }, payload: payload as Record<string, unknown> });
+    const read = async () => (await (await api.get(`/agents/${agent.id}/quality`)).json()) as QualityView;
+    const instructions = async () => ((await (await api.get("/agents")).json()) as { agents: Agent[] }).agents.find((item) => item.id === agent.id)!.instructions;
+    return { api, agent, put, read, instructions };
+  }
+
+  /** Bob converse avec l'agent d'Alice ; sa réponse à noter. */
+  async function rated(api: Instance, agentId: string, options: { temporary?: boolean } = {}) {
+    api.as(bob);
+    const conversation = ((await (await api.post("/conversations", { agentId, ...(options.temporary ? { temporary: true } : {}) })).json()) as { conversation: { id: string } }).conversation.id;
+    const done = (await events(await api.post(`/conversations/${conversation}/messages`, { content: "Où est la salle Orion ?" }))).at(-1)!.data as { assistantMessage: { id: string } };
+    return { conversation, messageId: done.assistantMessage.id };
+  }
+
+  it("👎 partagé : la question et le commentaire vont à l'auteur, jamais la réponse ni le nom", async (t) => {
+    const { api, agent, put, read } = await setup(t);
+    const { conversation, messageId } = await rated(api, agent.id);
+    // Sans accord : rien n'est partagé.
+    await put(`/conversations/${conversation}/messages/${messageId}/feedback`, { rating: "down", comment: "Trop sec." });
+    api.as(alice);
+    assert.equal((await read()).cases.length, 0);
+
+    api.as(bob);
+    const shared = await put(`/conversations/${conversation}/messages/${messageId}/feedback`, { rating: "down", comment: "Trop sec.", share: true });
+    assert.deepEqual(shared.json().shared, { ok: true });
+    // Bob n'est pas l'auteur : pas d'accès à la qualité de l'agent.
+    assert.equal((await api.get(`/agents/${agent.id}/quality`)).status, 403);
+
+    api.as(alice);
+    const cases = (await read()).cases;
+    assert.equal(cases.length, 1);
+    assert.equal(cases[0]!.status, "proposed");
+    assert.equal(cases[0]!.question, "Où est la salle Orion ?");
+    assert.equal(cases[0]!.comment, "Trop sec.");
+    const raw = JSON.stringify(cases);
+    assert.ok(!raw.includes("Non.") && !raw.includes(bob.userId));
+
+    // Bob change d'avis : son cas disparaît.
+    api.as(bob);
+    await put(`/conversations/${conversation}/messages/${messageId}/feedback`, { rating: null });
+    api.as(alice);
+    assert.equal((await read()).cases.length, 0);
+  });
+
+  it("partage refusé en conversation temporaire", async (t) => {
+    const { api, agent, put, read } = await setup(t);
+    const { conversation, messageId } = await rated(api, agent.id, { temporary: true });
+    const shared = await put(`/conversations/${conversation}/messages/${messageId}/feedback`, { rating: "down", share: true });
+    assert.deepEqual(shared.json().shared, { ok: false, reason: "temporary" });
+    api.as(alice);
+    assert.equal((await read()).cases.length, 0);
+  });
+
+  it("améliorer : mesuré, proposé, appliqué par l'auteur ; une proposition ne sert qu'une fois ; restauration", async (t) => {
+    const { api, agent, read, instructions } = await setup(t);
+    assert.equal((await api.post(`/agents/${agent.id}/quality/improve`, {})).status, 409);
+    for (const question of ["Bonjour ?", "Un café ?", "Où se garer ?"]) {
+      assert.equal((await api.post(`/agents/${agent.id}/quality/cases`, { question, rubric: "La réponse est polie." })).status, 201);
+    }
+    // Un membre qui n'est pas l'auteur ne lance rien (et ne dépense rien).
+    api.as(bob);
+    assert.equal((await api.post(`/agents/${agent.id}/quality/improve`, {})).status, 403);
+
+    api.as(alice);
+    const stream = await events(await api.post(`/agents/${agent.id}/quality/improve`, {}));
+    const result = stream.find((item) => item.event === "result")!.data as { kind: string; proposalId: string; instructions: string; before: { score: { passed: number } }; after: { score: { passed: number } }; judge: string };
+    assert.ok(stream.some((item) => item.event === "progress"));
+    assert.equal(result.kind, "proposed");
+    assert.deepEqual([result.before.score.passed, result.after.score.passed], [0, 3]);
+    assert.equal(result.instructions, "Sois poli.");
+    assert.equal(result.judge, "mistral:mistral-small-latest");
+    // Rien d'appliqué tant que l'auteur n'a pas décidé ; la version en place a son score.
+    assert.equal(await instructions(), "Réponds.");
+    assert.equal((await read()).versions[0]!.score?.passed, 0);
+
+    const applied = await api.post(`/agents/${agent.id}/quality/apply`, { proposalId: result.proposalId });
+    assert.equal(applied.status, 200);
+    assert.equal(await instructions(), "Sois poli.");
+    assert.equal((await api.post(`/agents/${agent.id}/quality/apply`, { proposalId: result.proposalId })).status, 410);
+    const versions = (await read()).versions;
+    assert.deepEqual(versions.map((item) => [item.version, item.source, item.score?.passed ?? null]), [[2, "improvement", 3], [1, "edit", 0]]);
+
+    const restored = await api.post(`/agents/${agent.id}/quality/versions/${versions[1]!.id}/restore`, {});
+    assert.equal(restored.status, 200);
+    assert.equal(await instructions(), "Réponds.");
+    assert.equal((await read()).versions[0]!.source, "restore");
+  });
+
+  it("proposition périmée si l'auteur a modifié l'agent entre-temps", async (t) => {
+    const { api, agent, put } = await setup(t);
+    for (const question of ["Bonjour ?", "Un café ?"]) await api.post(`/agents/${agent.id}/quality/cases`, { question, rubric: "La réponse est polie." });
+    const result = (await events(await api.post(`/agents/${agent.id}/quality/improve`, {}))).find((item) => item.event === "result")!.data as { proposalId: string };
+    await put(`/agents/${agent.id}`, { name: "Accueil", avatar: alien, instructions: "Réponds vite.", provider: "mistral", model: "mistral-small-latest", tools: ["search_knowledge"] });
+    const applied = await api.post(`/agents/${agent.id}/quality/apply`, { proposalId: result.proposalId });
+    assert.equal(applied.status, 409);
+    assert.equal(((await applied.json()) as { reason: string }).reason, "agent_changed");
+  });
+});
+
+describe("Agents planifiés et déclencheurs", () => {
+  async function setup(t: { after: (fn: () => unknown) => void }, model: ChatModel = notingModel) {
+    const db = sharedDatabase();
+    const schedules = new MemoryScheduleStore();
+    const api = await instance(db, { model, schedules });
+    t.after(() => api.close());
+    api.as(alice);
+    const agent = ((await (await api.post("/agents", { name: "Veille", avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", tools: ["search_knowledge", "save_to_knowledge"] })).json()) as { agent: Agent }).agent;
+    const create = async (body: Record<string, unknown>) => api.post("/me/schedules", { agentId: agent.id, name: "Veille du lundi", prompt: "Fais le point de la semaine.", timezone: "Europe/Paris", ...body });
+    const mine = async () => ((await (await api.get("/me/schedules")).json()) as { schedules: { id: string; lastStatus: string | null; conversationId: string; nextRunAt: string | null; enabled: boolean }[] }).schedules;
+    return { db, api, agent, schedules, create, mine };
+  }
+
+  const answering: ChatModel = { id: "a", supportsTools: true, async *stream() { yield { type: "token", text: "Voici le point." }; } };
+
+  it("planifiée : exécutée au nom de son auteur, dans SA conversation, par la route des messages", async (t) => {
+    const { db, api, create, mine } = await setup(t, answering);
+    const created = await create({ kind: "schedule", cadence: "weekly", hour: 9, weekday: 1 });
+    assert.equal(created.status, 201);
+    const schedule = ((await created.json()) as { schedule: { id: string; conversationId: string; nextRunAt: string } }).schedule;
+    assert.ok(Date.parse(schedule.nextRunAt) > Date.now());
+    // Rien avant l'échéance.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal((await mine())[0]!.lastStatus, null);
+
+    assert.equal((await api.post(`/me/schedules/${schedule.id}/run`, {})).status, 202);
+    await until(async () => (await mine())[0]!.lastStatus === "done");
+    const messages = await db.conversations.getMessages(alice, schedule.conversationId);
+    assert.deepEqual(messages!.map((message) => [message.role, message.content]), [["user", "Fais le point de la semaine."], ["assistant", "Voici le point."]]);
+    assert.ok(db.events.some((event) => event.eventType === "agent.schedule_run" && event.actorUserId === alice.userId));
+    // Échéance suivante recalculée, pas de rafale.
+    assert.ok(Date.parse((await mine())[0]!.nextRunAt!) > Date.now());
+    // Privée : un collègue ne la voit pas.
+    api.as(bob);
+    assert.deepEqual(await mine(), []);
+    assert.equal((await api.post(`/me/schedules/${schedule.id}/run`, {})).status, 404);
+  });
+
+  it("personne ne valide à sa place : une écriture demandée attend l'auteur", async (t) => {
+    const { db, api, create, mine } = await setup(t);
+    const schedule = ((await (await create({ kind: "schedule", cadence: "daily", hour: 7 })).json()) as { schedule: { id: string; conversationId: string } }).schedule;
+    await api.post(`/me/schedules/${schedule.id}/run`, {});
+    await until(async () => (await mine())[0]!.lastStatus === "paused");
+    const run = ((await (await api.get(`/conversations/${schedule.conversationId}/run`)).json()) as { run: { status: string; approvals: unknown[] } }).run;
+    assert.equal(run.status, "waiting");
+    assert.equal(run.approvals.length, 1);
+    // La base n'a rien reçu sans accord.
+    assert.equal(await db.knowledge.findBase(alice, { kind: "agent", agentId: (await db.agents.list(alice))[0]!.id }), null);
+  });
+
+  it("en-tête interne forgé depuis le réseau : refusé, et jamais réutilisable", async (t) => {
+    const { api, agent } = await setup(t, answering);
+    const conversation = ((await (await api.post("/conversations", { agentId: agent.id })).json()) as { conversation: { id: string } }).conversation.id;
+    const forged = await fetch(`${api.base}/conversations/${conversation}/messages`, {
+      method: "POST",
+      headers: { origin: ORIGIN, "content-type": "application/json", "x-snowfall-internal": "devine-moi" },
+      body: JSON.stringify({ content: "Bonjour" }),
+    });
+    assert.equal(forged.status, 401);
+  });
+
+  it("auteur parti de l'organisation : plus rien ne s'exécute ; trois échecs : désactivée", async (t) => {
+    const { api, create, mine, schedules } = await setup(t, answering);
+    const schedule = ((await (await create({ kind: "schedule", cadence: "daily", hour: 7 })).json()) as { schedule: { id: string } }).schedule;
+    schedules.members.delete(`${alice.organizationId}:${alice.userId}`);
+    await api.post(`/me/schedules/${schedule.id}/run`, {});
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal((await mine())[0]!.lastStatus, null);
+
+    // Échecs répétés (ici : conversation introuvable) → désactivée au troisième.
+    schedules.members.set(`${alice.organizationId}:${alice.userId}`, "member");
+    const broken = ((await (await create({ kind: "schedule", cadence: "daily", hour: 7, name: "Cassée" })).json()) as { schedule: { id: string; conversationId: string } }).schedule;
+    await api.app.inject({ method: "DELETE", url: `/conversations/${broken.conversationId}`, headers: { origin: ORIGIN } });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await api.post(`/me/schedules/${broken.id}/run`, {});
+      await until(async () => (await mine()).find((item) => item.id === broken.id)!.lastStatus === "error");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    await until(async () => !(await mine()).find((item) => item.id === broken.id)!.enabled);
+  });
+
+  it("déclencheur : seulement quand un document arrive, avec son nom (une donnée bornée)", async (t) => {
+    const { db, api, agent, create, mine } = await setup(t, answering);
+    const schedule = ((await (await create({ kind: "knowledge", name: "Nouveaux documents", prompt: "Résume le nouveau document." })).json()) as { schedule: { id: string; conversationId: string } }).schedule;
+    await api.post(`/me/schedules/${schedule.id}/run`, {});
+    await until(async () => (await mine())[0]!.lastStatus === null && (await mine())[0]!.nextRunAt === null);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal((await db.conversations.getMessages(alice, schedule.conversationId))!.length, 0);
+
+    const base = await db.knowledge.ensureBase(alice, { kind: "agent", agentId: agent.id });
+    const source = await db.knowledge.addSource(alice, base.id, { kind: "file", name: "Contrat <Orion>\nv2.pdf", mediaType: "application/pdf", bytes: Buffer.from("x") });
+    await db.knowledge.setStatus(alice, source.id, "ready");
+    await api.post(`/me/schedules/${schedule.id}/run`, {});
+    await until(async () => (await mine())[0]!.lastStatus === "done");
+    const question = (await db.conversations.getMessages(alice, schedule.conversationId))![0]!.content;
+    assert.equal(question, "Résume le nouveau document.\n\nNouveaux documents dans la base : Contrat  Orion  v2.pdf");
+  });
+
+  it("refus : fuseau inconnu, règle incomplète, déclencheur sans base, plafond de 5", async (t) => {
+    const { create } = await setup(t, answering);
+    assert.equal((await create({ kind: "schedule", cadence: "daily", hour: 7, timezone: "Mars/Olympus" })).status, 400);
+    assert.equal((await create({ kind: "schedule", cadence: "weekly", hour: 7 })).status, 400);
+    for (let index = 0; index < 5; index++) assert.equal((await create({ kind: "schedule", cadence: "daily", hour: 7 })).status, 201);
+    assert.equal((await create({ kind: "schedule", cadence: "daily", hour: 7 })).status, 409);
+  });
+});
+
+describe("Données sensibles : modèle local ou rien", () => {
+  // Plateforme avec un modèle local publié (en plus de Mistral, externe).
+  const withLocal: ModelRegistry = {
+    ...registry,
+    catalog: async () => [
+      { id: "mistral", available: true, models: [{ id: "mistral-small-latest", label: "mistral-small" }] },
+      { id: "local", available: true, models: [{ id: "llama", label: "llama" }] },
+    ],
+    isAllowed: async ({ provider, model }) => (provider === "mistral" && model === "mistral-small-latest") || (provider === "local" && model === "llama"),
+  };
+  const nir = "Mon numéro de sécu est 1 85 05 78 006 084 91, je change d'adresse.";
+
+  async function setup(t: { after: (fn: () => unknown) => void }, options: { local?: boolean; settings?: Partial<OrganizationSettings> } = {}) {
+    const db = sharedDatabase();
+    const calls: string[] = [];
+    const traced: { model: string; confidential: boolean }[] = [];
+    const tracer: RunTracer = { ...noopTracer, startRun: (info) => (traced.push({ model: info.model ?? "", confidential: info.confidential }), noopTracer.startRun(info)) };
+    const model: ChatModel = { id: "m", supportsTools: true, async *stream(request: ChatRequest) { calls.push(request.turns?.at(-1)?.content ?? ""); yield { type: "token", text: "C'est noté." }; } };
+    const api = await instance(db, { model, tracer, ...(options.local ? { registry: withLocal } : {}), ...(options.settings ? { settings: options.settings } : {}) });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["search_knowledge"]);
+    const send = (content: string) => api.post(`/conversations/${conversationId}/messages`, { content });
+    return { db, api, calls, traced, conversationId, send };
+  }
+
+  it("aucun modèle local : refus AVANT tout envoi, rien d'enregistré, catégorie tracée sans la valeur", async (t) => {
+    const { db, calls, conversationId, send } = await setup(t);
+    const refused = await send(nir);
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { error: "Local model required", reason: "sensitive_requires_local", categories: ["nir"] });
+    assert.deepEqual(calls, []);
+    assert.deepEqual(await db.conversations.getMessages(alice, conversationId), []);
+    const event = db.events.find((item) => item.eventType === "security.sensitive_detected")!;
+    assert.deepEqual([event.outcome, event.details?.categories, event.details?.action], ["denied", "nir", "blocked"]);
+    assert.ok(!JSON.stringify(db.events).includes("006 084"));
+    // Sans donnée sensible, la même conversation fonctionne normalement.
+    assert.equal((await send("Bonjour")).status, 200);
+  });
+
+  it("modèle local disponible : bascule, et la conversation y reste (confidentielle, non partageable)", async (t) => {
+    const { api, traced, conversationId, send } = await setup(t, { local: true });
+    await events(await send(nir));
+    await events(await send("Et pour la mutuelle ?"));
+    assert.deepEqual(traced.map((item) => [item.model, item.confidential]), [["local:llama", true], ["local:llama", true]]);
+    const conversation = ((await (await api.get("/conversations")).json()) as { id: string; sensitive?: boolean }[]).find((item) => item.id === conversationId)!;
+    assert.equal(conversation.sensitive, true);
+    assert.equal((await api.post(`/conversations/${conversationId}/shares`, { days: 7 })).status, 409);
+  });
+
+  it("protection désactivée par l'organisation : envoi normal, aucun marquage", async (t) => {
+    const { api, traced, conversationId, send } = await setup(t, { local: true, settings: { sensitiveData: "off" } });
+    await events(await send(nir));
+    assert.deepEqual(traced.map((item) => item.model), ["mistral:mistral-small-latest"]);
+    const conversation = ((await (await api.get("/conversations")).json()) as { id: string; sensitive?: boolean }[]).find((item) => item.id === conversationId)!;
+    assert.equal(conversation.sensitive, undefined);
   });
 });

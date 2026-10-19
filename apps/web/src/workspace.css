@@ -210,7 +210,8 @@
 .settings-segmented button[aria-checked="true"] { background: rgba(185, 217, 255, .15); color: #e3f0ff; }
 
 /* Interrupteur : case native restylée (reste accessible au clavier). */
-.settings-panel input[type="checkbox"][role="switch"] {
+.settings-panel input[type="checkbox"][role="switch"],
+.agent-schedules input[type="checkbox"][role="switch"] {
   position: relative;
   width: 30px;
   height: 17px;
@@ -224,7 +225,8 @@
   transition: background .15s, border-color .15s;
 }
 
-.settings-panel input[type="checkbox"][role="switch"]::after {
+.settings-panel input[type="checkbox"][role="switch"]::after,
+.agent-schedules input[type="checkbox"][role="switch"]::after {
   position: absolute;
   top: 2px;
   left: 2px;
@@ -236,9 +238,12 @@
   transition: transform .15s, background .15s;
 }
 
-.settings-panel input[type="checkbox"][role="switch"]:checked { border-color: rgba(185, 217, 255, .5); background: rgba(156, 196, 255, .35); }
-.settings-panel input[type="checkbox"][role="switch"]:checked::after { background: #eef5ff; transform: translateX(13px); }
-.settings-panel input[type="checkbox"][role="switch"]:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: 2px; }
+.settings-panel input[type="checkbox"][role="switch"]:checked,
+.agent-schedules input[type="checkbox"][role="switch"]:checked { border-color: rgba(185, 217, 255, .5); background: rgba(156, 196, 255, .35); }
+.settings-panel input[type="checkbox"][role="switch"]:checked::after,
+.agent-schedules input[type="checkbox"][role="switch"]:checked::after { background: #eef5ff; transform: translateX(13px); }
+.settings-panel input[type="checkbox"][role="switch"]:focus-visible,
+.agent-schedules input[type="checkbox"][role="switch"]:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: 2px; }
 
 .settings-meter { display: grid; gap: 5px; }
 .settings-meter-label { display: flex; justify-content: space-between; gap: 8px; color: #9fb0c8; font-size: 10.5px; }
@@ -1248,6 +1253,19 @@
 
 .feedback-comment input:focus { border-color: rgba(185, 217, 255, .45); }
 
+/* Accord de partage : sous le champ, case à cocher (pas un champ de texte). */
+.feedback-comment { flex-wrap: wrap; }
+.feedback-share {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  gap: 6px;
+  color: #9fb2cc;
+  font-size: 12px;
+  cursor: pointer;
+}
+.feedback-comment .feedback-share input { flex: none; width: 14px; height: 14px; padding: 0; accent-color: #9ecaff; }
+
 .feedback-comment button {
   display: grid;
   width: 30px;
@@ -1464,3 +1482,38 @@
 .dictation-button.recording { color: #ff8f9c; animation: dictation-pulse 1.2s ease-in-out infinite; }
 @keyframes dictation-pulse { 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .dictation-button.recording { animation: none; } }
+
+/* Équipes d'agents : étapes des sous-agents, et validation « pour le compte de ». */
+.agent-step-agent { padding: 0 6px; border-radius: 999px; background: rgba(158, 202, 255, .1); color: #bcd6f7; font-size: 10.5px; font-weight: 600; }
+.agent-step-nested { border-left: 1px solid rgba(158, 202, 255, .18); padding-left: 8px; }
+.approval-behalf { margin: 0 0 6px; color: #bcd6f7; font-size: 12px; font-weight: 600; }
+
+/* ---- Atelier d'entraînement (Organisation › Modèles et quotas) ---------- */
+.settings-workshop { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
+.settings-workshop > summary { display: inline-flex; align-items: center; gap: 6px; color: #9fb2cc; font-size: 12px; cursor: pointer; }
+.settings-workshop[open] > summary { margin-bottom: 8px; }
+.settings-workshop-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 9px;
+  outline: none;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.settings-workshop-input:focus { border-color: rgba(185, 217, 255, .45); }
+.settings-workshop-examples { display: flex; max-height: 180px; flex-direction: column; gap: 4px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.settings-workshop-examples li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.settings-workshop-text { flex: 1; min-width: 0; overflow: hidden; color: #cfdcef; text-overflow: ellipsis; white-space: nowrap; }
+.settings-workshop-examples small { color: #8fa0b8; font-size: 10.5px; }
+.settings-workshop-examples button { display: grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #7d8ca4; cursor: pointer; }
+.settings-workshop-result { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, .03); color: #dbe6f5; font-size: 12px; }
+/* Écran étroit : le bouton passe à la ligne plutôt que de déborder de la carte. */
+.settings-workshop .settings-row { flex-wrap: wrap; }
+
+/* Conversation sensible : le rappel sous la saisie le dit, en couleur. */
+.composer-disclaimer.sensitive { color: #c9b4ff; }

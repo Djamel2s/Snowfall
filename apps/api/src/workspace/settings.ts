@@ -19,7 +19,13 @@ export type OrganizationSettings = {
   tools: ToolId[];
   /** Plafonds mensuels d'appels d'outils, par catégorie ; absent = illimité. */
   toolLimits: Partial<Record<ToolMeter, number>>;
+  /** Routage automatique : question simple → modèle rapide, complexe → modèle puissant ; null = désactivé. */
+  modelRouting: ModelRouting | null;
+  /** Données sensibles détectées avant un envoi externe : modèle local, ou refus. « off » : désactivé. */
+  sensitiveData: "local" | "off";
 };
+
+export type ModelRouting = { fast: { provider: ProviderId; model: string }; strong: { provider: ProviderId; model: string } };
 
 /**
  * Catégories d'outils comptées : leur coût n'apparaît pas dans les tokens
@@ -69,6 +75,8 @@ export const defaultSettings: OrganizationSettings = {
   linkDomains: [],
   tools: defaultOrganizationTools,
   toolLimits: {},
+  modelRouting: null,
+  sensitiveData: "local",
 };
 
 export type UsageTotals = { inputTokens: number; outputTokens: number };
@@ -128,7 +136,18 @@ type SettingsRow = {
   link_domains: string[];
   enabled_tools: string[];
   tool_limits: Record<string, unknown>;
+  model_routing: unknown;
+  sensitive_data: string;
 };
+
+const isSelection = (value: unknown): value is { provider: ProviderId; model: string } =>
+  typeof value === "object" && value !== null && providerIds.includes((value as { provider: ProviderId }).provider) && typeof (value as { model: unknown }).model === "string";
+
+function routingOf(value: unknown): ModelRouting | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { fast, strong } = value as { fast?: unknown; strong?: unknown };
+  return isSelection(fast) && isSelection(strong) ? { fast: { provider: fast.provider, model: fast.model }, strong: { provider: strong.provider, model: strong.model } } : null;
+}
 
 function fromRow(row: SettingsRow | undefined): OrganizationSettings {
   if (!row) return defaultSettings;
@@ -151,6 +170,9 @@ function fromRow(row: SettingsRow | undefined): OrganizationSettings {
         return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? [[meter, value]] : [];
       }),
     ),
+    modelRouting: routingOf(row.model_routing),
+    // Toute valeur inattendue : protégé (jamais « off » par défaut).
+    sensitiveData: row.sensitive_data === "off" ? "off" : "local",
   };
 }
 
@@ -165,7 +187,7 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
   private async read(client: PoolClient, tenant: TenantContext) {
     const result = await client.query<SettingsRow>(
       `SELECT allowed_providers, monthly_token_limit, provider_token_limits,
-              embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits
+              embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, model_routing, sensitive_data
        FROM organization_settings WHERE organization_id = $1`,
       [tenant.organizationId],
     );
@@ -181,8 +203,8 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
       await client.query(
         `INSERT INTO organization_settings
            (organization_id, allowed_providers, monthly_token_limit, provider_token_limits,
-            embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, updated_by, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+            embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, updated_by, model_routing, sensitive_data, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
          ON CONFLICT (organization_id) DO UPDATE SET
            allowed_providers = EXCLUDED.allowed_providers,
            monthly_token_limit = EXCLUDED.monthly_token_limit,
@@ -192,6 +214,8 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
            link_domains = EXCLUDED.link_domains,
            enabled_tools = EXCLUDED.enabled_tools,
            tool_limits = EXCLUDED.tool_limits,
+           model_routing = EXCLUDED.model_routing,
+           sensitive_data = EXCLUDED.sensitive_data,
            updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
         [
@@ -205,6 +229,8 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
           settings.tools,
           settings.toolLimits,
           tenant.userId,
+          settings.modelRouting ? JSON.stringify(settings.modelRouting) : null,
+          settings.sensitiveData,
         ],
       );
       return this.read(client, tenant);

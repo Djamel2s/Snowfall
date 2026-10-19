@@ -88,9 +88,9 @@ export class KnowledgeLimitError extends Error {
 }
 
 // L'AAD lie chaque chiffré à son organisation, sa base et sa ligne.
-const sourceAad = (organizationId: string, baseId: string, sourceId: string, field: "name" | "url" | "content") =>
+export const sourceAad = (organizationId: string, baseId: string, sourceId: string, field: "name" | "url" | "content") =>
   `knowledge-${field}:${organizationId}:${baseId}:${sourceId}`;
-const chunkAad = (organizationId: string, sourceId: string, chunkId: string, field: "text" | "vector") =>
+export const chunkAad = (organizationId: string, sourceId: string, chunkId: string, field: "text" | "vector") =>
   `knowledge-chunk-${field}:${organizationId}:${sourceId}:${chunkId}`;
 
 type BaseRow = { id: string; agentId: string | null; confidential: boolean; revision: number };

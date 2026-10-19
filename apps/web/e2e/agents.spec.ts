@@ -76,8 +76,8 @@ test('studio : consulter des agents — choix des spécialistes enregistré avec
   await mockApi(page, { agents, orgTools: ['search_knowledge', 'save_to_knowledge', 'delegate'] })
   await openAgents(page)
   await page.getByRole('button', { name: 'Modifier Juriste' }).click()
-  await page.getByRole('group', { name: 'Outils' }).getByRole('button', { name: /Consulter des agents/ }).click()
-  const specialists = page.getByRole('group', { name: /Agents consultables/ })
+  await page.getByRole('group', { name: 'Outils' }).getByRole('button', { name: /Déléguer à des agents/ }).click()
+  const specialists = page.getByRole('group', { name: /Son équipe/ })
   // Un agent ne se consulte pas lui-même.
   await expect(specialists.getByRole('button', { name: 'Juriste' })).toHaveCount(0)
   await specialists.getByRole('button', { name: 'Support RH' }).click()

@@ -124,13 +124,13 @@ services:
     tmpfs: ["/tmp"]
     # secret_id AppRole : fichier monté en lecture seule, jamais en variable.
     secrets: [vault_secret_id]
-    # Groupe du socket du bac à sable (interpréteur de code).
-    # Groupes des sockets : bac à sable (10010) et OCR local (10011).
-    group_add: ["10010", "10011"]
+    # Groupes des sockets : bac à sable (10010), OCR local (10011), décision (10012).
+    group_add: ["10010", "10011", "10012"]
     volumes:
       - ./infra/tls/ca.crt:/etc/snowfall/ca.crt:ro
       - snowfall_sandbox_socket:/run/sandbox
       - snowfall_ocr_socket:/run/ocr
+      - snowfall_decision_socket:/run/decision
     environment:
       NODE_ENV: production
       APP_ORIGIN: ${APP_ORIGIN:?Define APP_ORIGIN (https://...)}
@@ -149,6 +149,8 @@ services:
       SANDBOX_SOCKET: ${SANDBOX_SOCKET:-}
       # OCR local des documents numérisés (profil « ocr ») : /run/ocr/ocr.sock ; vide = non lus.
       OCR_SOCKET: ${OCR_SOCKET:-}
+      # Routage des modèles (profil « decision ») : /run/decision/decision.sock ; vide = heuristique seule.
+      DECISION_SOCKET: ${DECISION_SOCKET:-}
       # Serveurs MCP (approuvés par les admins ; domaines dans infra/egress/mcp-domains.txt).
       MCP_ENABLED: ${MCP_ENABLED:-false}
       # Antivirus obligatoire : un fichier non analysable est refusé.
@@ -323,6 +325,31 @@ services:
       - /tmp:size=16m,mode=0700
     volumes:
       - snowfall_ocr_socket:/run/ocr
+
+  # ---- Décision locale (profil « decision ») ------------------------------------
+  # Petit modèle de décision (Laya, Apache 2.0) pour le routage des modèles :
+  # téléchargé et vérifié au build (révision figée, SHA-256), puis aucun réseau,
+  # lecture seule, utilisateur dédié ; socket réservé au groupe 10012 (l'API).
+  # Il ne voit que la question posée (4 000 caractères au plus), jamais journalisée.
+  # Activer côté API : DECISION_SOCKET=/run/decision/decision.sock.
+  decision:
+    build: { context: apps/decision }
+    profiles: ["decision"]
+    runtime: ${DECISION_RUNTIME:-runsc}
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    logging: *logging
+    tmpfs:
+      - /tmp:size=64m,mode=0700
+    volumes:
+      - snowfall_decision_socket:/run/decision
 
   # ---- Recherche web des agents (profil « web-search ») ----------------------
   # Métamoteur privé : l'API l'interroge en JSON sur le réseau interne ; lui
@@ -526,6 +553,7 @@ services:
 
 volumes:
   snowfall_ocr_socket:
+  snowfall_decision_socket:
   snowfall_sandbox_socket:
   snowfall_clamav_db:
   snowfall_openbao_data:

@@ -7,6 +7,7 @@ import {
   isPaused,
   type KnowledgeOwnerKind,
   type Message,
+  type McpServer,
   type Prompt,
   type MessageFeedback as Feedback,
   type ModelSelection,
@@ -38,6 +39,7 @@ import PromptVariables from './components/PromptVariables'
 import { promptVariables, slashQuery } from './lib/prompts'
 import MessageFeedback from './components/MessageFeedback'
 import { DictationButton, ReadAloudButton } from './components/Voice'
+import AgentGraph from './components/AgentGraph'
 import ArtifactPanel from './components/ArtifactPanel'
 import { ArtifactContext, artifactsIn, wantsCode } from './lib/artifacts'
 import { LinkTrust, trustedHosts } from './lib/link-trust'
@@ -67,6 +69,8 @@ type Conversation = {
   projectId: string | null
   /** Hors historique, sans contenu dans les traces, effacée sous 24 h. */
   temporary?: boolean
+  /** Donnée sensible détectée : modèle local, définitivement. */
+  sensitive?: boolean
   messages: Message[]
   updatedAt: number
 }
@@ -126,9 +130,11 @@ const toConversation = (item: {
   knowledge?: { agent: boolean; project: boolean }
   projectId: string | null
   temporary?: boolean
+  sensitive?: boolean
   updatedAt: string
 }): Conversation => ({
   ...(item.temporary ? { temporary: true } : {}),
+  ...(item.sensitive ? { sensitive: true } : {}),
   id: item.id,
   title: item.title,
   agentId: item.agentId,
@@ -154,6 +160,14 @@ function App() {
   useEffect(() => {
     api.audioCapabilities().then(setVoice).catch(() => undefined)
   }, [])
+  // Carte des agents (graphe animé), ouverte depuis la section Agents.
+  const [graphOpen, setGraphOpen] = useState(false)
+  const [graphServers, setGraphServers] = useState<McpServer[]>([])
+  function openGraph() {
+    setGraphOpen(true)
+    setSidebarOpen(false)
+    api.listMcpServers().then(setGraphServers).catch(() => setGraphServers([]))
+  }
   // Mode temporaire : s'applique aux nouvelles conversations jusqu'à ce qu'on le coupe.
   const [temporaryMode, setTemporaryMode] = useState(false)
   // Retour d'une connexion OAuth (page /mcp/callback) : message affiché dans Mon compte.
@@ -229,6 +243,18 @@ function App() {
   const activeConversation = conversations.find((conversation) => conversation.id === activeId)
   // Liens des réponses : cliquables seulement vers les domaines déjà apparus dans la conversation.
   const linkHosts = useMemo(() => trustedHosts(activeConversation?.messages ?? []), [activeConversation?.messages])
+  // Agents au travail pendant la réponse : l'agent de la conversation et ses sous-agents actifs.
+  const workingAgentIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!run.sending) return ids
+    if (activeConversation?.agentId) ids.add(activeConversation.agentId)
+    for (const step of run.agentSteps) {
+      const member = step.agent && step.status === 'running' ? agents.find((agent) => agent.name === step.agent) : undefined
+      if (member) ids.add(member.id)
+    }
+    return ids
+  }, [run.sending, run.agentSteps, activeConversation?.agentId, agents])
+  const reduceMotion = preferences.reduceMotion === 'on' || (preferences.reduceMotion === 'system' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
   const listedConversations = useMemo(() => conversations.filter((conversation) => !conversation.temporary), [conversations])
   const temporaryShown = Boolean(activeConversation?.temporary || (!activeConversation && temporaryMode))
   const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
@@ -683,7 +709,7 @@ function App() {
       current
         .map((item) => {
           const saved = history.find((entry) => entry.id === item.id)
-          return saved ? { ...item, title: saved.title, updatedAt: new Date(saved.updatedAt).getTime() } : item
+          return saved ? { ...item, title: saved.title, updatedAt: new Date(saved.updatedAt).getTime(), ...(saved.sensitive ? { sensitive: true } : {}) } : item
         })
         .sort((a, b) => b.updatedAt - a.updatedAt),
     )
@@ -805,7 +831,7 @@ function App() {
   }
 
   /** Retour sur une réponse : affiché tout de suite, annulé si l'enregistrement échoue. */
-  async function rateMessage(messageId: string, feedback: Feedback | null) {
+  async function rateMessage(messageId: string, feedback: Feedback | null, share = false) {
     const conversation = activeConversation
     if (!conversation) return
     const apply = (value: Feedback | null | undefined) =>
@@ -822,7 +848,7 @@ function App() {
     const previous = conversation.messages.find((item) => item.id === messageId)?.feedback
     apply(feedback)
     try {
-      await api.setFeedback(conversation.id, messageId, feedback)
+      await api.setFeedback(conversation.id, messageId, feedback, share)
     } catch (cause) {
       apply(previous)
       fail(cause, 'error.send')
@@ -968,6 +994,14 @@ function App() {
         onStartAgent={(agent) => void newChat(agent)}
         onEditAgent={openAgentEditor}
         onDuplicateAgent={(agent) => void duplicateAgent(agent)}
+        onOpenGraph={openGraph}
+        onError={setError}
+        onOpenSchedule={(id) => {
+          void reloadConversations().then(() => {
+            setActiveId(id)
+            setSidebarOpen(false)
+          })
+        }}
         agentModelLabel={(agent) => modelLabel(catalog.providers, { provider: agent.provider, model: agent.model })}
         currentUserId={session.user.userId}
         agentEditor={studioAgent}
@@ -1063,8 +1097,24 @@ function App() {
         </header>
 
         {sharedToken && <SharedView token={sharedToken} onClose={closeShared} />}
+        {graphOpen && !sharedToken && (
+          <AgentGraph
+            agents={agents}
+            servers={graphServers}
+            activeAgentIds={workingAgentIds}
+            reduceMotion={reduceMotion}
+            onStart={(agent) => {
+              setGraphOpen(false)
+              void newChat(agent)
+            }}
+            onEdit={(agent) => openAgentEditor(agent)}
+            onAgentSaved={(saved) => setAgents((current) => current.map((item) => (item.id === saved.id ? saved : item)))}
+            onClose={() => setGraphOpen(false)}
+            onError={setError}
+          />
+        )}
         <div
-          hidden={Boolean(sharedToken)}
+          hidden={Boolean(sharedToken) || graphOpen}
           className={`chat-content ${conversationIsEmpty ? 'chat-content-empty' : ''} ${dragging ? 'chat-dragging' : ''}`}
           onDragOver={(event) => {
             if (!activeConversation || !canWrite || !event.dataTransfer.types.includes('Files')) return
@@ -1198,7 +1248,7 @@ function App() {
                               </button>
                               {voice.speech && <ReadAloudButton text={message.content} onError={setError} />}
                               {canWrite && (
-                                <MessageFeedback feedback={message.feedback} disabled={sending} onChange={(feedback) => rateMessage(message.id, feedback)} />
+                                <MessageFeedback feedback={message.feedback} disabled={sending} canShare={Boolean(activeConversation?.agentId) && !activeConversation?.temporary} onChange={(feedback, options) => rateMessage(message.id, feedback, options?.share)} />
                               )}
                               {message.id === lastAssistantId && canWrite && (
                                 <button
@@ -1430,7 +1480,9 @@ function App() {
                 </div>
               </div>
             </div>
-            <p className="composer-disclaimer">{temporaryShown ? t('temporary.notice') : t('chat.disclaimer')}</p>
+            <p className={`composer-disclaimer${activeConversation?.sensitive ? ' sensitive' : ''}`}>
+              {activeConversation?.sensitive ? t('sensitive.notice') : temporaryShown ? t('temporary.notice') : t('chat.disclaimer')}
+            </p>
           </footer>
         </div>
       </section>

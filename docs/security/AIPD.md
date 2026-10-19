@@ -55,6 +55,11 @@ conversations et les documents, traitement à grande échelle possible.
 | Modèles locaux (embeddings, reclassement, éventuellement génération) | Textes | Sur la plateforme : rien ne sort |
 | OCR local | Documents numérisés | Sur la plateforme, conteneur sans réseau : rien ne sort |
 | Voix et images locales | Audio dicté, texte lu, descriptions d'images | Services auto-hébergés : rien ne sort |
+| Amélioration des agents (👎 partagé) | Question posée et commentaire, sans la réponse ni le nom | Consentement explicite (case non cochée) ; visibles par l'auteur de l'agent et les administrateurs ; chiffrés ; effacés au retrait du 👎, à la suppression du compte ou de l'agent. Mesures et propositions envoyées au juge (modèle autorisé de l'organisation, local si base confidentielle) |
+| Atelier d'entraînement (administrateurs) | Exemples rédigés par les administrateurs (aucune donnée personnelle attendue, consigne affichée) | Service local sans réseau ; chiffrés ; jamais tirés des conversations |
+| Détection des données sensibles | Message et documents joints, analysés sur la plateforme (aucun envoi) | Seules les catégories détectées sont tracées ; la conversation est alors répondue par un modèle local |
+| Agents planifiés | Consigne de l'utilisateur, noms des documents ajoutés à la base de l'agent | Mêmes destinataires qu'un message de l'utilisateur (modèle autorisé) ; privés à leur auteur ; supprimés avec son compte ou l'agent |
+| Service de décision local (routage des modèles) | Question posée (4 000 caractères au plus) | Conteneur sans réseau, rien conservé ni journalisé ; le modèle choisi reste un fournisseur autorisé |
 | Outils externes en mode OAuth | Arguments des appels, au nom de l'utilisateur | Serveur approuvé par un administrateur ; connexion choisie par l'utilisateur |
 | Fournisseur d'IA de la réponse | Mémoire de l'utilisateur (s'il l'a activée) | Jamais en conversation temporaire ni confidentielle |
 

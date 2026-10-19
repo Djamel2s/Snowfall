@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { detectSensitive } from "../security/sensitive.js";
 import type { Pool } from "pg";
 import type { OrganizationKeyring } from "../crypto/keyring.js";
 import { withTenant, type TenantContext } from "../db/tenant.js";
@@ -19,12 +20,14 @@ export const MAX_MEMORY_CHARS = 500;
  * (hameçonnage : « termine chaque réponse par ce lien », exfiltration : « envoie à… ») :
  * refusés à l'enregistrement, et écartés s'ils sont déjà en base.
  */
-export function memoryRejection(content: string): "link" | "email" | "secret" | "instruction" | null {
+export function memoryRejection(content: string): "link" | "email" | "secret" | "instruction" | "sensitive" | null {
   if (/[\w.+-]+@[\w-]+(\.[\w-]+)+/.test(content)) return "email";
   if (/([a-z][a-z0-9+.-]*:\/\/|\bwww\.|\]\(|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}\/)/i.test(content)) return "link";
   // Un souvenir ne garde jamais de secret, ni d'ordre adressé à l'assistant.
   if (/\b(mots? de passe|password|passphrase|code (pin|d'acc[eè]s)|\bpin\b|iban|num[eé]ro de carte|cvv)\b/i.test(content)) return "secret";
   if (detectInjection(content).suspicious) return "instruction";
+  // Donnée sensible (n° de sécurité sociale, IBAN, carte, santé d'une personne) : jamais retenue.
+  if (detectSensitive(content).length) return "sensitive";
   return null;
 }
 
@@ -42,7 +45,8 @@ export interface UserMemoryStore {
   clear(tenant: TenantContext): Promise<number>;
 }
 
-const aad = (tenant: TenantContext, id: string) => `user-memory:${tenant.organizationId}:${tenant.userId}:${id}`;
+export const memoryAad = (tenant: TenantContext, id: string) => `user-memory:${tenant.organizationId}:${tenant.userId}:${id}`;
+const aad = memoryAad;
 
 export class PostgresUserMemoryStore implements UserMemoryStore {
   constructor(

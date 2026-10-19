@@ -1,3 +1,4 @@
+import { isGraphInterrupt } from "@langchain/langgraph";
 import { z } from "zod";
 
 // Un outil = un nom, une description (que le modèle lit pour décider de
@@ -24,6 +25,24 @@ export type ToolPreview = {
   warning?: boolean;
   /** Appel sortant d'une réponse exposée (contenu externe + données internes) : à valider. */
   exposure?: boolean;
+  /** Demande faite par un sous-agent : son nom (« pour le compte de »). */
+  onBehalfOf?: string;
+};
+
+/** Étape d'un sous-agent, remontée à l'interface pendant qu'il travaille. */
+export type SubStep = { id: string; name: string; status: "running" | "done" | "error" | "denied"; summary?: string | undefined; agent: string; parent: string };
+
+/** Ce que reçoit un outil pendant son exécution. */
+export type ToolContext = {
+  signal: AbortSignal;
+  /** Identifiant de l'appel (stable : sert de clé aux sous-exécutions). */
+  callId?: string | undefined;
+  /** Validation humaine de la réponse en cours (un sous-agent y fait remonter ses écritures). */
+  approve?: Approver | undefined;
+  /** Remonte une étape d'un sous-agent à l'interface. */
+  report?: ((step: SubStep) => void) | undefined;
+  /** Exposition de la réponse à cette étape (règle de deux), héritée par un sous-agent. */
+  exposure?: { untrusted: boolean; sensitive: boolean } | undefined;
 };
 
 export interface AgentTool<Args extends z.ZodType = z.ZodType> {
@@ -34,7 +53,9 @@ export interface AgentTool<Args extends z.ZodType = z.ZodType> {
   access: "read" | "write";
   /** Aperçu montré à l'utilisateur (obligatoire pour un outil d'écriture). */
   preview?(args: z.infer<Args>): ToolPreview;
-  execute(args: z.infer<Args>, context: { signal: AbortSignal }): Promise<ToolResult>;
+  execute(args: z.infer<Args>, context: ToolContext): Promise<ToolResult>;
+  /** Délai propre à l'outil (défaut : TOOL_TIMEOUT_MS) ; un sous-agent travaille plus longtemps. */
+  timeoutMs?: number;
 }
 
 /**
@@ -82,6 +103,8 @@ export async function runTool(
   call: { id?: string; name: string; arguments: unknown },
   signal: AbortSignal,
   approve?: Approver,
+  report?: (step: SubStep) => void,
+  exposure?: { untrusted: boolean; sensitive: boolean },
 ): Promise<ToolOutcome> {
   const tool = tools.find((item) => item.name === call.name);
   if (!tool) return { content: `Outil inconnu : ${call.name}.`, isError: true };
@@ -101,13 +124,16 @@ export async function runTool(
   }
 
   // Le délai court après l'accord : l'attente de l'utilisateur n'est pas comptée.
-  const timeout = AbortSignal.timeout(TOOL_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(tool.timeoutMs ?? TOOL_TIMEOUT_MS);
   try {
-    const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]) });
+    const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]), callId: call.id, approve, report, exposure });
     const content = result.content.length > TOOL_RESULT_CHARS ? `${result.content.slice(0, TOOL_RESULT_CHARS)}\n[… résultat tronqué]` : result.content;
     return { ...result, content, isError: false };
   } catch (error) {
     if (signal.aborted) throw error;
+    // Pause de validation demandée DEPUIS l'outil (sous-agent) : elle doit remonter
+    // jusqu'au graphe, jamais être prise pour un échec (l'action serait perdue).
+    if (isGraphInterrupt(error)) throw error;
     // Détails internes jamais renvoyés au modèle (ni à l'utilisateur).
     return { content: timeout.aborted ? `${tool.name} : délai dépassé.` : `${tool.name} : échec de l'exécution.`, isError: true };
   }

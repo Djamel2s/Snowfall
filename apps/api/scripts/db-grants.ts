@@ -5,7 +5,8 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 
 dotenv.config({
-  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+  // SNOWFALL_ENV_FILE : autre fichier (pile de test isolée), sinon le .env du dépôt.
+  path: process.env.SNOWFALL_ENV_FILE ?? fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
 const migrationUrl = process.env.DATABASE_MIGRATION_URL;
@@ -56,6 +57,13 @@ const privileges: Record<string, string[]> = {
   mcp_servers: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_user_tokens: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_oauth_states: ["SELECT", "INSERT", "DELETE"],
+  // Versions immuables : seul leur score se met à jour ; effacées avec l'agent (cascade).
+  agent_versions: ["SELECT", "INSERT", "UPDATE (score)"],
+  agent_eval_cases: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  // Atelier : exemples modifiables ; modèles immuables hors statut (tête et mesures figées).
+  decision_examples: ["SELECT", "INSERT", "DELETE"],
+  decision_models: ["SELECT", "INSERT", "UPDATE (status, activated_at)"],
+  agent_schedules: ["SELECT", "INSERT", "UPDATE", "DELETE"],
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
@@ -69,6 +77,7 @@ const functions = [
   "snowfall_stale_runs(interval)",
   "snowfall_expired_temporary()",
   "snowfall_agent_ratings()",
+  "snowfall_claim_schedules(interval, integer)",
 ];
 
 async function main() {

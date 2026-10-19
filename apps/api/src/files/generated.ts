@@ -26,7 +26,8 @@ export interface GeneratedFileStore {
   purgeOrphans(tenant: TenantContext): Promise<number>;
 }
 
-const aad = (tenant: TenantContext, id: string, field: "name" | "content") => `generated-file-${field}:${tenant.organizationId}:${tenant.userId}:${id}`;
+export const generatedFileAad = (tenant: TenantContext, id: string, field: "name" | "content") => `generated-file-${field}:${tenant.organizationId}:${tenant.userId}:${id}`;
+const aad = generatedFileAad;
 
 type Row = { id: string; name: string; mediaType: string; size: number; messageId: string | null; createdAt: string };
 const META = `id, name, media_type AS "mediaType", size_bytes AS size, message_id AS "messageId", created_at AS "createdAt"`;

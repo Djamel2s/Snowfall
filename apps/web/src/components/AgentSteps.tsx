@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Ban, Check, FileSearch, Globe, LoaderCircle, PenLine, Plug, Search, ShieldCheck, SquareTerminal, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Ban, Check, FileSearch, Globe, ImagePlus, LoaderCircle, PenLine, Plug, Search, ShieldCheck, SquareTerminal, TriangleAlert, Users, Wrench, X } from 'lucide-react'
 import type { AgentStep, ToolApproval } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
@@ -28,7 +28,11 @@ export default function AgentSteps({ steps, onDecide }: Props) {
                     ? SquareTerminal
                     : step.name.startsWith('mcp_')
                       ? Plug
-                      : Wrench
+                      : step.name === 'delegate_task'
+                        ? Users
+                        : step.name === 'generate_image'
+                          ? ImagePlus
+                          : Wrench
         const label =
           step.name === 'search_knowledge'
             ? t('agent.searchKnowledge')
@@ -42,11 +46,16 @@ export default function AgentSteps({ steps, onDecide }: Props) {
                     ? t('agent.runCode')
                     : step.name.startsWith('mcp_')
                       ? t('agent.mcpTool', { name: step.name.slice(4) })
-                      : t('agent.tool', { name: step.name })
+                      : step.name === 'delegate_task'
+                        ? t('agent.delegate')
+                        : step.name === 'generate_image'
+                          ? t('agent.generateImage')
+                          : t('agent.tool', { name: step.name })
         const waiting = step.status === 'running' && step.approval
         return (
-          <li key={step.id} className={`agent-step agent-step-${step.status}`}>
+          <li key={step.id} className={`agent-step agent-step-${step.status}${step.parent ? ' agent-step-nested' : ''}`} style={step.parent ? { marginLeft: `${Math.min(3, step.parent.split('/').length) * 14}px` } : undefined}>
             <span className="agent-step-line">
+              {step.agent && <span className="agent-step-agent">{step.agent}</span>}
               <Icon size={12} />
               <span className="agent-step-label">{label}</span>
               {step.summary && <span className="agent-step-summary">« {step.summary} »</span>}
@@ -102,6 +111,7 @@ function ApprovalCard({ approval, onDecide }: { approval: ToolApproval; onDecide
         </p>
       )}
       {approval.exposure && <p className="approval-exposure">{t('agent.approvalExposure')}</p>}
+      {approval.onBehalfOf && <p className="approval-behalf">{t('agent.onBehalfOf', { name: approval.onBehalfOf })}</p>}
       <p className="approval-subject">{approval.title}</p>
       {approval.detail && <pre className="approval-detail">{approval.detail}</pre>}
       {failed && <p className="approval-error">{t('agent.approvalExpired')}</p>}

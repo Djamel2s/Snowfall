@@ -17,6 +17,7 @@
     "dev:api": "npm run dev -w @snowfall/api",
     "check:api": "npm run check -w @snowfall/api",
     "check": "npm run check:api && npm run lint:web && npm run build:web",
+    "e2e:real": "node scripts/e2e-real.mjs",
     "db:generate": "npm run db:generate -w @snowfall/api",
     "db:migrate": "npm run db:migrate -w @snowfall/api",
     "db:check": "npm run db:check -w @snowfall/api",

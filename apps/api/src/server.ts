@@ -1,5 +1,5 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -14,8 +14,12 @@ import {
   echoModel,
   ModelRefusalError,
   isRateLimit,
+  isolated,
+  type ChatResult,
   type ChatRunner,
   type ChatTurn,
+  type ToolEvent,
+  DEFAULT_MAX_TOKENS,
   type ModelImage,
   type PendingApproval,
   type TokenUsage,
@@ -97,11 +101,22 @@ import { registerMemoryRoutes } from "./routes/memory.js";
 import { registerAudioRoutes } from "./routes/audio.js";
 import { OpenAiCompatibleSpeech } from "./audio/speech.js";
 import { memoryTool } from "./agent/memory-tool.js";
-import { delegateTool, type Delegate } from "./agent/delegate-tool.js";
+import { delegateTool, MAX_TEAM_DEPTH, subThreadKey, type Delegate } from "./agent/delegate-tool.js";
 import { imageTool, OpenAiCompatibleImages, type ImageGenerator } from "./agent/image-tool.js";
 import { carriesNotice, guardTools } from "./agent/injection-guard.js";
 import { UnixSocketOcr, type DocumentOcr } from "./ocr/client.js";
 import { PostgresAgentRatingStore, type AgentRating, type AgentRatingStore } from "./agents/ratings.js";
+import { routeMessage, type DecisionEngine } from "./decision/routing.js";
+import { detectSensitive, type SensitiveCategory } from "./security/sensitive.js";
+import { UnixSocketDecision, type DecisionTrainer } from "./decision/client.js";
+import { PostgresWorkshopStore, type DecisionHead, type WorkshopStore } from "./decision/workshop.js";
+import { registerDecisionRoutes } from "./routes/decision.js";
+import { PostgresScheduleStore, type ScheduleStore } from "./schedules/store.js";
+import { nextRun } from "./schedules/rule.js";
+import { registerScheduleRoutes } from "./routes/schedules.js";
+import { PostgresQualityStore, type QualityStore } from "./quality/store.js";
+import type { QualityModels } from "./quality/improve.js";
+import { registerQualityRoutes } from "./routes/quality.js";
 import { registerPromptRoutes } from "./routes/prompts.js";
 import { MemoryShareStore, PostgresShareStore, SHARE_DURATIONS, type ShareStore } from "./shares/store.js";
 import { meterOf, MemoryToolUsageStore, type OrganizationSettings, type ToolUsageStore } from "./workspace/settings.js";
@@ -136,13 +151,14 @@ import {
   type RunStore,
 } from "./agent/runs.js";
 import { defaultOrganizationTools, permittedTools, platformDependentTools, toolIds, type ToolId } from "./agent/catalog.js";
-import type { AgentTool } from "./agent/tools.js";
+import type { AgentTool, ToolContext, ToolPreview } from "./agent/tools.js";
 import { ClamdScanner, type MalwareScanner } from "./security/antivirus.js";
 import { countingAuditLog, createMetrics, startMetricsServer, type Metrics } from "./observability/metrics.js";
 import { createLangfuseTracer, noopTracer, startTraceRetention, type RunTrace, type RunTracer } from "./observability/tracing.js";
 
 dotenv.config({
-  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+  // SNOWFALL_ENV_FILE : autre fichier (pile de test isolée), sinon le .env du dépôt.
+  path: process.env.SNOWFALL_ENV_FILE ?? fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
 declare module "fastify" {
@@ -235,6 +251,18 @@ export type AppDependencies = {
   ocr?: DocumentOcr;
   /** Génération d'images locale (absent : outil indisponible). */
   images?: ImageGenerator;
+  /** Service de décision local (routage des modèles) ; absent : heuristique seule. */
+  decision?: DecisionEngine;
+  /** Atelier d'entraînement : exemples et têtes de décision (administrateurs). */
+  workshop?: WorkshopStore;
+  /** Entraînement local des têtes (le même service de décision). */
+  trainer?: DecisionTrainer;
+  /** Agents planifiés et déclencheurs (absent : fonction indisponible). */
+  schedules?: ScheduleStore;
+  /** Tests : cadence du planificateur (défaut : chaque minute). */
+  scheduleIntervalMs?: number;
+  /** Qualité des agents : versions et cas d'évaluation (absent : fonction indisponible). */
+  quality?: QualityStore;
   /** Voix locale : dictée et lecture à voix haute (absent : désactivée). */
   speech?: OpenAiCompatibleSpeech;
   /** Taux de réponses utiles par agent (agrégat de l'organisation). */
@@ -311,6 +339,7 @@ export function createAppServer(deps: AppDependencies) {
   const audit = deps.audit ?? noopAuditLog;
   const kit = createRouteKit(audit);
   const authenticate: Authenticator = deps.authenticate ?? (async () => null);
+  const internalPrincipals = new Map<string, { user: AuthenticatedUser; expires: number }>();
   const conversationStore = deps.conversationStore;
   const models = deps.models ?? new ProviderRegistry({}, { fallback: echoModel });
   const agents = deps.agents;
@@ -457,6 +486,20 @@ export function createAppServer(deps: AppDependencies) {
     return deps.settings ? (await deps.settings.get(user)).allowedProviders : [...providerIds];
   }
 
+  /**
+   * Modèle local de l'organisation (données sensibles) : celui du routage s'il est
+   * local, sinon le premier modèle local publié ; null si l'organisation n'en a pas.
+   */
+  async function localSelection(user: AuthenticatedUser): Promise<ModelSelection | null> {
+    if (!(await allowedProviders(user)).includes("local")) return null;
+    const routing = deps.settings ? (await deps.settings.get(user)).modelRouting : null;
+    for (const candidate of [routing?.strong, routing?.fast]) {
+      if (candidate?.provider === "local" && (await isModelPermitted(user, candidate))) return candidate;
+    }
+    const model = (await models.catalog()).find((provider) => provider.id === "local" && provider.available)?.models[0];
+    return model ? { provider: "local", model: model.id } : null;
+  }
+
   /** Liste blanche : modèle publié par un fournisseur configuré et autorisé par l'organisation. */
   async function isModelPermitted(user: AuthenticatedUser, selection: ModelSelection) {
     const [published, permitted] = await Promise.all([models.isAllowed(selection), allowedProviders(user)]);
@@ -467,6 +510,38 @@ export function createAppServer(deps: AppDependencies) {
   function selectionFor(conversation: ConversationSummary, agent: Agent | null): ModelSelection | undefined {
     if (agent) return { provider: agent.provider, model: agent.model };
     return conversation.model ?? undefined;
+  }
+
+  /**
+   * Routage automatique : seulement pour une conversation sans agent ni modèle
+   * choisi, et si l'organisation l'a activé. Question simple → modèle rapide ;
+   * complexe ou doute → modèle puissant. Le choix suit la réponse (reprise comprise).
+   */
+  /**
+   * Tête de routage entraînée par l'atelier (null : Laya sans entraînement).
+   * Cache de 60 s par organisation, vidé ici dès qu'un administrateur active ou
+   * désactive un modèle (les autres instances suivent au plus tard 60 s après).
+   */
+  const routingHeads = new Map<string, { at: number; head: DecisionHead | undefined }>();
+  async function routingHead(user: AuthenticatedUser) {
+    if (!deps.workshop || !deps.decision) return undefined;
+    const cached = routingHeads.get(user.organizationId);
+    if (cached && Date.now() - cached.at < 60_000) return cached.head;
+    const head = (await deps.workshop.activeHead(user, "routing").catch(() => null))?.head;
+    routingHeads.set(user.organizationId, { at: Date.now(), head });
+    return head;
+  }
+
+  async function routedSelection(user: AuthenticatedUser, agent: Agent | null, selection: ModelSelection | undefined, text: string, attachments: number, confidential: boolean) {
+    // Base confidentielle : on garde le modèle par défaut (local exigé, vérifié plus loin).
+    if (agent || selection || confidential || !deps.settings) return { selection, routed: null };
+    const routing = (await deps.settings.get(user)).modelRouting;
+    if (!routing) return { selection, routed: null };
+    const decision = await routeMessage(text, deps.decision, { attachments, head: await routingHead(user) }, AbortSignal.timeout(3_000));
+    const chosen = decision.label === "simple" ? routing.fast : routing.strong;
+    // Catalogue ou fournisseurs changés depuis le réglage : modèle par défaut.
+    if (!(await isModelPermitted(user, chosen))) return { selection, routed: null };
+    return { selection: chosen, routed: decision };
   }
 
   /**
@@ -548,6 +623,18 @@ export function createAppServer(deps: AppDependencies) {
     // Refus par défaut : seules les routes marquées public échappent à l'auth.
     api.addHook("onRequest", async (request, reply) => {
       if (request.routeOptions.config.public) return;
+
+      // Exécution planifiée : jeton aléatoire à usage unique, valable 30 s, créé en
+      // mémoire par le planificateur pour SA requête interne (jamais par le réseau ;
+      // nginx efface de toute façon cet en-tête).
+      const internal = request.headers["x-snowfall-internal"];
+      if (internal !== undefined) {
+        const entry = typeof internal === "string" ? internalPrincipals.get(internal) : undefined;
+        if (typeof internal === "string") internalPrincipals.delete(internal);
+        if (!entry || entry.expires < Date.now()) return reply.code(401).send({ error: "Unauthorized" });
+        request.principal = entry.user;
+        return;
+      }
 
       const user = await authenticate(request);
       if (!user) return reply.code(401).send({ error: "Unauthorized" });
@@ -747,6 +834,7 @@ export function createAppServer(deps: AppDependencies) {
         (await models.catalog()).filter((provider) => provider.available).map((provider) => provider.id),
       ...(deps.embeddingProviders ? { embeddingProviders: deps.embeddingProviders } : {}),
       // Outils dont le service n'est pas installé : ni activables, ni proposés.
+      isModelAllowed: (selection) => models.isAllowed(selection),
       platformTools: () =>
         toolIds.filter(
           (id) =>
@@ -757,6 +845,14 @@ export function createAppServer(deps: AppDependencies) {
             (id === "image_generation" && deps.images !== undefined),
         ),
     });
+    if (deps.schedules && agents) {
+      registerScheduleRoutes(api, kit, {
+        store: deps.schedules,
+        agents,
+        createConversation: (user, title, agent) => conversationStore.create(user, title, agent.id),
+      });
+    }
+    if (deps.workshop) registerDecisionRoutes(api, kit, { store: deps.workshop, trainer: deps.trainer, changed: (organizationId) => routingHeads.delete(organizationId) });
     if (deps.mcp) registerMcpRoutes(api, kit, { ...deps.mcp, redirectUri: deps.mcp.redirectUri ?? `${appOrigin}/mcp/callback` });
     registerPromptRoutes(api, kit, prompts);
     registerMemoryRoutes(api, kit, memories);
@@ -791,7 +887,12 @@ export function createAppServer(deps: AppDependencies) {
 
       const params = z.object({ id: conversationIdSchema, messageId: z.uuid() }).safeParse(request.params);
       const body = z
-        .object({ rating: z.enum(["up", "down"]).nullable(), comment: z.string().trim().max(1_000).optional() })
+        .object({
+          rating: z.enum(["up", "down"]).nullable(),
+          comment: z.string().trim().max(1_000).optional(),
+          // Accord explicite : la question et le commentaire vont à l'auteur de l'agent (cas d'évaluation).
+          share: z.boolean().optional(),
+        })
         .strict()
         .safeParse(request.body);
       if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
@@ -810,8 +911,35 @@ export function createAppServer(deps: AppDependencies) {
         const value = body.data.rating === "up" ? 1 : body.data.rating === "down" ? 0 : null;
         void tracer.score(saved.runId, `feedback-${params.data.messageId}`, value).catch((error: unknown) => request.log.warn({ err: error }, "Note de trace impossible"));
       }
-      return { feedback };
+      // Note retirée ou changée : le cas qui venait de ce 👎 est retiré aussi.
+      if (body.data.rating !== "down") await deps.quality?.withdrawShared(user, params.data.messageId);
+      const shared = body.data.rating === "down" && body.data.share ? await shareAsCase(request, user, params.data.id, params.data.messageId, feedback?.comment) : undefined;
+      return { feedback, ...(shared ? { shared } : {}) };
     });
+
+    /**
+     * 👎 partagé avec l'auteur de l'agent : la question (jamais la réponse) et le
+     * commentaire deviennent un cas proposé. Refusé hors agent, en conversation
+     * temporaire ou avec une base confidentielle active. Personne n'est nommé.
+     */
+    async function shareAsCase(request: FastifyRequest, user: AuthenticatedUser, conversationId: string, messageId: string, comment: string | undefined): Promise<{ ok: boolean; reason?: string }> {
+      if (!deps.quality || !agents) return { ok: false, reason: "unavailable" };
+      const conversation = await conversationStore.get(user, conversationId);
+      if (!conversation?.agentId) return { ok: false, reason: "no_agent" };
+      if (conversation.temporary) return { ok: false, reason: "temporary" };
+      if (conversation.sensitive) return { ok: false, reason: "confidential" };
+      const agent = await agents.get(user, conversation.agentId);
+      if (!agent) return { ok: false, reason: "no_agent" };
+      if ((await activeBases(user, conversation, agent)).some((base) => base.confidential)) return { ok: false, reason: "confidential" };
+      const history = (await conversationStore.getMessages(user, conversationId)) ?? [];
+      const index = history.findIndex((message) => message.id === messageId);
+      const question = index > 0 && history[index]!.role === "assistant" ? history[index - 1] : undefined;
+      if (question?.role !== "user" || !question.content.trim()) return { ok: false, reason: "no_question" };
+      const created = await deps.quality.addCase(user, agent.id, { origin: "feedback", question: question.content.slice(0, 2_000), comment: comment ?? null, sourceMessageId: messageId });
+      if (!created) return { ok: false, reason: "already_shared_or_full" };
+      await kit.record(request, user, { eventType: "agent.eval_case_add", targetType: "agent", targetId: agent.id, details: { origin: "feedback" } });
+      return { ok: true };
+    }
 
     // Branches : afficher une autre version d'un tour (modification, régénération).
     api.post("/conversations/:id/branch", async (request, reply) => {
@@ -879,6 +1007,50 @@ export function createAppServer(deps: AppDependencies) {
       // Agent supprimé entre-temps : repli sur le modèle par défaut.
       const agent = conversation.agentId && agents ? await agents.get(user, conversation.agentId) : null;
       return { conversation, history, agent, selection: selectionFor(conversation, agent) };
+    }
+
+    /**
+     * Données sensibles, AVANT tout envoi : détectées localement dans le message et
+     * ses pièces jointes, ou déjà relevées dans la conversation. Elle passe alors sur
+     * un modèle local, et y reste (traitée comme une base confidentielle). Sans
+     * modèle local : refus, rien n'est envoyé ni enregistré. Seules les catégories
+     * sont tracées, jamais les valeurs.
+     */
+    async function sensitiveGuard(
+      request: FastifyRequest,
+      reply: FastifyReply,
+      user: AuthenticatedUser,
+      loaded: { conversation: ConversationSummary; selection: ModelSelection | undefined },
+      texts: string[],
+    ): Promise<{ selection: ModelSelection | undefined; sensitive: boolean } | null> {
+      const policy = deps.settings ? (await deps.settings.get(user)).sensitiveData : "local";
+      const found = policy === "local" ? [...new Set(texts.flatMap((text) => detectSensitive(text)))] : ([] as SensitiveCategory[]);
+      if (!loaded.conversation.sensitive && found.length === 0) return { selection: loaded.selection, sensitive: false };
+
+      const provider = models.providerFor(loaded.selection);
+      const selection = provider === "local" || provider === "echo" ? loaded.selection : await localSelection(user);
+      const local = provider === "local" || provider === "echo" || selection !== null;
+      if (found.length) {
+        await kit.record(request, user, {
+          eventType: "security.sensitive_detected",
+          ...(local ? {} : { outcome: "denied" as const }),
+          targetType: "conversation",
+          targetId: loaded.conversation.id,
+          details: { categories: found.join(","), action: local ? (selection === loaded.selection ? "kept_local" : "rerouted_local") : "blocked" },
+        });
+      }
+      if (!local) {
+        await reply.code(409).send({ error: "Local model required", reason: "sensitive_requires_local", categories: found });
+        return null;
+      }
+      // Marquée dès qu'un modèle local peut répondre (refus faute de modèle local :
+      // rien n'est gardé). Un refus plus loin (réponse déjà en cours…) la laisse
+      // marquée : c'est le côté prudent.
+      if (!loaded.conversation.sensitive) {
+        await conversationStore.markSensitive(user, loaded.conversation.id);
+        loaded.conversation.sensitive = true;
+      }
+      return { selection: selection ?? undefined, sensitive: true };
     }
 
     /** Bases de connaissances actives : celle de l'agent et/ou celle du projet. */
@@ -1028,7 +1200,7 @@ export function createAppServer(deps: AppDependencies) {
         await kit.record(request, user, { eventType: "share.denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "temporary" } });
         return reply.code(409).send({ error: "Conflict", reason: "temporary" });
       }
-      if ((await activeBases(user, loaded.conversation, loaded.agent)).some((base) => base.confidential)) {
+      if (loaded.conversation.sensitive || (await activeBases(user, loaded.conversation, loaded.agent)).some((base) => base.confidential)) {
         await kit.record(request, user, { eventType: "share.denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "confidential" } });
         return reply.code(409).send({ error: "Conflict", reason: "confidential" });
       }
@@ -1242,25 +1414,129 @@ export function createAppServer(deps: AppDependencies) {
       return delegates;
     }
 
+    type TeamContext = {
+      request: FastifyRequest;
+      user: AuthenticatedUser;
+      agent: Agent | null;
+      selection: ModelSelection | undefined;
+      provider: string;
+      permitted: Set<ToolId>;
+      confidential: boolean;
+      /** Fil d'exécution durable de l'appelant (points de reprise des sous-agents dessous). */
+      threadId: string | undefined;
+      depth: number;
+      /** Budget de tokens commun à toute l'équipe. */
+      budget: { tokens: number; max: number };
+      conversationId: string;
+    };
+
+    /** Outil de délégation de l'agent, s'il a une équipe et en a le droit à ce niveau. */
+    async function teamTools(team: TeamContext): Promise<AgentTool[]> {
+      const { agent } = team;
+      if (!agent || !agents || team.depth >= MAX_TEAM_DEPTH || !team.permitted.has("delegate") || !agent.delegates.length || !models.supportsTools?.(team.selection)) return [];
+      const delegates = await delegatesOf(team.user, agent);
+      if (!delegates.length) return [];
+      return [
+        delegateTool({
+          delegates,
+          parentLocal: team.provider === "local" || team.provider === "echo",
+          parentConfidential: team.confidential,
+          run: (delegate, task, context) => teamRun(team, delegate, task, context),
+          audit: (event) => kit.record(team.request, team.user, { eventType: "agent.delegate", targetType: "agent", ...event, details: { ...event.details, from: agent.id, depth: team.depth + 1 } }),
+        }),
+      ];
+    }
+
     /**
-     * Le spécialiste répond : son modèle, ses instructions, SA base seulement,
-     * 3 étapes et 90 secondes au plus. Quota vérifié avant, tokens comptés après.
+     * Un sous-agent travaille : son modèle, ses instructions, ses outils — limités à
+     * ceux de l'appelant (aucune escalade). Exécution durable dans un sous-fil du
+     * run : ses écritures remontent en validation (« pour le compte de ») et, à la
+     * reprise, il repart de son point de reprise (jamais regénéré : ce qui a été
+     * validé est exactement ce qui s'exécute). Sous-fil effacé avec le run.
      */
-    async function consult(user: AuthenticatedUser, delegate: Delegate, task: string, signal: AbortSignal) {
+    async function teamRun(team: TeamContext, delegate: Delegate, task: string, context: ToolContext) {
+      const { user, request } = team;
       const specialist = await agents!.get(user, delegate.id);
-      if (!specialist) return null;
+      if (!specialist || team.budget.tokens >= team.budget.max) return null;
       const selection: ModelSelection = { provider: specialist.provider, model: specialist.model };
       const provider = models.providerFor(selection);
       if (deps.settings) {
         const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
         if (!checkQuota(settings, usage, provider).allowed) return null;
       }
+      // Jamais plus que l'appelant : intersection des outils permis.
+      const permitted = new Set([...(await permittedFor(user, specialist))].filter((id) => team.permitted.has(id)));
       const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: specialist.id }) : null;
-      const tools = base && deps.knowledge && models.supportsTools?.(selection) ? [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], new CitationRegistry())] : [];
-      const result = await runnerFor(selection)(
-        { message: task, instructions: specialist.instructions, ...(tools.length ? { tools, maxSteps: 3 } : {}) },
-        { signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) },
-      );
+      const confidential = team.confidential || Boolean(base?.confidential);
+      const citations = new CitationRegistry();
+      const plan: KnowledgePlan =
+        base && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(selection)
+          ? { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], citations)] }
+          : { mode: "none" };
+      const threadId = team.threadId ? `${team.threadId}~${subThreadKey(context.callId)}` : undefined;
+      const tools = agentTools(request, user, specialist, selection, plan, permitted, {
+        confidential,
+        citations,
+        web: new WebSession(task),
+        conversationId: team.conversationId,
+        codeRuns: { count: 0 },
+        images: { count: 0 },
+      });
+      tools.push(...(await mcpTools(request, user, specialist, selection, permitted, confidential, context.signal)));
+      tools.push(...(await teamTools({ ...team, agent: specialist, selection, provider, permitted, confidential, threadId, depth: team.depth + 1 })));
+      const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
+      const guarded = guardTools(tools, { tainted: false }, (tool, verdict) => {
+        void kit.record(request, user, {
+          eventType: "agent.injection_suspected",
+          targetType: "conversation",
+          targetId: team.conversationId,
+          details: { source: "tool", tool, signals: verdict.signals.join(","), score: verdict.score, agentId: specialist.id },
+        });
+      });
+      const metered = guarded.map((tool) => meteredTool(request, user, tool, limits));
+      const input = {
+        message: task,
+        instructions: specialist.instructions,
+        ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: Math.max(1, team.budget.max - team.budget.tokens) } : {}),
+        // Règle de deux : le sous-agent hérite de l'exposition de l'appelant.
+        ...(context.exposure ? { exposure: context.exposure } : {}),
+      };
+      const callId = context.callId ?? "call";
+      // Étapes du sous-agent, remontées à l'interface sous l'appel de délégation.
+      const onTool = (event: ToolEvent) =>
+        context.report?.({
+          id: `${callId}/${event.id}`,
+          name: event.name,
+          status: event.status,
+          summary: event.summary,
+          agent: event.agent ?? specialist.name,
+          parent: event.parent ? `${callId}/${event.parent}` : callId,
+        });
+      // Demande d'écriture du sous-agent → validation de l'utilisateur, au nom du sous-agent.
+      const escalate = (request: { callId: string; name: string; preview: ToolPreview }, signal: AbortSignal) =>
+        context.approve
+          ? context.approve({ callId: `${callId}/${request.callId}`, name: request.name, preview: { ...request.preview, onBehalfOf: request.preview.onBehalfOf ?? specialist.name } }, signal)
+          : Promise.resolve(false);
+      const runner = runnerFor(selection);
+      let result: ChatResult;
+      if (threadId) {
+        const saver = checkpointerFor(user);
+        let resume: Record<string, boolean> | undefined;
+        // Reprise de la réponse principale : le sous-agent repart de son point de reprise.
+        let continuing = Boolean(await saver.getTuple({ configurable: { thread_id: threadId } }));
+        for (;;) {
+          const durable = { checkpointer: saver, threadId, ...(resume ? { resume } : continuing ? { continue: true } : {}) };
+          result = await isolated(() => runner(input, { signal: context.signal, onTool, durable }));
+          if (!result.pending?.length) break;
+          resume = {};
+          for (const pending of result.pending) resume[pending.id] = await escalate(pending, context.signal);
+          continuing = false;
+        }
+      } else {
+        result = await isolated(() => runner(input, { signal: context.signal, onTool, approve: escalate }));
+      }
+      const spent = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+      team.budget.tokens += spent;
       if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
       return { content: result.content, steps: result.steps ?? 0 };
     }
@@ -1482,8 +1758,9 @@ export function createAppServer(deps: AppDependencies) {
         if (!conversation) throw new RunFailure("Not found");
         const agent = run.request.agentId && agents ? await agents.get(user, run.request.agentId) : null;
         const selection = run.request.selection;
-        // Base confidentielle : aucun contenu dans les traces, aucune recherche web.
-        const confidential = (await activeBases(user, conversation, agent)).some((base) => base.confidential);
+        // Base confidentielle ou donnée sensible : aucun contenu dans les traces, aucune
+        // recherche web, aucun spécialiste externe, pas de mémoire.
+        const confidential = conversation.sensitive === true || (await activeBases(user, conversation, agent)).some((base) => base.confidential);
         // Trace de ce passage du run ; une base confidentielle n'y laisse jamais de contenu.
         runTrace = tracer.startRun({
           runId: run.id,
@@ -1528,21 +1805,22 @@ export function createAppServer(deps: AppDependencies) {
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
-        // Sous-agents : spécialistes consultés en lecture seule (profondeur 1).
-        if (agent && permitted.has("delegate") && agent.delegates.length && agents && models.supportsTools?.(selection)) {
-          const delegates = await delegatesOf(user, agent);
-          if (delegates.length) {
-            tools.push(
-              delegateTool({
-                delegates,
-                parentLocal: provider === "local" || provider === "echo",
-                parentConfidential: confidential,
-                run: (delegate, task, signal) => consult(user, delegate, task, signal),
-                audit: (event) => kit.record(request, user, { eventType: "agent.delegate", targetType: "agent", ...event, details: { ...event.details, from: agent.id } }),
-              }),
-            );
-          }
-        }
+        // Équipe d'agents : délégation de tâches (écritures validées par l'utilisateur).
+        tools.push(
+          ...(await teamTools({
+            request,
+            user,
+            agent,
+            selection,
+            provider,
+            permitted,
+            confidential,
+            threadId: run.id,
+            depth: 0,
+            budget: { tokens: 0, max: deps.agentMaxTokens ?? DEFAULT_MAX_TOKENS },
+            conversationId: run.conversationId,
+          })),
+        );
         // Mémoire : activée par l'utilisateur, jamais en conversation temporaire ni
         // confidentielle (rien n'en sort, rien n'y entre).
         const memoryOn = !conversation.temporary && !confidential && deps.preferences ? (await deps.preferences.get(user)).memory : false;
@@ -1750,6 +2028,7 @@ export function createAppServer(deps: AppDependencies) {
       detail: approval.preview.detail ?? "",
       ...(approval.preview.warning ? { warning: true } : {}),
       ...(approval.preview.exposure ? { exposure: true } : {}),
+      ...(approval.preview.onBehalfOf ? { onBehalfOf: approval.preview.onBehalfOf } : {}),
     });
 
     /** Lance un nouveau run et en diffuse les événements. */
@@ -1816,6 +2095,74 @@ export function createAppServer(deps: AppDependencies) {
       }
     }
 
+    /**
+     * Agents planifiés : chaque tâche due est prise à bail (une seule instance),
+     * puis envoyée comme un message de son auteur, par la MÊME route (quotas,
+     * routage, règle de deux, audit). Personne ne valide à sa place : une écriture
+     * demandée attend sa validation dans la conversation, puis expire en refus.
+     */
+    let schedulerBusy = false;
+    async function runSchedules() {
+      if (!deps.schedules || schedulerBusy) return;
+      schedulerBusy = true;
+      try {
+        for (const claimed of await deps.schedules.claim(20 * 60, 5)) {
+          const user: AuthenticatedUser = { organizationId: claimed.organizationId, userId: claimed.userId, role: claimed.role };
+          await runSchedule(user, claimed.scheduleId).catch(async (error: unknown) => {
+            app.log.error({ err: error, schedule: claimed.scheduleId }, "Tâche planifiée impossible");
+            await deps.schedules?.finish(user, claimed.scheduleId, { status: "error", nextRunAt: null, ran: true, checked: true }).catch(() => undefined);
+          });
+        }
+      } finally {
+        schedulerBusy = false;
+      }
+    }
+
+    async function runSchedule(user: AuthenticatedUser, id: string) {
+      const store = deps.schedules!;
+      const schedule = await store.get(user, id);
+      if (!schedule) return;
+      const next = schedule.rule ? nextRun(schedule.rule, schedule.timezone, new Date()) : null;
+      const system = { ip: "system", id: `agent-schedule-${id}`, log: app.log } as unknown as FastifyRequest;
+      // Lecteur (lecture seule) : rien n'est envoyé.
+      if (!kit.canWrite(user)) return store.finish(user, id, { status: "skipped", nextRunAt: next, ran: false, checked: true });
+
+      let content = schedule.prompt;
+      if (schedule.kind === "knowledge") {
+        // Déclencheur : seulement les documents prêts depuis le dernier passage.
+        const since = Date.parse(schedule.checkedAt ?? schedule.createdAt);
+        const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: schedule.agentId }) : null;
+        const fresh = base ? (await deps.knowledge!.store.listSources(user, base.id)).filter((source) => source.status === "ready" && Date.parse(source.updatedAt) > since) : [];
+        if (!fresh.length) return store.finish(user, id, { status: null, nextRunAt: null, ran: false, checked: true });
+        // Noms de fichiers : des données, bornées et sur une ligne.
+        const names = fresh.slice(0, 10).map((source) => source.name.replace(/[\r\n<>]/g, " ").slice(0, 100));
+        content = `${schedule.prompt}\n\nNouveaux documents dans la base : ${names.join(" ; ")}`;
+      }
+
+      const token = randomBytes(32).toString("base64url");
+      internalPrincipals.set(token, { user, expires: Date.now() + 30_000 });
+      const response = await app
+        .inject({
+          method: "POST",
+          url: `/conversations/${schedule.conversationId}/messages`,
+          headers: { origin: appOrigin, "content-type": "application/json", "x-snowfall-internal": token },
+          payload: { content },
+        })
+        .finally(() => internalPrincipals.delete(token));
+      const last = /event: (done|paused|error)\n/g;
+      let outcome: "done" | "paused" | "error" = "error";
+      for (const match of response.body.matchAll(last)) outcome = match[1] as typeof outcome;
+      const status = response.statusCode === 200 ? outcome : "error";
+      await store.finish(user, id, { status, nextRunAt: next, ran: true, checked: schedule.kind === "knowledge" });
+      await kit.record(system, user, {
+        eventType: "agent.schedule_run",
+        ...(status === "error" ? { outcome: "failure" as const } : {}),
+        targetType: "agent",
+        targetId: schedule.agentId,
+        details: { kind: schedule.kind, status, http: response.statusCode },
+      });
+    }
+
     /** Conversations temporaires échues : effacées comme une suppression par leur auteur. */
     async function purgeTemporary() {
       const system = { ip: "system", id: "temporary-purge", log: app.log } as unknown as FastifyRequest;
@@ -1844,6 +2191,10 @@ export function createAppServer(deps: AppDependencies) {
       purgeTemporary().catch((error: unknown) => app.log.error({ err: error }, "Purge des conversations temporaires impossible"));
     }, RUN_RECOVERY_MS);
     recovery.unref();
+    const scheduler = setInterval(() => {
+      runSchedules().catch((error: unknown) => app.log.error({ err: error }, "Planificateur indisponible"));
+    }, deps.scheduleIntervalMs ?? 60_000);
+    scheduler.unref();
     // Arrêt du serveur : les runs locaux s'interrompent sans rien effacer ; leur
     // bail expire et ils seront repris (ici au redémarrage, ou par une autre instance).
     api.addHook("onClose", async () => {
@@ -1852,6 +2203,7 @@ export function createAppServer(deps: AppDependencies) {
     });
     api.addHook("preClose", async () => {
       clearInterval(recovery);
+      clearInterval(scheduler);
       for (const local of localRuns.values()) local.stop("shutdown");
       // Flux observés fermés : le client se reconnecte (à une autre instance, ou après le redémarrage).
       for (const close of [...observers]) close();
@@ -1913,7 +2265,18 @@ export function createAppServer(deps: AppDependencies) {
 
       const loaded = await loadConversation(request, reply, user, params.data.id);
       if (!loaded) return reply;
-      const { history, agent, selection } = loaded;
+      const { history, agent } = loaded;
+      const attachedTexts = deps.attachments && attachmentIds.length
+        ? [...(await deps.attachments.forModel(user, params.data.id, attachmentIds)).values()].flatMap((item) => (item.kind === "document" ? [item.text] : []))
+        : [];
+      const guarded = await sensitiveGuard(request, reply, user, loaded, [content, ...attachedTexts]);
+      if (!guarded) return reply;
+      loaded.selection = guarded.selection;
+      const confidentialBases = guarded.sensitive || (await activeBases(user, loaded.conversation, agent)).some((base) => base.confidential);
+      const { selection, routed } = await routedSelection(user, agent, loaded.selection, content, attachmentIds.length, confidentialBases);
+      loaded.selection = selection;
+      // Jamais le texte : seulement la décision (le modèle est aussi gardé sur l'exécution).
+      if (routed) request.log.info({ routing: { label: routed.label, source: routed.source } }, "model routed");
 
       // Modification : le contexte s'arrête juste avant le message édité.
       let prior = history;
@@ -2155,7 +2518,7 @@ export function createAppServer(deps: AppDependencies) {
 
       const loaded = await loadConversation(request, reply, user, params.data.id);
       if (!loaded) return reply;
-      const { history, agent, selection } = loaded;
+      const { history, agent } = loaded;
 
       // Seule la dernière réponse se régénère, à partir de la question qui la précède.
       const last = history.at(-1);
@@ -2163,6 +2526,12 @@ export function createAppServer(deps: AppDependencies) {
       if (last?.role !== "assistant" || question?.role !== "user") {
         return reply.code(400).send({ error: "Invalid request" });
       }
+      const guarded = await sensitiveGuard(request, reply, user, loaded, [question.content]);
+      if (!guarded) return reply;
+      loaded.selection = guarded.selection;
+      const confidentialBases = guarded.sensitive || (await activeBases(user, loaded.conversation, agent)).some((base) => base.confidential);
+      const { selection } = await routedSelection(user, agent, loaded.selection, question.content, question.attachments?.length ?? 0, confidentialBases);
+      loaded.selection = selection;
 
       if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
       const admitted = await admitGeneration(request, reply, user, selection);
@@ -2206,6 +2575,51 @@ export function createAppServer(deps: AppDependencies) {
       });
     });
   });
+
+  /**
+   * Modèles pour mesurer et améliorer un agent. Réponse : comme l'agent, en
+   * lecture seule (sa base seulement, aucune écriture ni sortie). Juge et
+   * optimiseur : le modèle « puissant » du routage s'il est permis, sinon celui
+   * de l'agent. Base confidentielle : tout reste sur un modèle local. Chaque appel
+   * vérifie le quota avant et compte ses tokens après.
+   */
+  async function qualityModels(_request: FastifyRequest, user: AuthenticatedUser, agent: Agent): Promise<{ models: QualityModels; judge: string } | { refused: "confidential" | "quota" | "unavailable" }> {
+    const own: ModelSelection = { provider: agent.provider, model: agent.model };
+    if (!(await isModelPermitted(user, own))) return { refused: "unavailable" };
+    const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: agent.id }) : null;
+    const strong = deps.settings ? (await deps.settings.get(user)).modelRouting?.strong : undefined;
+    let judge = strong && (await isModelPermitted(user, strong)) ? strong : own;
+    if (base?.confidential && judge.provider !== "local") judge = own;
+    if (base?.confidential && judge.provider !== "local") return { refused: "confidential" };
+
+    const call = async (selection: ModelSelection, input: Parameters<ChatRunner>[0], signal: AbortSignal) => {
+      const provider = models.providerFor(selection);
+      if (deps.settings) {
+        const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
+        if (!checkQuota(settings, usage, provider).allowed) throw new Error("QUOTA_EXCEEDED");
+      }
+      const result = await runnerFor(selection)(input, { signal });
+      if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
+      return result.content;
+    };
+    if (deps.settings) {
+      const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
+      if (![own, judge].every((selection) => checkQuota(settings, usage, models.providerFor(selection)).allowed)) return { refused: "quota" };
+    }
+    const organizationTools = deps.settings ? (await deps.settings.get(user)).tools : defaultOrganizationTools;
+    const permitted = permittedTools(organizationTools, agent.tools);
+    return {
+      judge: `${judge.provider}:${judge.model}`,
+      models: {
+        answer: (instructions, question, signal) => {
+          const citations = new CitationRegistry();
+          const tools = base && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(own) ? [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], citations)] : [];
+          return call(own, { message: question, instructions, ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}) }, signal);
+        },
+        complete: (prompt, signal) => call(judge, { message: prompt }, signal),
+      },
+    };
+  }
 
   function registerAgentRoutes(api: FastifyInstance, store: AgentStore) {
     const idParams = z.object({ id: z.uuid() });
@@ -2277,6 +2691,7 @@ export function createAppServer(deps: AppDependencies) {
       if (!input) return reply.code(400).send({ error: "Invalid request" });
 
       const agent = await store.create(user, input);
+      await deps.quality?.addVersion(user, agent.id, { instructions: agent.instructions, source: "edit" });
       await auditAgent(request, user, "agent.create", agent);
       return reply.code(201).send({ agent: view(user, agent) });
     });
@@ -2303,6 +2718,8 @@ export function createAppServer(deps: AppDependencies) {
 
       const agent = await store.update(user, params.data.id, input);
       if (!agent) return reply.code(404).send({ error: "Not found" });
+      // Historique : une version par changement d'instructions (rien sinon).
+      await deps.quality?.addVersion(user, agent.id, { instructions: agent.instructions, source: "edit" });
 
       await auditAgent(request, user, "agent.update", agent);
       return { agent: view(user, agent) };
@@ -2323,6 +2740,8 @@ export function createAppServer(deps: AppDependencies) {
       await auditAgent(request, user, "agent.delete", { id: params.data.id });
       return reply.code(204).send();
     });
+
+    if (deps.quality) registerQualityRoutes(api, kit, { store: deps.quality, agents: store, canManage: canManageAgent, models: qualityModels });
   }
 
   function registerLoginRoutes(api: FastifyInstance, login: LoginFlow) {
@@ -2638,8 +3057,15 @@ export function createProductionServer() {
     ...(ocr ? { ocr } : {}),
     memories: new PostgresUserMemoryStore(pool, keyring),
     agentRatings: new PostgresAgentRatingStore(pool),
+    quality: new PostgresQualityStore(pool, keyring),
     speech: new OpenAiCompatibleSpeech(config.speech.stt, config.speech.tts),
     ...(config.images ? { images: new OpenAiCompatibleImages(config.images) } : {}),
+    ...(config.decisionSocket ? (() => {
+      const service = new UnixSocketDecision(config.decisionSocket);
+      return { decision: service, trainer: service };
+    })() : {}),
+    workshop: new PostgresWorkshopStore(pool, keyring),
+    schedules: new PostgresScheduleStore(pool, keyring),
     // Traces vers Langfuse auto-hébergé, si configuré.
     ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),
     summarize: createSummarizer((selection) => models.runner(selection)),

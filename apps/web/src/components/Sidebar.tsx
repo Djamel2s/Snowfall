@@ -19,12 +19,14 @@ import {
   MoreHorizontal,
   TextSearch,
   ScrollText,
+  Waypoints,
 } from 'lucide-react'
 import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import AgentStudio from './AgentStudio'
 import SettingsPanel from './SettingsPanel'
 import AgentCatalog from './AgentCatalog'
+import AgentSchedules from './AgentSchedules'
 import PromptLibrary from './PromptLibrary'
 import KnowledgePanel from './KnowledgePanel'
 
@@ -53,6 +55,8 @@ type SidebarProps = {
   pinnedIds: string[]
   onNewChat: () => void
   onSelectConversation: (id: string) => void
+  /** Conversation d'une tâche planifiée (la liste est relue d'abord). */
+  onOpenSchedule: (conversationId: string) => void
   onDeleteConversation: (id: string) => void
   onRenameConversation: (id: string, title: string) => void
   onMoveConversation: (id: string, projectId: string | null) => void
@@ -78,6 +82,9 @@ type SidebarProps = {
   onStartAgent: (agent: Agent) => void
   onEditAgent: (agent: Agent) => void
   onDuplicateAgent: (agent: Agent) => void
+  /** Ouvre la carte des agents (graphe) dans la zone principale. */
+  onOpenGraph: () => void
+  onError: (message: string) => void
   /** Nom court du modèle d'un agent, pour le catalogue. */
   agentModelLabel: (agent: Agent) => string
   currentUserId: string
@@ -158,6 +165,8 @@ export default function Sidebar(props: SidebarProps) {
   } = props
   const { t } = useI18n()
   const [projectDraft, setProjectDraft] = useState(false)
+  // Agent choisi pour planifier une tâche (formulaire ouvert dans la barre).
+  const [scheduling, setScheduling] = useState<Agent | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renamingProject, setRenamingProject] = useState<string | null>(null)
   const [menuFor, setMenuFor] = useState<string | null>(null)
@@ -603,6 +612,11 @@ export default function Sidebar(props: SidebarProps) {
                 <div className="projects-panel">
                   <div className="sidebar-section-label projects-heading">
                     <span>{t('sidebar.agentsTitle')}</span>
+                    {agents.length > 0 && (
+                      <button className="projects-add-button" type="button" aria-label={t('graph.open')} title={t('graph.open')} onClick={props.onOpenGraph}>
+                        <Waypoints size={15} />
+                      </button>
+                    )}
                   </div>
 
                   {agents.length === 0 && !props.onCreateAgent ? (
@@ -611,6 +625,8 @@ export default function Sidebar(props: SidebarProps) {
                       <strong>{t('sidebar.firstAgent')}</strong>
                     </div>
                   ) : (
+                    <>
+                    <AgentSchedules agents={agents} scheduling={scheduling} onCloseForm={() => setScheduling(null)} onOpen={props.onOpenSchedule} onError={props.onError} />
                     <AgentCatalog
                       agents={agents}
                       activeAgentId={activeAgentId}
@@ -620,7 +636,9 @@ export default function Sidebar(props: SidebarProps) {
                       onEdit={props.onEditAgent}
                       onDuplicate={props.onDuplicateAgent}
                       onCreate={props.onCreateAgent}
+                      onSchedule={props.canWrite ? setScheduling : undefined}
                     />
+                    </>
                   )}
                 </div>
               )}

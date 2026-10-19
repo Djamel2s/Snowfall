@@ -47,6 +47,48 @@ test('administrateur : mon compte, puis l’organisation en rubriques', async ({
   expect(api.unknown).toEqual([])
 })
 
+test('routage automatique : question simple → modèle rapide, enregistré avec les deux modèles', async ({ page }, info) => {
+  const api = await mockApi(page, { role: 'admin' })
+  await openSettings(page)
+  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  const routing = page.getByRole('switch', { name: /Routage automatique/ })
+  await expect(routing).not.toBeChecked()
+  await routing.check()
+  await page.getByRole('combobox', { name: 'Rapide' }).selectOption({ label: 'Mistral · mistral-small' })
+  await page.getByRole('combobox', { name: 'Puissant' }).selectOption({ label: 'Mistral · mistral-large' })
+  await page.screenshot({ path: info.outputPath('routage.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Enregistrer' }).click()
+  await expect.poll(() => api.savedSettings.length).toBe(1)
+  expect(api.savedSettings[0]!.modelRouting).toEqual({ fast: { provider: 'mistral', model: 'mistral-small-latest' }, strong: { provider: 'mistral', model: 'mistral-large-latest' } })
+  expect(api.unknown).toEqual([])
+})
+
+test('atelier : exemples écrits à la main, entraînement mesuré, déploiement sur clic', async ({ page }, info) => {
+  const api = await mockApi(page, { role: 'admin' })
+  await openSettings(page)
+  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  await page.getByText('Entraîner le décideur').click()
+  await expect(page.getByText('Décideur : Laya de base')).toBeVisible()
+  await page.getByRole('textbox', { name: 'Un exemple par ligne' }).fill('Bonjour\nMerci\nÀ demain')
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Un exemple par ligne' }).fill('Compare ces deux contrats\nRédige un plan de migration')
+  await page.getByRole('radio', { name: 'Complexe' }).click()
+  await page.getByRole('button', { name: 'Ajouter', exact: true }).click()
+  await expect(page.getByText('3 Simple · 2 Complexe · 1 en test')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Entraîner' }).click()
+  const result = page.getByRole('status').filter({ hasText: 'Référence' })
+  await expect(result).toContainText('Référence 22/24 · entraîné 24/24 · complexes reconnues 10/12 → 12/12')
+  await page.screenshot({ path: info.outputPath('atelier.png'), fullPage: true })
+  // Rien d'actif avant le clic.
+  expect(api.decisionCalls.filter((call) => call.includes('activate'))).toEqual([])
+  await result.getByRole('button', { name: 'Déployer' }).click()
+  await expect(page.getByText('Décideur : entraîné v1')).toBeVisible()
+  expect(api.unknown).toEqual([])
+})
+
 test('MCP installé : la rubrique outils montre aussi les serveurs', async ({ page }) => {
   await mockApi(page, { role: 'admin', platformTools: ['search_knowledge', 'save_to_knowledge', 'mcp'] })
   await openSettings(page)

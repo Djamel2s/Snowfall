@@ -21,7 +21,8 @@ export function promptVariables(content: string) {
   return [...new Set([...content.matchAll(/\{\{\s*([\p{L}\p{N}_ -]{1,40}?)\s*\}\}/gu)].map((match) => match[1]!.trim()))];
 }
 
-const aad = (tenant: TenantContext, id: string, field: "name" | "content") => `prompt-${field}:${tenant.organizationId}:${id}`;
+export const promptAad = (tenant: TenantContext, id: string, field: "name" | "content") => `prompt-${field}:${tenant.organizationId}:${id}`;
+const aad = promptAad;
 type Row = { id: string; userId: string; name: string; content: string; shared: boolean; updatedAt: string };
 const COLUMNS = `id, user_id AS "userId", name, content, shared, updated_at AS "updatedAt"`;
 

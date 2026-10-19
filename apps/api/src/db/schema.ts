@@ -279,6 +279,8 @@ export const conversations = pgTable.withRLS(
     temporary: boolean("temporary").notNull().default(false),
     // Chiffré avec la clé de l'organisation ; NULL = titre par défaut.
     title: text("title"),
+    // Donnée sensible détectée un jour dans la conversation : modèle local à jamais.
+    sensitive: boolean("sensitive").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -385,6 +387,10 @@ export const organizationSettings = pgTable.withRLS(
     monthlyTokenLimit: bigint("monthly_token_limit", { mode: "number" }),
     // Plafonds mensuels par fournisseur : { "openai": 2000000, ... }.
     providerTokenLimits: jsonb("provider_token_limits").notNull().default({}),
+    // Routage automatique (conversations sans agent ni modèle choisi) : {fast, strong}.
+    modelRouting: jsonb("model_routing"),
+    // Données sensibles détectées : « local » (modèle local ou refus) ou « off ».
+    sensitiveData: text("sensitive_data").notNull().default("local"),
     // Fournisseur qui calcule les embeddings des bases de connaissances.
     // NULL = recherche par mots-clés seulement (rien n'est envoyé à un tiers).
     embeddingProvider: text("embedding_provider"),
@@ -789,6 +795,8 @@ export const agentCheckpoints = pgTable.withRLS(
     organizationId: uuid("organization_id").notNull(),
     userId: uuid("user_id").notNull(),
     runId: uuid("run_id").notNull(),
+    // Sous-fil d'un sous-agent dans le même run (vide : le run lui-même).
+    threadKey: text("thread_key").notNull().default(""),
     checkpointId: text("checkpoint_id").notNull(),
     parentId: text("parent_id"),
     checkpoint: text("checkpoint").notNull(),
@@ -796,7 +804,8 @@ export const agentCheckpoints = pgTable.withRLS(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    primaryKey({ name: "agent_checkpoints_pk", columns: [table.runId, table.checkpointId] }),
+    primaryKey({ name: "agent_checkpoints_pk", columns: [table.runId, table.threadKey, table.checkpointId] }),
+    check("agent_checkpoints_thread_key_check", sql`${table.threadKey} ~ '^[A-Za-z0-9_~-]{0,200}$'`),
     foreignKey({
       name: "agent_checkpoints_run_fk",
       columns: [table.runId, table.organizationId, table.userId],
@@ -815,6 +824,7 @@ export const agentCheckpointWrites = pgTable.withRLS(
     organizationId: uuid("organization_id").notNull(),
     userId: uuid("user_id").notNull(),
     runId: uuid("run_id").notNull(),
+    threadKey: text("thread_key").notNull().default(""),
     checkpointId: text("checkpoint_id").notNull(),
     taskId: text("task_id").notNull(),
     idx: integer("idx").notNull(),
@@ -822,7 +832,8 @@ export const agentCheckpointWrites = pgTable.withRLS(
     value: text("value").notNull(),
   },
   (table) => [
-    primaryKey({ name: "agent_checkpoint_writes_pk", columns: [table.runId, table.checkpointId, table.taskId, table.idx] }),
+    primaryKey({ name: "agent_checkpoint_writes_pk", columns: [table.runId, table.threadKey, table.checkpointId, table.taskId, table.idx] }),
+    check("agent_checkpoint_writes_thread_key_check", sql`${table.threadKey} ~ '^[A-Za-z0-9_~-]{0,200}$'`),
     foreignKey({
       name: "agent_checkpoint_writes_run_fk",
       columns: [table.runId, table.organizationId, table.userId],
@@ -1113,5 +1124,172 @@ export const mcpServers = pgTable.withRLS(
     check("mcp_servers_auth_check", sql`(${table.auth} = 'token' AND ${table.oauth} IS NULL) OR (${table.auth} = 'oauth' AND ${table.oauth} IS NOT NULL AND ${table.token} IS NULL)`),
     check("mcp_servers_name_check", sql`length(${table.name}) BETWEEN 1 AND 60`),
     tenantPolicy("mcp_servers_tenant", table.organizationId),
+  ],
+);
+
+// ---- Qualité des agents : versions et cas d'évaluation ---------------------------
+// Versions des instructions d'un agent (modification, amélioration, restauration),
+// avec le score mesuré sur ses cas. Instructions chiffrées (comme le profil).
+export const agentVersions = pgTable.withRLS(
+  "agent_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").notNull(),
+    version: integer("version").notNull(),
+    instructionsEnc: text("instructions_enc").notNull(),
+    source: text("source").notNull(),
+    // { passed, total, mean } : aucun contenu.
+    score: jsonb("score"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_versions_agent_version_unique").on(table.agentId, table.version),
+    index("agent_versions_org_agent_idx").on(table.organizationId, table.agentId),
+    check("agent_versions_source_check", sql`${table.source} IN ('edit', 'improvement', 'restore')`),
+    check("agent_versions_version_check", sql`${table.version} > 0`),
+    tenantPolicy("agent_versions_tenant", table.organizationId),
+  ],
+);
+
+// Cas d'évaluation d'un agent : proposés depuis un 👎 partagé par son auteur
+// (question et commentaire, jamais la réponse), puis validés avec un critère.
+export const agentEvalCases = pgTable.withRLS(
+  "agent_eval_cases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").notNull(),
+    status: text("status").notNull(),
+    origin: text("origin").notNull(),
+    // Message d'origine (un seul cas par réponse notée).
+    sourceMessageId: uuid("source_message_id"),
+    questionEnc: text("question_enc").notNull(),
+    commentEnc: text("comment_enc"),
+    rubricEnc: text("rubric_enc"),
+    // Cas partagé depuis un 👎 : il suit son auteur (compte supprimé → cas supprimé).
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_eval_cases_source_unique").on(table.agentId, table.sourceMessageId),
+    index("agent_eval_cases_org_agent_idx").on(table.organizationId, table.agentId),
+    check("agent_eval_cases_status_check", sql`${table.status} IN ('proposed', 'active')`),
+    check("agent_eval_cases_origin_check", sql`${table.origin} IN ('feedback', 'manual')`),
+    // Un cas actif a toujours un critère.
+    check("agent_eval_cases_rubric_check", sql`${table.status} = 'proposed' OR ${table.rubricEnc} IS NOT NULL`),
+    tenantPolicy("agent_eval_cases_tenant", table.organizationId),
+  ],
+);
+
+// ---- Atelier d'entraînement (administrateurs) ------------------------------------
+// Exemples étiquetés saisis par les administrateurs (jamais tirés des conversations),
+// chacun rangé une fois pour toutes en entraînement ou en test.
+export const decisionExamples = pgTable.withRLS(
+  "decision_examples",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    textEnc: text("text_enc").notNull(),
+    label: text("label").notNull(),
+    split: text("split").notNull(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("decision_examples_org_task_idx").on(table.organizationId, table.task),
+    check("decision_examples_task_check", sql`${table.task} IN ('routing')`),
+    check("decision_examples_label_check", sql`${table.label} ~ '^[a-z0-9_-]{1,40}$'`),
+    check("decision_examples_split_check", sql`${table.split} IN ('train', 'test')`),
+    tenantPolicy("decision_examples_tenant", table.organizationId),
+  ],
+);
+
+// Têtes de décision entraînées : chiffrées, mesurées sur la part de test, une
+// seule active par organisation et par tâche.
+export const decisionModels = pgTable.withRLS(
+  "decision_models",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    version: integer("version").notNull(),
+    headEnc: text("head_enc").notNull(),
+    // Matrices de confusion (tête, référence), tailles : aucun texte.
+    metrics: jsonb("metrics").notNull(),
+    deployable: boolean("deployable").notNull(),
+    status: text("status").notNull(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+  },
+  (table) => [
+    unique("decision_models_version_unique").on(table.organizationId, table.task, table.version),
+    check("decision_models_task_check", sql`${table.task} IN ('routing')`),
+    check("decision_models_status_check", sql`${table.status} IN ('candidate', 'active', 'retired')`),
+    // Seul un modèle déclaré déployable peut devenir actif.
+    check("decision_models_active_check", sql`${table.status} <> 'active' OR ${table.deployable}`),
+    tenantPolicy("decision_models_tenant", table.organizationId),
+  ],
+);
+
+// ---- Agents planifiés et déclencheurs ---------------------------------------------
+// Une tâche récurrente (chaque jour, chaque semaine) ou déclenchée (document ajouté
+// à la base de l'agent), exécutée au nom de son auteur dans SA conversation, par la
+// même route qu'un message. Privée : seul son auteur la voit.
+export const agentSchedules = pgTable.withRLS(
+  "agent_schedules",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").notNull(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    nameEnc: text("name_enc").notNull(),
+    promptEnc: text("prompt_enc").notNull(),
+    kind: text("kind").notNull(),
+    cadence: text("cadence"),
+    hour: integer("hour"),
+    weekday: integer("weekday"),
+    timezone: text("timezone").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    // Bail d'exécution : une seule instance à la fois.
+    claimedUntil: timestamp("claimed_until", { withTimezone: true }),
+    // Déclencheur : dernier passage, et sources déjà vues.
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastStatus: text("last_status"),
+    failures: integer("failures").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("agent_schedules_due_idx").on(table.enabled, table.nextRunAt),
+    index("agent_schedules_owner_idx").on(table.organizationId, table.userId),
+    check("agent_schedules_kind_check", sql`${table.kind} IN ('schedule', 'knowledge')`),
+    check(
+      "agent_schedules_rule_check",
+      sql`(${table.kind} = 'knowledge' AND ${table.cadence} IS NULL) OR (${table.kind} = 'schedule' AND ${table.cadence} IN ('daily', 'weekly') AND ${table.hour} BETWEEN 0 AND 23 AND (${table.cadence} = 'daily' OR ${table.weekday} BETWEEN 0 AND 6))`,
+    ),
+    check("agent_schedules_status_check", sql`${table.lastStatus} IS NULL OR ${table.lastStatus} IN ('done', 'paused', 'error', 'skipped')`),
+    check("agent_schedules_timezone_check", sql`length(${table.timezone}) BETWEEN 1 AND 64`),
+    tenantPolicy("agent_schedules_owner", table.organizationId, table.userId),
   ],
 );

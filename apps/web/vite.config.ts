@@ -39,7 +39,8 @@ export default defineConfig({
     host: '127.0.0.1',
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3001',
+        // SNOWFALL_API_URL : API d'une pile de test isolée (sinon l'API de développement).
+        target: process.env.SNOWFALL_API_URL ?? 'http://127.0.0.1:3001',
         changeOrigin: false,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },

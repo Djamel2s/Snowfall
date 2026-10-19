@@ -1,0 +1,2 @@
+ALTER TABLE "conversations" ADD COLUMN "sensitive" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "organization_settings" ADD COLUMN "sensitive_data" text DEFAULT 'local' NOT NULL;

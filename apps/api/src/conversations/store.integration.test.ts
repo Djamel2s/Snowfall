@@ -63,6 +63,27 @@ describe(
       assert.equal(await store.delete(b, conv.id), false);
     });
 
+    it("données sensibles : marquage par le seul propriétaire, et jamais retiré", async () => {
+      const conv = await store.create(a);
+      await store.appendExchange(a, conv.id, "Mon numéro de sécu est 1 85 05 78 006 084 91, merci", "Noté.");
+      // Le titre (visible partout) ne garde jamais l'identifiant en clair.
+      assert.equal((await store.get(a, conv.id))?.title, "Mon numéro de sécu est •••, merci");
+      await store.markSensitive(b, conv.id);
+      assert.equal((await store.get(a, conv.id))?.sensitive, undefined);
+      await store.markSensitive(a, conv.id);
+      assert.equal((await store.get(a, conv.id))?.sensitive, true);
+      // Même en contournant l'application : la base refuse de retirer le marquage.
+      const client = await owner.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT set_config('app.organization_id', $1, true), set_config('app.user_id', $2, true)", [orgA, alice]);
+        await assert.rejects(client.query("UPDATE conversations SET sensitive = false WHERE id = $1", [conv.id]), /cannot be cleared/);
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+      }
+    });
+
     it("branches : modifier et régénérer ajoutent des versions, la branche affichée se choisit", async () => {
       const conv = await store.create(a, "Branches");
       await store.appendExchange(a, conv.id, "Q1", "R1");

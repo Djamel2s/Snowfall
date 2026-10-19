@@ -460,6 +460,21 @@ describe("Bases de connaissances : routes", () => {
     assert.ok(events.some((event) => event.eventType === "knowledge.confidential_denied"));
   });
 
+  it("routage automatique : jamais vers un modèle externe pour une base confidentielle", async (t) => {
+    const mistral = { provider: "mistral" as const, model: "mistral-small-latest" };
+    const { app, knowledge, calls } = setup({ settings: { modelRouting: { fast: mistral, strong: mistral } } });
+    t.after(() => app.close());
+    const projectId = crypto.randomUUID();
+    await app.inject(upload(`/projects/${projectId}/knowledge/files`, "p.txt", "Données de santé."));
+    await knowledge.idle();
+    await app.inject(json("PATCH", `/projects/${projectId}/knowledge`, { confidential: true }));
+    const conversation = (await app.inject(json("POST", "/conversations", { projectId }))).json().conversation;
+    // Sans routage confidentiel : modèle par défaut de la plateforme (ici local), la réponse part.
+    const answered = await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Bonjour" }));
+    assert.notEqual(answered.statusCode, 409);
+    assert.equal(calls.length, 1);
+  });
+
   it("embeddings : calculés par le fournisseur de l'organisation et décomptés", async (t) => {
     const { app, knowledge, embedCalls, recorded, calls } = setup({ settings: { embeddingProvider: "local" } });
     t.after(() => app.close());

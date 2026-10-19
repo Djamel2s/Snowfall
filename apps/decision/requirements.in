@@ -1,0 +1,9 @@
+# Service de décision local (Laya, Convai Innovations, Apache 2.0).
+# Versions résolues avec « uv pip compile --exclude-newer » : rien de publié
+# depuis moins de deux semaines. torch en version CPU (index PyTorch).
+laya==0.3.26
+torch
+transformers
+safetensors
+huggingface_hub
+numpy

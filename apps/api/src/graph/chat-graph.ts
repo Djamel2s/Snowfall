@@ -1,3 +1,4 @@
+import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { exposureOf, gateOutbound, type Exposure } from "../agent/exposure.js";
 import type { AgentTrace } from "../observability/tracing.js";
@@ -133,6 +134,9 @@ export type ToolEvent = {
   /** denied : l'utilisateur a refusé (outil d'écriture). */
   status: "running" | "done" | "error" | "denied";
   summary?: string | undefined;
+  /** Étape d'un sous-agent : son nom, et l'appel de délégation qui l'a lancé. */
+  agent?: string | undefined;
+  parent?: string | undefined;
 };
 
 /**
@@ -169,6 +173,8 @@ export type ChatRunner = (
      */
     maxTokens?: number | undefined;
     generation?: GenerationOptions | undefined;
+    /** Exposition héritée (sous-agent lancé par une réponse déjà exposée) : règle de deux. */
+    exposure?: Exposure | undefined;
   },
   options?: {
     onToken?: (text: string) => void;
@@ -183,6 +189,17 @@ export type ChatRunner = (
     signal?: AbortSignal;
   },
 ) => Promise<ChatResult>;
+
+/**
+ * Exécute une boucle d'agent hors du contexte du graphe en cours. LangGraph
+ * propage implicitement son contexte (flux, pauses) : un sous-agent lancé depuis
+ * un outil se croirait sous-graphe du parent — ses jetons s'afficheraient comme
+ * la réponse principale et sa pause interromprait le parent sans passer par la
+ * remontée « pour le compte de ». Ici, il démarre dans un contexte vierge.
+ */
+export function isolated<T>(run: () => Promise<T>): Promise<T> {
+  return AsyncLocalStorageProviderSingleton.getInstance().run(undefined as never, run);
+}
 
 /** Appels d'outils exécutés en parallèle par étape (au-delà, refusés). */
 export const MAX_TOOL_CALLS_PER_STEP = 8;
@@ -223,6 +240,8 @@ const AgentState = Annotation.Root({
   usage: Annotation<TokenUsage | undefined>,
   /** Aller-retour modèle → outils déjà demandés. */
   steps: Annotation<number>,
+  /** Exposition héritée de la réponse qui a lancé ce sous-agent. */
+  seed: Annotation<Exposure | undefined>,
 });
 
 type State = typeof AgentState.State;
@@ -331,7 +350,7 @@ export function buildAgentGraph(
       let result: Awaited<ReturnType<typeof runTool>>;
       try {
         // Règle de deux : réponse exposée → les appels sortants demandent l'accord.
-        result = await runTool(gateOutbound(tools, input.exposure), call, signal, approve);
+        result = await runTool(gateOutbound(tools, input.exposure), call, signal, approve, (step) => config.writer?.({ tool: step }), input.exposure);
       } catch (error) {
         // Pause pour validation : ce n'est pas une erreur (l'outil reprendra après la décision).
         span?.end({ status: isGraphInterrupt(error) ? "waiting" : "error" });
@@ -356,7 +375,8 @@ export function buildAgentGraph(
       (state: State) => {
         const calls = lastCalls(state.turns).slice(0, MAX_TOOL_CALLS_PER_STEP);
         // Exposition calculée sur les tours déjà écrits : même décision à la reprise.
-        const exposure = exposureOf(state.turns);
+        const own = exposureOf(state.turns);
+        const exposure = { untrusted: own.untrusted || Boolean(state.seed?.untrusted), sensitive: own.sensitive || Boolean(state.seed?.sensitive) };
         return calls.length ? calls.map((call) => new Send("tool", { call, exposure })) : END;
       },
       ["tool", END],
@@ -393,7 +413,7 @@ export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
         ? new Command({ resume: durable.resume })
         : durable?.continue
           ? null
-          : { turns, instructions: input.instructions, summary: input.summary, memories: input.memories, response: "", usage: undefined, steps: 0 },
+          : { turns, instructions: input.instructions, summary: input.summary, memories: input.memories, response: "", usage: undefined, steps: 0, seed: input.exposure },
       { ...config, streamMode: ["custom", "values"] },
     );
 

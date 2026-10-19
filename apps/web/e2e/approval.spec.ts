@@ -90,3 +90,14 @@ test('règle de deux : une recherche web après contenu externe + base demande l
   await expect(card(page)).toHaveCount(0)
   expect(api.decisions).toEqual([{ approvalId: 'a-1', approved: false }])
 })
+
+test('équipe d’agents : étapes du sous-agent sous la délégation, validation « pour le compte de »', async ({ page }, info) => {
+  await mockApi(page, { approval: { team: true } })
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).fill('Fais noter la règle des congés.')
+  await page.keyboard.press('Enter')
+  await expect(card(page)).toContainText('Pour le compte de RH')
+  await expect(page.locator('.agent-step-nested .agent-step-agent').first()).toHaveText('RH')
+  await expect(page.getByText('Délégation')).toBeVisible()
+  await page.screenshot({ path: info.outputPath('equipe.png') })
+})

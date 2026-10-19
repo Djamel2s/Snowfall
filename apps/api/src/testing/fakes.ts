@@ -58,6 +58,10 @@ export function createFakeConversationStore(): ConversationStore & {
 
   return {
     files,
+    markSensitive: async (owner, conversationId) => {
+      const conversation = conversations.get(conversationId);
+      if (conversation && owns(owner, conversationId)) conversation.sensitive = true;
+    },
     expire: (conversationId) => {
       const conversation = conversations.get(conversationId);
       if (conversation?.temporary) conversation.expiresAt = 0;

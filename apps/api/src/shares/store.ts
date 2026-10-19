@@ -29,7 +29,8 @@ export interface ShareStore {
 }
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
-const aad = (tenant: TenantContext, id: string, field: "token" | "title" | "snapshot") => `conversation-share-${field}:${tenant.organizationId}:${id}`;
+export const shareAad = (tenant: TenantContext, id: string, field: "token" | "title" | "snapshot") => `conversation-share-${field}:${tenant.organizationId}:${id}`;
+const aad = shareAad;
 /** 256 bits, encodés pour une URL. */
 export const newShareToken = () => randomBytes(32).toString("base64url");
 

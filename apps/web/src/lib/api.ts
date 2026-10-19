@@ -102,6 +102,8 @@ export type ConversationSummary = {
   projectId: string | null
   /** Conversation temporaire : hors historique, effacée sous 24 h. */
   temporary?: boolean
+  /** Donnée sensible détectée un jour : modèle local, définitivement. */
+  sensitive?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -225,6 +227,10 @@ export type OrganizationSettings = {
   tools: ToolId[]
   /** Plafonds mensuels d'appels d'outils ; absent = illimité. */
   toolLimits: Partial<Record<ToolMeter, number>>
+  /** Données sensibles avant un envoi externe : modèle local ou refus (« off » : désactivé). */
+  sensitiveData?: 'local' | 'off'
+  /** Routage automatique (conversations sans agent ni modèle) ; null = désactivé. */
+  modelRouting?: { fast: ModelSelection; strong: ModelSelection } | null
 }
 
 /** Catégories d'outils comptées (code, web, MCP) et l'outil qui les active. */
@@ -290,9 +296,16 @@ export class ApiError extends Error {
 }
 
 async function errorMessage(response: Response) {
-  const body = (await response.json().catch(() => ({}))) as { error?: string; reason?: string }
+  const body = (await response.json().catch(() => ({}))) as { error?: string; reason?: string; categories?: string[] }
+  if (body.reason === 'sensitive_requires_local') {
+    const known = ['nir', 'iban', 'card', 'health']
+    const categories = (body.categories ?? []).filter((item) => known.includes(item)).map((item) => t(`sensitive.category.${item}` as 'sensitive.category.nir'))
+    return t('sensitive.blocked', { categories: categories.join(', ') || t('sensitive.category.health') })
+  }
   const knowledge = body.reason ? knowledgeError(body.reason) : null
   if (knowledge) return knowledge
+  const quality = body.reason ? qualityError(body.reason) : null
+  if (quality) return quality
   if (body.reason === 'provider_quota_exceeded') return t('error.providerQuota')
   if (body.reason === 'quota_exceeded') return t('error.quota')
   if (body.error === 'Provider not allowed') return t('error.providerNotAllowed')
@@ -315,6 +328,44 @@ async function errorMessage(response: Response) {
       return t('error.tooMany')
     default:
       return t('error.server', { status: response.status })
+  }
+}
+
+/** Raisons renvoyées par les routes de qualité des agents. */
+function qualityError(reason: string): string | null {
+  switch (reason) {
+    case 'not_enough_cases':
+      return t('quality.error.notEnough')
+    case 'already_running':
+      return t('quality.error.running')
+    case 'case_limit':
+      return t('quality.error.caseLimit')
+    case 'proposal_expired':
+      return t('quality.error.expired')
+    case 'agent_changed':
+      return t('quality.error.agentChanged')
+    case 'confidential':
+      return t('quality.error.confidential')
+    case 'unavailable':
+      return t('quality.error.unavailable')
+    case 'quota':
+      return t('error.quota')
+    case 'not_enough_examples':
+      return t('workshop.error.notEnough')
+    case 'examples_limit':
+      return t('workshop.error.limit')
+    case 'not_deployable':
+      return t('workshop.notDeployable')
+    case 'decision_unavailable':
+      return t('workshop.unavailable')
+    case 'training_failed':
+      return t('workshop.error.failed')
+    case 'schedule_limit':
+      return t('schedules.error.limit')
+    case 'no_knowledge':
+      return t('schedules.error.noKnowledge')
+    default:
+      return null
   }
 }
 
@@ -377,6 +428,82 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) })
 
+/** Qualité d'un agent : score mesuré sur ses cas (aucun contenu). */
+export type QualityScore = { passed: number; total: number; mean: number }
+export type AgentVersion = { id: string; version: number; instructions: string; source: 'edit' | 'improvement' | 'restore'; score: QualityScore | null; createdAt: string }
+export type AgentEvalCase = { id: string; status: 'proposed' | 'active'; origin: 'feedback' | 'manual'; question: string; comment: string | null; rubric: string | null; createdAt: string }
+export type ImproveProgress = { phase: 'before' | 'proposal' | 'after'; done: number; total: number }
+type Verdicts = Record<string, { passed: boolean; reason: string }>
+export type ImproveResult = {
+  kind: 'nothing_to_fix' | 'no_proposal' | 'rejected' | 'proposed'
+  judge: string
+  before: { score: QualityScore; cases: Verdicts }
+  after?: { score: QualityScore; cases: Verdicts }
+  /** Cas jamais montrés à l'optimiseur (dès 4 cas) : se généralise-t-elle ? */
+  heldOut?: { before: { passed: number; total: number }; after: { passed: number; total: number } } | null
+  proposalId?: string
+  instructions?: string
+  regressions?: string[]
+}
+
+/** Agent planifié (chaque jour, chaque semaine) ou déclenché (document ajouté à sa base). */
+export type ScheduleRule = { cadence: 'daily'; hour: number } | { cadence: 'weekly'; hour: number; weekday: number }
+export type AgentSchedule = {
+  id: string
+  agentId: string
+  conversationId: string
+  name: string
+  prompt: string
+  kind: 'schedule' | 'knowledge'
+  rule: ScheduleRule | null
+  timezone: string
+  enabled: boolean
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastStatus: 'done' | 'paused' | 'error' | 'skipped' | null
+}
+export type ScheduleInput = { agentId: string; name: string; prompt: string; kind: AgentSchedule['kind']; cadence?: 'daily' | 'weekly'; hour?: number; weekday?: number; timezone: string }
+
+/** Atelier d'entraînement : exemples étiquetés et têtes de décision mesurées. */
+export type Confusion = { tp: number; fn: number; tn: number; fp: number }
+export type DecisionExample = { id: string; text: string; label: string; split: 'train' | 'test'; createdAt: string }
+export type DecisionModel = {
+  id: string
+  version: number
+  status: 'candidate' | 'active' | 'retired'
+  deployable: boolean
+  metrics: { candidate: Confusion; baseline: Confusion; baselineKind: 'zero_shot' | 'head'; baselineVersion: number | null; train: number; test: number }
+  createdAt: string
+}
+export type Workshop = { available: boolean; labels: { positive: string; negative: string }; examples: DecisionExample[]; models: DecisionModel[] }
+
+/** Amélioration (flux SSE) : progression, puis résultat. Interrompre : plus aucun appel facturé. */
+async function improveStream(agentId: string, onProgress: (progress: ImproveProgress) => void, signal?: AbortSignal): Promise<ImproveResult> {
+  const response = await send(`/agents/${agentId}/quality/improve`, { method: 'POST', body: '{}', ...(signal ? { signal } : {}) })
+  if (!response.body) throw new Error(t('error.emptyResponse'))
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += value
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      boundary = buffer.indexOf('\n\n')
+      const event = /^event: (.+)$/m.exec(block)?.[1]
+      const data = /^data: (.+)$/m.exec(block)?.[1]
+      if (!event || !data) continue
+      const payload = JSON.parse(data)
+      if (event === 'progress') onProgress(payload as ImproveProgress)
+      else if (event === 'result') return payload as ImproveResult
+      else if (event === 'error') throw new Error(payload.reason === 'quota' ? t('error.quota') : t('quality.failed'))
+    }
+  }
+  throw new Error(t('quality.failed'))
+}
+
 /** Action d'écriture en attente de ton accord : aperçu construit par le serveur. */
 export type ToolApproval = {
   id: string
@@ -386,6 +513,8 @@ export type ToolApproval = {
   warning?: boolean
   /** Appel sortant d'une réponse qui a lu un contenu externe ET des données internes. */
   exposure?: boolean
+  /** Demande faite par un sous-agent de l'équipe : son nom. */
+  onBehalfOf?: string
 }
 
 /** Étape d'un agent pendant la réponse (appel d'outil). */
@@ -396,6 +525,9 @@ export type AgentStep = {
   status: 'running' | 'done' | 'error' | 'denied'
   summary?: string
   approval?: ToolApproval
+  /** Étape d'un sous-agent : son nom, et l'étape de délégation qui l'a lancé. */
+  agent?: string
+  parent?: string
 }
 
 type StreamOptions = {
@@ -424,11 +556,11 @@ export type RunSnapshot = {
 export type ActiveRun = RunSnapshot & { id: string; kind: 'message' | 'regenerate'; question: string }
 
 /** Demande de validation reçue du serveur, rattachée à son étape. */
-export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown; warning?: unknown; exposure?: unknown }): AgentStep => ({
+export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown; warning?: unknown; exposure?: unknown; onBehalfOf?: unknown }): AgentStep => ({
   id: String(payload.stepId),
   name: String(payload.tool),
   status: 'running',
-  approval: { id: String(payload.id), title: String(payload.title), detail: String(payload.detail ?? ''), ...(payload.warning === true ? { warning: true } : {}), ...(payload.exposure === true ? { exposure: true } : {}) },
+  approval: { id: String(payload.id), title: String(payload.title), detail: String(payload.detail ?? ''), ...(payload.warning === true ? { warning: true } : {}), ...(payload.exposure === true ? { exposure: true } : {}), ...(typeof payload.onBehalfOf === 'string' ? { onBehalfOf: payload.onBehalfOf.slice(0, 60) } : {}) },
 })
 
 /**
@@ -578,11 +710,40 @@ export const api = {
   /** Le jeton part dans le corps, jamais dans l'adresse (journaux). */
   openShare: async (token: string) => (await request<{ share: OpenedShare }>('/shares/open', json('POST', { token }))).share,
 
+  /** Agents planifiés (chacun les siens). */
+  listSchedules: async () => (await request<{ schedules: AgentSchedule[] }>('/me/schedules')).schedules,
+  createSchedule: async (input: ScheduleInput) => (await request<{ schedule: AgentSchedule }>('/me/schedules', json('POST', input))).schedule,
+  setScheduleEnabled: async (id: string, enabled: boolean) => (await request<{ schedule: AgentSchedule }>(`/me/schedules/${id}`, json('PATCH', { enabled }))).schedule,
+  runSchedule: (id: string) => request<{ ok: true }>(`/me/schedules/${id}/run`, json('POST', {})),
+  deleteSchedule: (id: string) => request<void>(`/me/schedules/${id}`, { method: 'DELETE' }),
+
+  /** Atelier d'entraînement (administrateurs). */
+  getWorkshop: () => request<Workshop>('/organization/decision/routing'),
+  addDecisionExamples: async (examples: { text: string; label: string }[]) =>
+    (await request<{ examples: DecisionExample[] }>('/organization/decision/routing/examples', json('POST', { examples }))).examples,
+  deleteDecisionExample: (id: string) => request<void>(`/organization/decision/routing/examples/${id}`, { method: 'DELETE' }),
+  trainDecision: async () => (await request<{ model: DecisionModel }>('/organization/decision/routing/train', json('POST', {}))).model,
+  activateDecision: (id: string) => request<{ ok: true }>(`/organization/decision/routing/models/${id}/activate`, json('POST', {})),
+  deactivateDecision: () => request<{ ok: true }>('/organization/decision/routing/deactivate', json('POST', {})),
+
+  /** Qualité d'un agent (auteur ou administrateur) : versions, cas, amélioration mesurée. */
+  getQuality: (agentId: string) => request<{ versions: AgentVersion[]; cases: AgentEvalCase[] }>(`/agents/${agentId}/quality`),
+  addEvalCase: async (agentId: string, question: string, rubric: string) =>
+    (await request<{ case: AgentEvalCase }>(`/agents/${agentId}/quality/cases`, json('POST', { question, rubric }))).case,
+  activateEvalCase: async (agentId: string, caseId: string, rubric: string) =>
+    (await request<{ case: AgentEvalCase }>(`/agents/${agentId}/quality/cases/${caseId}`, json('PUT', { rubric }))).case,
+  deleteEvalCase: (agentId: string, caseId: string) => request<void>(`/agents/${agentId}/quality/cases/${caseId}`, { method: 'DELETE' }),
+  improveAgent: improveStream,
+  applyProposal: (agentId: string, proposalId: string) =>
+    request<{ agent: { id: string; instructions: string }; version: AgentVersion | null }>(`/agents/${agentId}/quality/apply`, json('POST', { proposalId })),
+  restoreVersion: (agentId: string, versionId: string) =>
+    request<{ agent: { id: string; instructions: string }; version: AgentVersion | null }>(`/agents/${agentId}/quality/versions/${versionId}/restore`, json('POST', {})),
+
   /** 👍 / 👎 sur une réponse (null : retiré). */
-  setFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback | null) =>
-    request<{ feedback: MessageFeedback | null }>(
+  setFeedback: (conversationId: string, messageId: string, feedback: MessageFeedback | null, share = false) =>
+    request<{ feedback: MessageFeedback | null; shared?: { ok: boolean; reason?: string } }>(
       `/conversations/${conversationId}/messages/${messageId}/feedback`,
-      json('PUT', feedback ? feedback : { rating: null }),
+      json('PUT', feedback ? { ...feedback, ...(share ? { share: true } : {}) } : { rating: null }),
     ),
 
   /** Afficher une autre version d'un message : renvoie la branche affichée. */

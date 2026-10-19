@@ -3,7 +3,8 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 
 dotenv.config({
-  path: fileURLToPath(new URL("../../.env", import.meta.url)),
+  // SNOWFALL_ENV_FILE : autre fichier (pile de test isolée), sinon le .env du dépôt.
+  path: process.env.SNOWFALL_ENV_FILE ?? fileURLToPath(new URL("../../.env", import.meta.url)),
 });
 
 // Compte propriétaire du schéma, distinct du compte applicatif (DATABASE_URL).

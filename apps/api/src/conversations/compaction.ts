@@ -139,14 +139,16 @@ export class MemorySummaryStore implements SummaryStore {
 }
 
 /** Résumés sous RLS (propriétaire seul), chiffrés, liés à leur conversation par l'AAD. */
+/** AAD d'un résumé de conversation (exportée pour la rotation des clés). */
+export const summaryAad = (owner: TenantContext, conversationId: string) => `conversation-summary:${owner.organizationId}:${owner.userId}:${conversationId}`;
+
 export class PostgresSummaryStore implements SummaryStore {
   constructor(
     private readonly pool: Pool,
     private readonly keyring: OrganizationKeyring,
   ) {}
 
-  private aad = (owner: TenantContext, conversationId: string) =>
-    `conversation-summary:${owner.organizationId}:${owner.userId}:${conversationId}`;
+  private aad = summaryAad;
 
   get(owner: TenantContext, conversationId: string) {
     return withTenant(this.pool, owner, async (client: PoolClient) => {
