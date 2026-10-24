@@ -394,6 +394,18 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
                   onChange={(event) => setDraft({ ...draft, sensitiveData: event.target.checked ? 'local' : 'off' })}
                 />
               </label>
+              <label className="settings-row settings-switch">
+                <span>
+                  {t('pseudonymize.setting')}
+                  <small>{t('pseudonymize.settingHint')}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={draft.pseudonymize === true}
+                  onChange={(event) => setDraft({ ...draft, pseudonymize: event.target.checked })}
+                />
+              </label>
 
               <RoutingSettings
                 value={draft.modelRouting ?? null}

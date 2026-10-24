@@ -92,6 +92,8 @@ export type Summarizer = (input: {
   selection?: ModelSelection | undefined;
   previous?: string | undefined;
   messages: StoredMessage[];
+  /** Fournisseur externe et organisation qui l'a demandé : données personnelles pseudonymisées. */
+  pseudonymize?: boolean | undefined;
 }) => Promise<{ summary: string; model: string; usage?: TokenUsage | undefined } | null>;
 
 /** Balises du transcript neutralisées : un message ne peut pas en sortir. */
@@ -102,11 +104,12 @@ const neutralize = (text: string) => stripTags(text, /<\/?\s*(transcript|previou
  * elles ne sont pas déjà allées (une conversation confidentielle reste locale).
  */
 export function createSummarizer(runnerFor: (selection?: ModelSelection) => ChatRunner): Summarizer {
-  return async ({ selection, previous, messages }) => {
+  return async ({ selection, previous, messages, pseudonymize }) => {
     const transcript = messages
       .map((message) => `${message.role === "user" ? "Utilisateur" : "Assistant"} : ${neutralize(message.content).slice(0, 4_000)}`)
       .join("\n\n");
     const result = await runnerFor(selection)({
+      ...(pseudonymize ? { pseudonymize: true } : {}),
       instructions: INSTRUCTIONS,
       message: [
         previous ? `<previous_summary>\n${neutralize(previous)}\n</previous_summary>\n\n` : "",

@@ -118,12 +118,20 @@ function healthAboutPerson(text: string) {
  * le contenu, chiffré, de la conversation privée de son auteur).
  */
 export function redactSensitive(text: string): string {
-  let result = text.replace(NIR, (whole: string, ...groups: string[]) => (validNir(groups.slice(0, 7)) ? "•••" : whole));
-  result = result.replace(CARD, (whole: string, digits: string) => (validCard(digits) ? "•••" : whole));
-  // IBAN : détecté sur la forme en majuscules, masqué aux mêmes positions (de la fin
-  // vers le début, pour que les positions restent justes).
-  for (const [from, to] of ibanSpans(result).reverse()) result = `${result.slice(0, from)}•••${result.slice(to)}`;
+  let result = text;
+  // De la fin vers le début : les positions restent justes.
+  for (const span of identifierSpans(text).reverse()) result = `${result.slice(0, span.start)}•••${result.slice(span.end)}`;
   return result;
+}
+
+/** Positions des identifiants valides (NIR, IBAN, carte), sans chevauchement, dans l'ordre. */
+export function identifierSpans(text: string): { start: number; end: number; category: Exclude<SensitiveCategory, "health"> }[] {
+  const spans: { start: number; end: number; category: Exclude<SensitiveCategory, "health"> }[] = [];
+  for (const match of text.matchAll(NIR)) if (validNir(match.slice(1))) spans.push({ start: match.index, end: match.index + match[0].length, category: "nir" });
+  for (const match of text.matchAll(CARD)) if (validCard(match[1]!)) spans.push({ start: match.index, end: match.index + match[0].length, category: "card" });
+  for (const [start, end] of ibanSpans(text)) spans.push({ start, end, category: "iban" });
+  spans.sort((a, b) => a.start - b.start);
+  return spans.filter((span, index) => index === 0 || span.start >= spans[index - 1]!.end);
 }
 
 /** Catégories présentes (jamais les valeurs : elles ne sortent pas de cette fonction). */

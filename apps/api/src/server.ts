@@ -500,6 +500,13 @@ export function createAppServer(deps: AppDependencies) {
     return model ? { provider: "local", model: model.id } : null;
   }
 
+  /** Pseudonymiser cet appel : l'organisation l'a demandé ET le modèle est externe. */
+  async function pseudonymizeFor(user: AuthenticatedUser, selection: ModelSelection | undefined) {
+    if (!deps.settings || !(await deps.settings.get(user)).pseudonymize) return false;
+    const provider = models.providerFor(selection);
+    return provider !== "local" && provider !== "echo";
+  }
+
   /** Liste blanche : modèle publié par un fournisseur configuré et autorisé par l'organisation. */
   async function isModelPermitted(user: AuthenticatedUser, selection: ModelSelection) {
     const [published, permitted] = await Promise.all([models.isAllowed(selection), allowedProviders(user)]);
@@ -1518,6 +1525,7 @@ export function createAppServer(deps: AppDependencies) {
           ? context.approve({ callId: `${callId}/${request.callId}`, name: request.name, preview: { ...request.preview, onBehalfOf: request.preview.onBehalfOf ?? specialist.name } }, signal)
           : Promise.resolve(false);
       const runner = runnerFor(selection);
+      const sent = { ...input, ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}) };
       let result: ChatResult;
       if (threadId) {
         const saver = checkpointerFor(user);
@@ -1526,14 +1534,14 @@ export function createAppServer(deps: AppDependencies) {
         let continuing = Boolean(await saver.getTuple({ configurable: { thread_id: threadId } }));
         for (;;) {
           const durable = { checkpointer: saver, threadId, ...(resume ? { resume } : continuing ? { continue: true } : {}) };
-          result = await isolated(() => runner(input, { signal: context.signal, onTool, durable }));
+          result = await isolated(() => runner(sent, { signal: context.signal, onTool, durable }));
           if (!result.pending?.length) break;
           resume = {};
           for (const pending of result.pending) resume[pending.id] = await escalate(pending, context.signal);
           continuing = false;
         }
       } else {
-        result = await isolated(() => runner(input, { signal: context.signal, onTool, approve: escalate }));
+        result = await isolated(() => runner(sent, { signal: context.signal, onTool, approve: escalate }));
       }
       const spent = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
       team.budget.tokens += spent;
@@ -1667,7 +1675,7 @@ export function createAppServer(deps: AppDependencies) {
         if (!messages) return;
         const candidate = compactionCandidate(messages, await summaries.get(user, conversationId));
         if (!candidate) return;
-        const result = await deps.summarize({ selection: input.selection, previous: candidate.previous, messages: candidate.fold });
+        const result = await deps.summarize({ selection: input.selection, previous: candidate.previous, messages: candidate.fold, pseudonymize: await pseudonymizeFor(user, input.selection) });
         if (!result) return;
         await summaries.set(user, conversationId, {
           uptoMessageId: candidate.uptoMessageId,
@@ -1863,6 +1871,7 @@ export function createAppServer(deps: AppDependencies) {
             ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: deps.agentMaxTokens } : {}),
             // Réglages de l'agent (créativité, longueur), plafonnés par chaque fournisseur.
             ...(agent && Object.keys(generationOf(agent.parameters)).length ? { generation: generationOf(agent.parameters) } : {}),
+            ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}),
           },
           {
             signal: controller.signal,
@@ -2231,7 +2240,7 @@ export function createAppServer(deps: AppDependencies) {
     ) {
       if (deps.rewriteQuery) {
         try {
-          const rewritten = await deps.rewriteQuery({ selection, history, message });
+          const rewritten = await deps.rewriteQuery({ selection, history, message, pseudonymize: await pseudonymizeFor(user, selection) });
           if (rewritten) {
             if (rewritten.usage) {
               await deps.settings?.record(user, provider, rewritten.usage).catch(() => undefined);
@@ -2598,7 +2607,7 @@ export function createAppServer(deps: AppDependencies) {
         const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
         if (!checkQuota(settings, usage, provider).allowed) throw new Error("QUOTA_EXCEEDED");
       }
-      const result = await runnerFor(selection)(input, { signal });
+      const result = await runnerFor(selection)({ ...input, ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}) }, { signal });
       if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
       return result.content;
     };

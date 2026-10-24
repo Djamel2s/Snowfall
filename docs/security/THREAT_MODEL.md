@@ -140,6 +140,15 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Retrait du marquage (T) | Drapeau à sens unique, imposé par trigger | F | `store.integration.test.ts` |
 | Valeur sensible dans l'audit ou les journaux (I) | Seules les catégories sont tracées | F | test « catégorie tracée sans la valeur » |
 
+### 3.4 septies Pseudonymisation
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Données personnelles lues par le fournisseur (I) | Jetons stables pour e-mails, téléphones, adresses, identifiants, noms ; correspondance en mémoire le temps d'un appel | M : noms non repérés, images | `pseudonymize.test.ts`, `runs.routes.test.ts` (« Pseudonymisation ») |
+| Faux jeton dans un document, restitué comme une autre personne (T) | Jetons déjà présents neutralisés à l'entrée | F | test « faux jeton » |
+| Outil exécuté sur des jetons (T) | Arguments restitués avant l'exécution locale ; règle de deux inchangée | F | test du modèle enveloppé |
+| Texte piégé qui fait ramer l'analyse (D) | Contrôle de chevauchement linéaire, expressions bornées | F | test « texte démesuré » |
+
 ### 3.5 Artifacts
 
 | Menace | Mesures | Résiduel | Preuve |

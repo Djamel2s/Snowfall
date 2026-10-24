@@ -23,6 +23,8 @@ export type OrganizationSettings = {
   modelRouting: ModelRouting | null;
   /** Données sensibles détectées avant un envoi externe : modèle local, ou refus. « off » : désactivé. */
   sensitiveData: "local" | "off";
+  /** Données personnelles remplacées par des jetons avant un fournisseur externe (restituées au retour). */
+  pseudonymize: boolean;
 };
 
 export type ModelRouting = { fast: { provider: ProviderId; model: string }; strong: { provider: ProviderId; model: string } };
@@ -77,6 +79,7 @@ export const defaultSettings: OrganizationSettings = {
   toolLimits: {},
   modelRouting: null,
   sensitiveData: "local",
+  pseudonymize: false,
 };
 
 export type UsageTotals = { inputTokens: number; outputTokens: number };
@@ -138,6 +141,7 @@ type SettingsRow = {
   tool_limits: Record<string, unknown>;
   model_routing: unknown;
   sensitive_data: string;
+  pseudonymize: boolean;
 };
 
 const isSelection = (value: unknown): value is { provider: ProviderId; model: string } =>
@@ -173,6 +177,7 @@ function fromRow(row: SettingsRow | undefined): OrganizationSettings {
     modelRouting: routingOf(row.model_routing),
     // Toute valeur inattendue : protégé (jamais « off » par défaut).
     sensitiveData: row.sensitive_data === "off" ? "off" : "local",
+    pseudonymize: row.pseudonymize === true,
   };
 }
 
@@ -187,7 +192,7 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
   private async read(client: PoolClient, tenant: TenantContext) {
     const result = await client.query<SettingsRow>(
       `SELECT allowed_providers, monthly_token_limit, provider_token_limits,
-              embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, model_routing, sensitive_data
+              embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, model_routing, sensitive_data, pseudonymize
        FROM organization_settings WHERE organization_id = $1`,
       [tenant.organizationId],
     );
@@ -203,8 +208,8 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
       await client.query(
         `INSERT INTO organization_settings
            (organization_id, allowed_providers, monthly_token_limit, provider_token_limits,
-            embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, updated_by, model_routing, sensitive_data, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+            embedding_provider, links_enabled, link_domains, enabled_tools, tool_limits, updated_by, model_routing, sensitive_data, pseudonymize, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
          ON CONFLICT (organization_id) DO UPDATE SET
            allowed_providers = EXCLUDED.allowed_providers,
            monthly_token_limit = EXCLUDED.monthly_token_limit,
@@ -216,6 +221,7 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
            tool_limits = EXCLUDED.tool_limits,
            model_routing = EXCLUDED.model_routing,
            sensitive_data = EXCLUDED.sensitive_data,
+           pseudonymize = EXCLUDED.pseudonymize,
            updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
         [
@@ -231,6 +237,7 @@ export class PostgresSettingsStore implements SettingsStore, ToolUsageStore {
           tenant.userId,
           settings.modelRouting ? JSON.stringify(settings.modelRouting) : null,
           settings.sensitiveData,
+          settings.pseudonymize,
         ],
       );
       return this.read(client, tenant);

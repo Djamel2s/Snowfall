@@ -73,12 +73,14 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
         toolLimits: { code: 50, web: 200 },
         modelRouting: { fast: { provider: "mistral", model: "mistral-small-latest" }, strong: { provider: "anthropic", model: "claude-opus-5-5" } },
         sensitiveData: "off",
+        pseudonymize: true,
       });
       const saved = await settings.get(tenant(memberA));
       assert.deepEqual(saved.tools, ["search_knowledge"]);
       assert.deepEqual(saved.toolLimits, { code: 50, web: 200 });
       assert.equal(saved.modelRouting?.strong.model, "claude-opus-5-5");
       assert.equal(saved.sensitiveData, "off");
+      assert.equal(saved.pseudonymize, true);
       // Appels d'outils : comptés pour l'organisation, invisibles des autres.
       await settings.recordTool(tenant(memberA), "code");
       await settings.recordTool(tenant(adminA), "code");

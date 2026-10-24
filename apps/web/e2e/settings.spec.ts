@@ -89,6 +89,20 @@ test('atelier : exemples écrits à la main, entraînement mesuré, déploiement
   expect(api.unknown).toEqual([])
 })
 
+test('pseudonymisation : désactivée par défaut, activée et enregistrée', async ({ page }) => {
+  const api = await mockApi(page, { role: 'admin' })
+  await openSettings(page)
+  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  const toggle = page.getByRole('switch', { name: /Pseudonymiser avant un fournisseur externe/ })
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByRole('switch', { name: /Protéger les données sensibles/ })).toBeChecked()
+  await toggle.check()
+  await page.getByRole('button', { name: 'Enregistrer' }).first().click()
+  await expect.poll(() => api.savedSettings.length).toBe(1)
+  expect(api.savedSettings[0]!.pseudonymize).toBe(true)
+})
+
 test('MCP installé : la rubrique outils montre aussi les serveurs', async ({ page }) => {
   await mockApi(page, { role: 'admin', platformTools: ['search_knowledge', 'save_to_knowledge', 'mcp'] })
   await openSettings(page)

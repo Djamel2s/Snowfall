@@ -391,6 +391,8 @@ export const organizationSettings = pgTable.withRLS(
     modelRouting: jsonb("model_routing"),
     // Données sensibles détectées : « local » (modèle local ou refus) ou « off ».
     sensitiveData: text("sensitive_data").notNull().default("local"),
+    // Pseudonymisation avant un envoi à un fournisseur externe (désactivée par défaut).
+    pseudonymize: boolean("pseudonymize").notNull().default(false),
     // Fournisseur qui calcule les embeddings des bases de connaissances.
     // NULL = recherche par mots-clés seulement (rien n'est envoyé à un tiers).
     embeddingProvider: text("embedding_provider"),

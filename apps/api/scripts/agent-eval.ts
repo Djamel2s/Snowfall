@@ -8,6 +8,7 @@
 //     --out <fichier>     enregistre les résultats (JSON) : référence pour plus tard
 //     --baseline <fichier> compare à une référence et liste les régressions (code de sortie 1)
 //     --embeddings <url>  embeddings locaux (sinon recherche par mots-clés)
+//     --pseudonymize      données personnelles remplacées par des jetons (comparer avec / sans)
 //
 // Coût : chaque cas appelle le modèle (2 à 4 fois avec les outils). Les clés
 // viennent du fichier .env ; seuls les fournisseurs nommés sont appelés.
@@ -32,6 +33,7 @@ const { values } = parseArgs({
     out: { type: "string" },
     baseline: { type: "string" },
     embeddings: { type: "string" },
+    pseudonymize: { type: "boolean", default: false },
   },
 });
 
@@ -86,13 +88,13 @@ for (const model of models) {
   const results: CaseResult[] = [];
   for (const evalCase of cases) {
     for (let attempt = 0; attempt < repeat; attempt++) {
-      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings });
+      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize });
       // Quota par minute atteint : on attend, puis on rejoue le cas (deux fois au plus).
       // Mêmes formes que isRateLimit() : erreur dédiée, SDK (« 429 », « rate_limit_error »…).
       for (let retry = 1; retry <= 2 && /\b429\b|rate.?limit|too many requests|^JUDGE_/i.test(result.error ?? ""); retry++) {
         console.log(`  … quota atteint, nouvel essai de ${evalCase.id} dans ${30 * retry} s`);
         await new Promise((resolve) => setTimeout(resolve, 30_000 * retry));
-        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings });
+        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize });
       }
       results.push(result);
       const mark = result.error ? "⚠" : result.passed ? "✓" : "✗";

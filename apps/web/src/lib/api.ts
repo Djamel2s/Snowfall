@@ -229,6 +229,8 @@ export type OrganizationSettings = {
   toolLimits: Partial<Record<ToolMeter, number>>
   /** Données sensibles avant un envoi externe : modèle local ou refus (« off » : désactivé). */
   sensitiveData?: 'local' | 'off'
+  /** Données personnelles remplacées par des jetons avant un fournisseur externe. */
+  pseudonymize?: boolean
   /** Routage automatique (conversations sans agent ni modèle) ; null = désactivé. */
   modelRouting?: { fast: ModelSelection; strong: ModelSelection } | null
 }

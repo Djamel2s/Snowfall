@@ -14,6 +14,9 @@ gardées telles quelles pour l'historique. Depuis :
 - **Données sensibles** : détection locale avant tout envoi externe (n° de
   sécurité sociale, IBAN, carte, santé d'une personne) ; la conversation passe
   sur un modèle local et y reste, sinon l'envoi est refusé.
+- **Pseudonymisation réversible** (option) avant un fournisseur externe : 14/15
+  valeurs personnelles masquées sur le jeu tenu à l'écart ; effet sur la qualité
+  à mesurer dès que le quota le permet.
 - **Preuve** : `SECURITY_BASELINE.md`, `THREAT_MODEL.md`, `AIPD.md`,
   `PENTEST_SCOPE.md` et le runbook sont tenus à jour à chaque fonction.
 

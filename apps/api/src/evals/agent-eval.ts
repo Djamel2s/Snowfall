@@ -263,6 +263,8 @@ export type EvalOptions = {
   judge?: ChatRunner | undefined;
   embeddings?: EmbeddingCatalog | undefined;
   maxSteps?: number | undefined;
+  /** Comme en production avec la pseudonymisation : mesure son effet sur la qualité. */
+  pseudonymize?: boolean | undefined;
 };
 
 /** Exécute un cas avec un modèle, puis le note. */
@@ -278,6 +280,7 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
     const { message } = buildModelInput([], { content: evalCase.question, attachmentIds: [...files.keys()] }, files);
     const result = await runner(
       {
+        ...(options.pseudonymize ? { pseudonymize: true } : {}),
         message,
         ...(evalCase.memories?.length ? { memories: evalCase.memories } : {}),
         history: (evalCase.history ?? []).map((turn) => ({ role: turn.role, content: turn.content })),

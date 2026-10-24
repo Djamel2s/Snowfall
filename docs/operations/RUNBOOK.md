@@ -367,6 +367,14 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   Une nouvelle révision du modèle Laya rend les têtes existantes inutilisables :
   le routage repasse à l'heuristique ; réentraîner.
 
+## 28 quater. Pseudonymisation
+
+- Option d'organisation (Modèles et quotas), désactivée par défaut ; tracée
+  (`security.pseudonymize_policy`). Sans effet sur un modèle local.
+- Avant de l'activer pour tous : mesurer l'effet sur la qualité,
+  `npm run agent:eval -- --model <fournisseur:modèle> --out avec.json --pseudonymize`
+  puis la même commande sans l'option, et comparer (`--baseline`).
+
 ## 28 ter. Parcours sur la vraie pile
 
 - `npm run e2e:real` : monte une pile jetable (projet compose `snowfall-e2e`,

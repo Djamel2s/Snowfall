@@ -1,0 +1,1 @@
+ALTER TABLE "organization_settings" ADD COLUMN "pseudonymize" boolean DEFAULT false NOT NULL;

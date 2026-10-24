@@ -51,6 +51,8 @@ const settingsSchema = z.object({
   toolLimits: z.partialRecord(z.enum(toolMeters), z.number().int().positive().max(10_000_000)).optional(),
   // Données sensibles : « local » (défaut) ou « off » ; absent = inchangé.
   sensitiveData: z.enum(["local", "off"]).optional(),
+  // Pseudonymisation avant un fournisseur externe ; absent = inchangé.
+  pseudonymize: z.boolean().optional(),
   // Routage automatique : null = désactivé ; absent = inchangé.
   modelRouting: z
     .object({
@@ -171,7 +173,12 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       if (sensitiveData !== current.sensitiveData) {
         await kit.record(request, user, { eventType: "security.sensitive_policy", details: { value: sensitiveData } });
       }
+      const pseudonymize = body.data.pseudonymize ?? current.pseudonymize;
+      if (pseudonymize !== current.pseudonymize) {
+        await kit.record(request, user, { eventType: "security.pseudonymize_policy", details: { value: pseudonymize } });
+      }
       const saved = await settings.update(user, {
+        pseudonymize,
         sensitiveData,
         modelRouting,
         allowedProviders: [...new Set(body.data.allowedProviders)],

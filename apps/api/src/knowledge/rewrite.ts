@@ -14,6 +14,8 @@ export type QueryRewriter = (input: {
   history: ChatTurn[];
   message: string;
   signal?: AbortSignal;
+  /** Fournisseur externe et organisation qui l'a demandé : données personnelles pseudonymisées. */
+  pseudonymize?: boolean | undefined;
 }) => Promise<{ query: string; usage?: UsageTotals | undefined } | null>;
 
 const TURNS = 4;
@@ -46,13 +48,14 @@ export function cleanRewrite(output: string): string | null {
 }
 
 export function createQueryRewriter(runnerFor: (selection?: ModelSelection) => ChatRunner): QueryRewriter {
-  return async ({ selection, history, message, signal }) => {
+  return async ({ selection, history, message, signal, pseudonymize }) => {
     const turns = history
       .slice(-TURNS)
       .map((turn) => `${turn.role === "user" ? "Utilisateur" : "Assistant"} : ${clip(stripTags(turn.content, /<\/?\s*conversation\s*>/gi), TURN_CHARS)}`);
     const timeout = AbortSignal.timeout(TIMEOUT_MS);
     const result = await runnerFor(selection)(
       {
+        ...(pseudonymize ? { pseudonymize: true } : {}),
         instructions: INSTRUCTIONS,
         history: [],
         message: `<conversation>\n${turns.join("\n")}\n</conversation>\n\nQuestion à reformuler : ${clip(message, TURN_CHARS)}`,

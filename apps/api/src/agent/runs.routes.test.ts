@@ -1436,3 +1436,42 @@ describe("Données sensibles : modèle local ou rien", () => {
     assert.equal(conversation.sensitive, undefined);
   });
 });
+
+describe("Pseudonymisation avant un fournisseur externe", () => {
+  /** Fournisseur externe scripté : il garde ce qu'il reçoit et répond avec un jeton. */
+  function external(seen: string[]): ChatModel {
+    return {
+      id: "externe",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        seen.push(JSON.stringify({ instructions: request.instructions, turns: request.turns ?? [], message: request.message }));
+        yield { type: "token", text: "C'est noté, [PERSONNE_1] sera prévenue." };
+      },
+    };
+  }
+
+  async function ask(t: { after: (fn: () => unknown) => void }, settings: Partial<OrganizationSettings>) {
+    const seen: string[] = [];
+    const db = sharedDatabase();
+    const api = await instance(db, { model: external(seen), settings });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["search_knowledge"]);
+    const done = (await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Préviens Julie Martin (julie.martin@polaris.fr, 06 12 34 56 78)." }))).at(-1)!.data as { assistantMessage: { content: string } };
+    return { seen, done, db, conversationId };
+  }
+
+  it("activée : rien de personnel ne part, la réponse revient avec les vraies valeurs", async (t) => {
+    const { seen, done, db, conversationId } = await ask(t, { pseudonymize: true });
+    for (const value of ["Julie Martin", "julie.martin@polaris.fr", "06 12 34 56 78"]) assert.ok(!seen[0]!.includes(value), `${value} est parti chez le fournisseur`);
+    assert.match(seen[0]!, /\[PERSONNE_1\].*\[EMAIL_1\].*\[TEL_1\]/);
+    assert.equal(done.assistantMessage.content, "C'est noté, Julie Martin sera prévenue.");
+    // La conversation de l'utilisateur garde ses vraies données (chiffrées en base).
+    const stored = await db.conversations.getMessages(alice, conversationId);
+    assert.equal(stored![0]!.content, "Préviens Julie Martin (julie.martin@polaris.fr, 06 12 34 56 78).");
+  });
+
+  it("désactivée (défaut) : envoi tel quel", async (t) => {
+    const { seen } = await ask(t, {});
+    assert.ok(seen[0]!.includes("Julie Martin"));
+  });
+});

@@ -1,4 +1,5 @@
 import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
+import { pseudonymizingModel } from "../privacy/pseudonymize.js";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { exposureOf, gateOutbound, type Exposure } from "../agent/exposure.js";
 import type { AgentTrace } from "../observability/tracing.js";
@@ -175,6 +176,8 @@ export type ChatRunner = (
     generation?: GenerationOptions | undefined;
     /** Exposition héritée (sous-agent lancé par une réponse déjà exposée) : règle de deux. */
     exposure?: Exposure | undefined;
+    /** Fournisseur externe : données personnelles remplacées par des jetons, restituées au retour. */
+    pseudonymize?: boolean | undefined;
   },
   options?: {
     onToken?: (text: string) => void;
@@ -385,8 +388,9 @@ export function buildAgentGraph(
     .compile(options.checkpointer ? { checkpointer: options.checkpointer } : {});
 }
 
-export function createChatRunner(model: ChatModel = echoModel): ChatRunner {
+export function createChatRunner(base: ChatModel = echoModel): ChatRunner {
   return async (input, options = {}) => {
+    const model = input.pseudonymize ? pseudonymizingModel(base) : base;
     const tools = model.supportsTools ? (input.tools ?? []) : [];
     const maxSteps = input.maxSteps ?? DEFAULT_MAX_STEPS;
     const durable = options.durable;
