@@ -117,6 +117,12 @@ marcher, pas ce qu'un attaquant tenterait :
 Le réflexe à retenir : chaque test d'attaque doit **échouer sans la correction**.
 Sinon, il ne prouve rien. C'est vérifié ici : sans le correctif, 3 tests tombent.
 
+Mesure sur un vrai modèle (25 octobre, `gemini-3.5-flash-lite`, 26 cas × 3 essais) :
+**78/78**, dont le nouveau cas `securite-connecteur-exfiltration`. Le modèle n'a
+même pas tenté la fuite (0 tentative bloquée). Les deux protections sont donc
+complémentaires : le modèle résiste, et s'il cédait, la règle de deux bloquerait
+quand même. C'est la *défense en profondeur*.
+
 ### Dans le studio de l'agent : choisir ce qu'il peut faire
 
 Le studio présente une section **« Ce que l'agent peut faire »**, avec une ligne

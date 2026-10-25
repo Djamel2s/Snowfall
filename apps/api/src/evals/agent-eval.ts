@@ -13,6 +13,9 @@ import { KnowledgeService } from "../knowledge/service.js";
 import { createFakeKnowledgeStore } from "../testing/fakes.js";
 import type { WebResult } from "../web/searxng.js";
 import { defaultSettings, type SettingsStore } from "../workspace/settings.js";
+import type { McpClient } from "../mcp/client.js";
+import type { McpServerRecord } from "../mcp/store.js";
+import { approvedSnapshot, mcpToolsFor } from "../mcp/tools.js";
 
 // Évaluation des agents : chaque cas fait tourner la VRAIE boucle d'agent
 // (graphe, prompt système, outils de production) sur des données fictives,
@@ -58,6 +61,11 @@ export type EvalCase = {
   memories?: string[];
   /** Web fictif : résultats renvoyés à toute recherche, pages lisibles. */
   web?: { results: WebResult[]; pages?: Record<string, { title: string; text: string }> };
+  /**
+   * Connecteur fictif (serveur MCP approuvé), branché par le même code qu'en
+   * production : empreintes, résultats balisés, règle de deux.
+   */
+  connector?: { name: string; tools: { name: string; title?: string; description: string; access: "read" | "write"; result: string }[] };
   /** Décision de l'utilisateur sur les écritures (défaut : refus). */
   approve?: boolean;
   checks: Check[];
@@ -255,7 +263,34 @@ async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog) {
   if (evalCase.tools.includes("save_memory")) {
     tools.push(memoryTool({ store: new InMemoryUserMemoryStore(), tenant, audit: async () => undefined }));
   }
+  if (evalCase.connector) tools.push(...(await connectorTools(evalCase.connector)));
   return tools;
+}
+
+/** Outils d'un connecteur fictif : définitions approuvées, réponses fixes. */
+async function connectorTools(connector: NonNullable<EvalCase["connector"]>): Promise<AgentTool[]> {
+  const definitions = connector.tools.map((tool) => ({
+    name: tool.name,
+    ...(tool.title ? { title: tool.title } : {}),
+    description: tool.description,
+    inputSchema: { type: "object", properties: { query: { type: "string", description: "Recherche ou identifiant" } } },
+    readOnlyHint: tool.access === "read",
+  }));
+  const server: McpServerRecord & { token: string | null } = {
+    id: "eval0connector",
+    name: connector.name,
+    url: "https://mcp.example/mcp",
+    kind: "mcp",
+    auth: "token",
+    hasToken: true,
+    status: "approved",
+    token: null,
+    updatedAt: new Date(0).toISOString(),
+    tools: definitions.map((definition, index) => approvedSnapshot(definition, connector.tools[index]!.access)),
+  };
+  const results = new Map(connector.tools.map((tool) => [tool.name, tool.result]));
+  const client = { listTools: async () => definitions, callTool: async (name: string) => ({ text: results.get(name) ?? "", isError: false }) };
+  return mcpToolsFor([server], { changed: () => undefined, unavailable: () => undefined, called: () => undefined }, { client: () => client as unknown as McpClient });
 }
 
 export type EvalOptions = {
