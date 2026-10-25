@@ -106,7 +106,7 @@ body.login-pf::after {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
-  padding: 0 0 0 39px;
+  padding: 0;
   background: linear-gradient(100deg, #f1f6ff 5%, #a7c9f5 62%, #7fa9dd 100%);
   background-clip: text;
   color: transparent;

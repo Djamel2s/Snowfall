@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Copy, FileImage, FileJson, FileText, FileType, Link2, MoreHorizontal, Printer, Trash2 } from 'lucide-react'
+import { Check, Copy, FileImage, FileJson, FileText, FileType, Link2, Printer, Share, Trash2 } from 'lucide-react'
 import { api, type Message, type ShareLink } from '../lib/api'
 import { downloadBlob, downloadText, exportFileName, shareUrl, toExport, toImage, toMarkdown, toText } from '../lib/export'
 import { formatDate, useI18n } from '../lib/i18n'
@@ -81,7 +81,7 @@ export default function ConversationMenu({ conversationId, title, messages, canS
   return (
     <div className="chat-actions" ref={root}>
       <button type="button" className="icon-button" aria-label={t('menu.conversation')} title={t('menu.conversation')} aria-expanded={open} onClick={() => setOpen(!open)}>
-        <MoreHorizontal size={18} />
+        <Share size={17} />
       </button>
       {open && (
         <div className="chat-actions-panel" role="group" aria-label={t('menu.conversation')}>

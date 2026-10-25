@@ -350,13 +350,15 @@ export default function Sidebar(props: SidebarProps) {
 
   return (
     <>
-      {sidebarOpen && (
-        <button
-          className="mobile-scrim"
-          aria-label={t('sidebar.menuClose')}
-          onClick={() => props.onSidebarOpenChange(false)}
-        />
-      )}
+      {/* Toujours présent : il apparaît et disparaît en fondu (inerte une fois fermé). */}
+      <button
+        type="button"
+        className={`mobile-scrim${sidebarOpen ? ' open' : ''}`}
+        aria-label={t('sidebar.menuClose')}
+        aria-hidden={!sidebarOpen}
+        tabIndex={sidebarOpen ? 0 : -1}
+        onClick={() => props.onSidebarOpenChange(false)}
+      />
 
       <aside
         className={['sidebar', sidebarOpen ? 'sidebar-open' : '', sidebarCollapsed ? 'sidebar-collapsed' : '']
@@ -368,7 +370,11 @@ export default function Sidebar(props: SidebarProps) {
             className="rail-brand"
             title="Snowfall"
             aria-label="Snowfall"
-            onClick={() => props.onSidebarCollapsedChange(!sidebarCollapsed)}
+            onClick={() => {
+              // Téléphone : le logo referme le menu ; ordinateur : il replie la barre.
+              if (sidebarOpen && window.matchMedia('(max-width: 620px)').matches) props.onSidebarOpenChange(false)
+              else props.onSidebarCollapsedChange(!sidebarCollapsed)
+            }}
           >
             <span className="brand-icon">
               <img src="/logo.png" alt="Snowfall" className="snowfall-logo" />

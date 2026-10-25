@@ -1569,7 +1569,7 @@ function App() {
               </div>
             )}
 
-            <div className="composer">
+            <div className={`composer${temporaryShown ? ' composer-temporary' : ''}`}>
               {promptQuery !== null && (
                 <PromptPicker prompts={prompts} query={promptQuery} controlRef={promptPickerRef} onPick={applyPrompt} onClose={() => setPromptQuery(null)} />
               )}

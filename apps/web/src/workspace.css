@@ -2069,3 +2069,16 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 .tool-warning { display: flex; align-items: flex-start; gap: 5px; margin: 0; color: #ffd58a; font-size: 11px; line-height: 1.4; }
 .tool-warning svg { flex: none; margin-top: 2px; }
 .connector-link { justify-self: start; padding: 0; border: 0; background: none; color: #9ecaff; font: inherit; font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+/* Conversation temporaire : seul le contour du champ change (pointillés). */
+.composer.composer-temporary { border-style: dashed; }
+
+/* Téléphone : le menu glisse (ouverture et fermeture) et le voile apparaît en fondu.
+   La règle « transition: flex-basis » d'App.css, déclarée plus loin, remplaçait
+   celle du transform : le menu apparaissait d'un coup. */
+@media (max-width: 620px) {
+  aside.sidebar { transition: transform .28s cubic-bezier(.2, .8, .2, 1), box-shadow .28s ease; }
+  aside.sidebar:not(.sidebar-open) { box-shadow: none; }
+  .mobile-scrim { opacity: 0; pointer-events: none; transition: opacity .28s ease; }
+  .mobile-scrim.open { opacity: 1; pointer-events: auto; }
+}

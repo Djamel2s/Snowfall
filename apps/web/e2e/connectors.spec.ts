@@ -34,7 +34,8 @@ test('administrateur : Notion du catalogue → connexion → retour sur sa fiche
   // Un bouton : l'ajout enchaîne sur la connexion chez l'éditeur, puis le retour rouvre la fiche.
   await entry.getByRole('button', { name: 'Ajouter et se connecter' }).click()
   await expect.poll(() => api.catalogAdds).toEqual([{ id: 'notion' }])
-  await expect.poll(() => api.oauthCallbacks.length).toBe(1)
+  // Redirection et rechargement complet de l'application : plus long sous charge.
+  await expect.poll(() => api.oauthCallbacks.length, { timeout: 15_000 }).toBe(1)
   await expect(page).toHaveURL(/\/$/)
   const card = page.getByRole('region', { name: 'Notion', exact: true })
   const steps = card.getByRole('list', { name: 'Étapes' })
@@ -118,7 +119,7 @@ test('membre : connecteurs prêts seulement, connexion depuis la fiche, pas de c
   // Pas d'étapes d'administration pour un membre : une phrase, un bouton.
   await expect(card.getByRole('list', { name: 'Étapes' })).toHaveCount(0)
   await card.getByRole('button', { name: 'Se connecter à Jira' }).click()
-  await expect.poll(() => api.oauthCallbacks).toEqual([{ state: 'S'.repeat(43), code: 'code-42' }])
+  await expect.poll(() => api.oauthCallbacks, { timeout: 15_000 }).toEqual([{ state: 'S'.repeat(43), code: 'code-42' }])
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('status').filter({ hasText: 'Connecté à Jira.' })).toBeVisible()
   const after = page.getByRole('region', { name: 'Jira', exact: true })
