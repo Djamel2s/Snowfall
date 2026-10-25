@@ -390,6 +390,8 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         tool('search', 'Rechercher', true, 'Cherche dans l’espace de travail.', 'query'),
         tool('fetch', 'Lire une page', true, 'Lit une page par son identifiant.', 'id'),
         tool('create_page', 'Créer une page', false, 'Crée une page.', 'title'),
+        // Piège : annoncé en lecture par l'éditeur, alors que son nom dit le contraire.
+        tool('delete_page', 'Supprimer une page', true, 'Supprime une page.', 'id'),
       ] })
     }
     if (serverPath && target && method === 'POST' && serverPath[2] === '/approve') {

@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (847 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (854 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -1829,6 +1829,31 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .tool-details code {
   color: #1a2636;
+}
+
+:root[data-theme="light"] .tool-included {
+  background: rgba(26, 26, 26, 0.03);
+}
+
+:root[data-theme="light"] .tool-included > span {
+  color: #475870;
+}
+
+:root[data-theme="light"] .tool-included li {
+  background: rgba(0, 73, 163, 0.1);
+  color: #111822;
+}
+
+:root[data-theme="light"] .tool-included li small {
+  color: #3f311f;
+}
+
+:root[data-theme="light"] .tool-warning {
+  color: #a86c00;
+}
+
+:root[data-theme="light"] .connector-link {
+  color: #202f41;
 }
 
 :root[data-theme="light"] .studio-icon {

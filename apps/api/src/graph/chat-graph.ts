@@ -1,7 +1,7 @@
 import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { pseudonymizingModel } from "../privacy/pseudonymize.js";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
-import { exposureOf, gateOutbound, type Exposure } from "../agent/exposure.js";
+import { exposureOf, gateOutbound, mergeExposure, type Exposure } from "../agent/exposure.js";
 import type { AgentTrace } from "../observability/tracing.js";
 import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
 
@@ -395,8 +395,7 @@ export function buildAgentGraph(
       (state: State) => {
         const calls = lastCalls(state.turns).slice(0, MAX_TOOL_CALLS_PER_STEP);
         // Exposition calculée sur les tours déjà écrits : même décision à la reprise.
-        const own = exposureOf(state.turns);
-        const exposure = { untrusted: own.untrusted || Boolean(state.seed?.untrusted), sensitive: own.sensitive || Boolean(state.seed?.sensitive) };
+        const exposure = mergeExposure(exposureOf(state.turns), state.seed);
         return calls.length ? calls.map((call) => new Send("tool", { call, exposure })) : END;
       },
       ["tool", END],

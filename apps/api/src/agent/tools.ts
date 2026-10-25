@@ -42,7 +42,7 @@ export type ToolContext = {
   /** Remonte une étape d'un sous-agent à l'interface. */
   report?: ((step: SubStep) => void) | undefined;
   /** Exposition de la réponse à cette étape (règle de deux), héritée par un sous-agent. */
-  exposure?: { untrusted: boolean; sensitive: boolean } | undefined;
+  exposure?: { untrusted: boolean; sensitive: boolean; connectors?: string[] | undefined } | undefined;
 };
 
 export interface AgentTool<Args extends z.ZodType = z.ZodType> {
@@ -56,6 +56,8 @@ export interface AgentTool<Args extends z.ZodType = z.ZodType> {
   execute(args: z.infer<Args>, context: ToolContext): Promise<ToolResult>;
   /** Délai propre à l'outil (défaut : TOOL_TIMEOUT_MS) ; un sous-agent travaille plus longtemps. */
   timeoutMs?: number;
+  /** Connecteur (serveur MCP) qui reçoit les appels et fournit les résultats : règle de deux. */
+  origin?: string;
 }
 
 /**
@@ -104,7 +106,7 @@ export async function runTool(
   signal: AbortSignal,
   approve?: Approver,
   report?: (step: SubStep) => void,
-  exposure?: { untrusted: boolean; sensitive: boolean },
+  exposure?: ToolContext["exposure"],
 ): Promise<ToolOutcome> {
   const tool = tools.find((item) => item.name === call.name);
   if (!tool) return { content: `Outil inconnu : ${call.name}.`, isError: true };

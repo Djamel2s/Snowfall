@@ -386,6 +386,13 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
     l'organisation », « Supprimer » (deux clics).
 - Puce « À terminer » : outils pas encore choisis ; « À connecter » : connexion
   OAuth manquante pour l'utilisateur courant.
+- Avertissement « annoncé en lecture mais au nom de modification » : l'éditeur
+  déclare l'outil en lecture alors que son nom dit le contraire. Il est laissé
+  hors du mode « Lecture seule » ; ne l'approuver qu'en écriture, après lecture
+  de sa description.
+- Accord demandé sur un appel web après la lecture d'un connecteur : normal
+  (règle de deux). Les données lues dans un connecteur peuvent y retourner
+  librement ; vers l'extérieur, l'utilisateur voit ce qui sort et décide.
 - « Le service ne répond pas » (`http_error`, `timeout`, `network`,
   `protocol_error`) : adresse fausse ou domaine absent de `mcp-domains.txt`.
 - Ajout depuis le catalogue : si l'éditeur ne permet pas l'enregistrement

@@ -131,6 +131,7 @@ export async function mcpToolsFor(
               description: `[${server.kind === "openapi" ? "API" : "Serveur MCP"} « ${server.name} »] ${approved.title ? `${approved.title} : ` : ""}${approved.description}`.slice(0, 1_500),
               parameters,
               access: approved.access,
+              origin: server.id,
               preview: (args: unknown) => ({
                 title: `${server.name} · ${approved.title ?? approved.name}`,
                 detail: JSON.stringify(args, null, 2).slice(0, 4_000),

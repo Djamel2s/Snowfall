@@ -4,7 +4,7 @@ import { api, ApiError, type CatalogConnector, type McpDiscoveredTool, type McpS
 import { useI18n } from '../../lib/i18n'
 import ConnectorLogo from '../ConnectorLogo'
 import ToolPicker from './ToolPicker'
-import { initialMode, presetChoices, type ToolChoices } from './tool-choices'
+import { defaultAccess, initialMode, presetChoices, type ToolChoices } from './tool-choices'
 
 type Props = {
   server: McpServer
@@ -71,7 +71,7 @@ export default function ConnectorDetail({ server, entry, isAdmin, connected, onB
         ? Object.fromEntries(
             discovered.map((tool) => {
               const approved = server.tools.find((item) => item.name === tool.name)
-              return [tool.name, { selected: Boolean(approved), access: approved?.access ?? (tool.readOnlyHint ? 'read' : 'write') }]
+              return [tool.name, { selected: Boolean(approved), access: approved?.access ?? defaultAccess(tool) }]
             }),
           )
         : presetChoices(discovered, start),

@@ -43,6 +43,10 @@ test('administrateur : Notion du catalogue → connexion → retour sur sa fiche
 
   // Outils lus d'eux-mêmes ; lecture seule proposée par défaut.
   await expect(card.getByRole('radio', { name: /Lecture seule/ })).toHaveAttribute('aria-checked', 'true')
+  // Ce qui sera approuvé reste visible ; l'outil « lecture » au nom de suppression est écarté et signalé.
+  const included = card.locator('.tool-included')
+  await expect(included.locator('li')).toHaveText(['Rechercher', 'Lire une page'])
+  await expect(included).toContainText('1 outil(s) annoncé(s) en lecture mais au nom de modification')
   await page.screenshot({ path: info.outputPath('choix-outils.png') })
   await card.getByRole('button', { name: 'Activer (2 outil(s))' }).click()
   await expect.poll(() => api.approveCalls).toEqual([{ id: expect.any(String), tools: [{ name: 'search', access: 'read' }, { name: 'fetch', access: 'read' }] }])
@@ -72,6 +76,10 @@ test('administrateur : outils au choix, détail lisible, écriture marquée', as
   await card.getByRole('checkbox', { name: 'Créer une page' }).check()
   await expect(card.getByRole('combobox', { name: 'Droit de Créer une page' })).toHaveValue('write')
   await card.getByRole('checkbox', { name: 'Lire une page' }).uncheck()
+  // L'outil piégé : signalé, et proposé en écriture (donc soumis à l'accord) s'il est coché.
+  const trap = card.locator('li', { has: page.getByRole('checkbox', { name: 'Supprimer une page' }) })
+  await expect(trap).toContainText('son nom suggère une modification')
+  await expect(card.getByRole('combobox', { name: 'Droit de Supprimer une page' })).toHaveValue('write')
   await card.getByRole('button', { name: 'Activer (2 outil(s))' }).click()
   await expect.poll(() => api.approveCalls[0]?.tools).toEqual([{ name: 'search', access: 'read' }, { name: 'create_page', access: 'write' }])
 })

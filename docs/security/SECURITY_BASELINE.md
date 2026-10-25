@@ -317,6 +317,12 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - No YouTube or Gmail-sending connector: Google publishes none.
 - Two dependency advisories remain open until their fixes are 14 days old
   (fastify 5.12.6 on 2026-10-27, fast-uri 4.2.3 on 2026-11-02).
+- Adversarial review (2026-10-25), two findings fixed and tested:
+  connector results now count as private data for the rule of two (a planted
+  ticket could previously trigger an outbound call without consent), and a tool
+  the vendor marks read-only but whose name says otherwise is never treated as a
+  read. Remaining: the name check is a heuristic, and imported skills are trusted
+  like internal documents.
 
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 

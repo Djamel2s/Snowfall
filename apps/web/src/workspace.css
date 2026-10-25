@@ -2059,3 +2059,13 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 .tool-details p { margin: 0; white-space: pre-wrap; }
 .tool-details ul { display: grid; gap: 2px; margin: 0; padding: 0 0 0 14px; }
 .tool-details code { color: #c4d4ea; font-size: 10px; }
+
+/* Modes prédéfinis : ce qui sera approuvé, visible avant d'activer. */
+.tool-included { display: grid; gap: 6px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, .03); font-size: 11.5px; }
+.tool-included > span { color: #8fa0b8; }
+.tool-included ul { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.tool-included li { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: rgba(143, 193, 255, .1); color: #cfe2ff; font-size: 11px; }
+.tool-included li small { color: #ffd7a1; font-size: 10px; }
+.tool-warning { display: flex; align-items: flex-start; gap: 5px; margin: 0; color: #ffd58a; font-size: 11px; line-height: 1.4; }
+.tool-warning svg { flex: none; margin-top: 2px; }
+.connector-link { justify-self: start; padding: 0; border: 0; background: none; color: #9ecaff; font: inherit; font-size: 11.5px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

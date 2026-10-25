@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, Eye, PenLine, SlidersHorizontal } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Eye, PenLine, SlidersHorizontal } from 'lucide-react'
 import type { McpDiscoveredTool } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
-import { presetChoices, type ToolChoice, type ToolChoices, type ToolMode as Mode } from './tool-choices'
+import { defaultAccess, presetChoices, suspiciousRead, trustedRead, type ToolChoice, type ToolChoices, type ToolMode as Mode } from './tool-choices'
 
 
 /**
@@ -23,7 +23,7 @@ export default function ToolPicker({
 }) {
   const { t } = useI18n()
   const [details, setDetails] = useState<string | null>(null)
-  const readCount = tools.filter((tool) => tool.supported && tool.readOnlyHint).length
+  const readCount = tools.filter((tool) => tool.supported && trustedRead(tool)).length
   const supported = tools.filter((tool) => tool.supported).length
 
   const pick = (next: Mode) => onChange({ mode: next, choices: next === 'custom' ? choices : presetChoices(tools, next) })
@@ -54,10 +54,36 @@ export default function ToolPicker({
         </button>
       </div>
 
+      {/* Modes prédéfinis : ce qui sera approuvé reste visible (et vérifiable) avant d'activer. */}
+      {mode !== 'custom' && (
+        <div className="tool-included">
+          <span>{t('connectors.included')}</span>
+          <ul>
+            {tools
+              .filter((tool) => choices[tool.name]?.selected)
+              .map((tool) => (
+                <li key={tool.name}>
+                  {tool.title ?? tool.name}
+                  {choices[tool.name]?.access === 'write' && <small>{t('mcp.write')}</small>}
+                </li>
+              ))}
+          </ul>
+          {tools.some((tool) => tool.supported && suspiciousRead(tool)) && (
+            <p className="tool-warning">
+              <AlertTriangle size={12} />
+              {t('connectors.suspiciousSummary', { count: tools.filter((tool) => tool.supported && suspiciousRead(tool)).length })}
+            </p>
+          )}
+          <button type="button" className="connector-link" onClick={() => onChange({ mode: 'custom', choices })}>
+            {t('connectors.reviewTools')}
+          </button>
+        </div>
+      )}
+
       {mode === 'custom' && (
         <ul className="tool-list">
           {tools.map((tool) => {
-            const choice = choices[tool.name] ?? { selected: false, access: tool.readOnlyHint ? 'read' : 'write' }
+            const choice = choices[tool.name] ?? { selected: false, access: defaultAccess(tool) }
             const set = (patch: Partial<ToolChoice>) => onChange({ mode, choices: { ...choices, [tool.name]: { ...choice, ...patch } } })
             const params = Object.entries(tool.inputSchema.properties ?? {})
             return (
@@ -76,6 +102,12 @@ export default function ToolPicker({
                   </button>
                 </div>
                 {!tool.supported && <small className="tool-note">{t('mcp.unsupported')}</small>}
+                {tool.supported && suspiciousRead(tool) && (
+                  <small className="tool-note tool-warning">
+                    <AlertTriangle size={11} />
+                    {t('connectors.suspiciousRead')}
+                  </small>
+                )}
                 {details === tool.name && (
                   <div className="tool-details">
                     {/* Texte de l'éditeur, tel quel : c'est lui que l'empreinte fige et que le modèle lit. */}

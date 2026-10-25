@@ -183,6 +183,8 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Zip bomb (D) | Décompression en flux, plafonds sur les octets réellement produits, 100 entrées | F | `archive.test.ts` (12 Mo de zéros en < 100 Ko refusés) |
 | Chemins piégés dans l'archive (T) | Rien n'est écrit sur disque ; chemins nettoyés (`..`, caractères de contrôle) | F | idem |
 | Compétence importée piégée (T) | Mêmes contrôles qu'une compétence saisie ; scripts mis de côté | M (détecteur heuristique) | `runs.routes.test.ts` (« import zip ») |
+| Fuite des données d'un connecteur par un contenu qu'il renvoie (I) — *revue adversariale du 25 octobre* | Un résultat MCP est non fiable ET privé : à lui seul, il expose la réponse. Retour libre vers le même connecteur (la donnée ne change pas de mains) ; vers le web ou un autre connecteur, accord de l'utilisateur avec ce qui sort. Avant : un ticket Jira piégé pouvait faire ouvrir `evil.example/?d=…` sans accord | F | `exposure.test.ts` (« ticket Jira piégé ») |
+| Outil d'écriture annoncé en lecture par l'éditeur (E) — *revue adversariale du 25 octobre* | `readOnlyHint` n'est qu'une déclaration : un outil au nom de modification (create, delete, send…) n'est jamais pris pour une lecture, il est signalé ; la liste de ce qui sera approuvé reste visible dans les modes prédéfinis | M (heuristique sur le nom ; l'administrateur reste juge) | `connectors.spec.ts` (outil `delete_page` piégé) |
 
 ### 3.5 Artifacts
 
@@ -205,3 +207,4 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 3. **Connecteurs en jeton partagé** (M) : préférer le mode OAuth (compte de chacun) pour les outils qui écrivent ; les connecteurs OpenAPI n'ont pas encore ce mode.
 4. **gVisor non vérifié sur l'hôte de production** : à faire avant d'ouvrir l'interpréteur.
 5. **Pas de test d'intrusion externe** : dossier de cadrage prêt (`PENTEST_SCOPE.md`).
+6. **Compétences venues d'ailleurs** (M) : une compétence est une consigne, par nature ; ses textes comptent comme données internes (règle de deux), pas comme contenu non fiable. Une compétence téléchargée sur internet puis importée garde donc la confiance d'un document de l'organisation : à relire avant de la confier à un agent.
