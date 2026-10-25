@@ -17,6 +17,7 @@ import base64
 import grp
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -35,6 +36,16 @@ WORK_ROOT = os.environ.get("SANDBOX_WORK", "/work")
 RUNNER_UIDS = [int(uid) for uid in os.environ.get("SANDBOX_RUNNER_UIDS", "10001,10002").split(",")]
 
 MAX_CODE_CHARS = 50_000
+# Scripts d'une compétence : ses fichiers (texte) copiés dans skill/, puis un
+# script lancé avec des arguments (liste, jamais via un shell).
+MAX_INPUT_FILES = 20
+MAX_INPUT_BYTES = 2 * 1024 * 1024
+MAX_ARGS = 20
+MAX_ARG_CHARS = 2_000
+MAX_BODY_BYTES = 4 * 1024 * 1024
+# Chemin relatif simple : segments [A-Za-z0-9_.-], 5 niveaux au plus ; « . », « .. »
+# et fichiers cachés refusés à part (rien ne sort de skill/).
+SKILL_PATH = re.compile(r"^[A-Za-z0-9_.-]{1,80}(/[A-Za-z0-9_.-]{1,80}){0,4}$")
 MAX_SECONDS = 60
 OUTPUT_CHARS = 20_000
 MAX_FILES = 8
@@ -209,7 +220,38 @@ def remove_as_runner(workdir, uid):
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def run(code, seconds, uid):
+def valid_skill_path(path):
+    if not isinstance(path, str) or len(path) > 200 or not SKILL_PATH.match(path):
+        return False
+    return not any(part in (".", "..") or part.startswith(".") for part in path.split("/"))
+
+
+def parse_skill(body):
+    """Fichiers, script et arguments d'une compétence ; None si absent, ValueError si invalide."""
+    if "entry" not in body:
+        return None
+    files, entry, args = body.get("files"), body.get("entry"), body.get("args", [])
+    if not isinstance(files, list) or not 0 < len(files) <= MAX_INPUT_FILES:
+        raise ValueError("files")
+    total, paths = 0, set()
+    for item in files:
+        if not isinstance(item, dict) or not valid_skill_path(item.get("path")) or not isinstance(item.get("content"), str):
+            raise ValueError("file")
+        # Pas de doublon, ni de fichier qui serait aussi un dossier (« a » et « a/b »).
+        if item["path"] in paths or any(other.startswith(item["path"] + "/") or item["path"].startswith(other + "/") for other in paths):
+            raise ValueError("path")
+        paths.add(item["path"])
+        total += len(item["content"].encode("utf-8"))
+    if total > MAX_INPUT_BYTES:
+        raise ValueError("too_large")
+    if entry not in paths or not entry.endswith(".py"):
+        raise ValueError("entry")
+    if not isinstance(args, list) or len(args) > MAX_ARGS or any(not isinstance(arg, str) or len(arg) > MAX_ARG_CHARS or "\x00" in arg for arg in args):
+        raise ValueError("args")
+    return {"files": files, "entry": entry, "args": args}
+
+
+def run(code, seconds, uid, skill=None):
     workdir = os.path.join(WORK_ROOT, uuid.uuid4().hex)
     os.mkdir(workdir, 0o700)
     # Fichiers internes privés eux aussi.
@@ -219,17 +261,39 @@ def run(code, seconds, uid):
     try:
         # Fichiers préparés AVANT de céder le dossier : ensuite, ce serveur n'a
         # plus le droit d'y écrire (pas de contournement des permissions).
-        with open(os.path.join(workdir, "main.py"), "w", encoding="utf-8") as handle:
-            handle.write(code)
+        if skill:
+            # Compétence : ses fichiers dans skill/ (jamais rendus comme résultats :
+            # seuls les fichiers créés à la racine du dossier le sont).
+            root = os.path.join(workdir, "skill")
+            os.mkdir(root, 0o700)
+            for item in skill["files"]:
+                target = os.path.join(root, *item["path"].split("/"))
+                os.makedirs(os.path.dirname(target), 0o700, exist_ok=True)
+                with open(target, "w", encoding="utf-8") as handle:
+                    handle.write(item["content"])
+            # Tout est écrit : l'arborescence est relevée en entier, PUIS cédée à
+            # l'utilisateur de l'emplacement, du plus profond au plus haut (une fois
+            # cédé, un dossier n'est plus lisible par ce serveur).
+            owned = [root]
+            for current, folders, names in os.walk(root):
+                owned.extend(os.path.join(current, name) for name in folders + names)
+            for path in sorted(owned, key=lambda item: item.count(os.sep), reverse=True):
+                os.lchown(path, uid, uid)
+            command = ["python3", "-E", "-s", "-X", "utf8", os.path.join(root, *skill["entry"].split("/")), *skill["args"]]
+        else:
+            with open(os.path.join(workdir, "main.py"), "w", encoding="utf-8") as handle:
+                handle.write(code)
+            os.chown(os.path.join(workdir, "main.py"), uid, uid)
+            command = ["python3", "-I", "-X", "utf8", os.path.join(workdir, "main.py")]
         stdout = open(os.path.join(workdir, "stdout.txt"), "wb")
         stderr = open(os.path.join(workdir, "stderr.txt"), "wb")
-        for path in ("main.py", "stdout.txt", "stderr.txt"):
+        for path in ("stdout.txt", "stderr.txt"):
             os.chown(os.path.join(workdir, path), uid, uid)
         # Dossier cédé à l'utilisateur de l'emplacement, fermé à tous les autres
         # (ce serveur compris : il relit les résultats par collect()).
         os.chown(workdir, uid, uid)
         process = subprocess.Popen(
-            ["python3", "-I", "-X", "utf8", os.path.join(workdir, "main.py")],
+            command,
             env=clean_env(workdir),
             stdin=subprocess.DEVNULL,
             stdout=stdout,
@@ -282,21 +346,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/run":
             return self.reply(404, {"error": "not_found"})
         length = int(self.headers.get("Content-Length", "0"))
-        if length <= 0 or length > MAX_CODE_CHARS * 4:
+        if length <= 0 or length > MAX_BODY_BYTES:
             return self.reply(413, {"error": "too_large"})
         try:
             body = json.loads(self.rfile.read(length))
-            code = body["code"]
+            if not isinstance(body, dict):
+                raise ValueError("body")
+            skill = parse_skill(body)
+            code = body.get("code", "") if skill else body["code"]
             seconds = int(body.get("timeoutSeconds", 30))
         except (ValueError, KeyError, TypeError):
             return self.reply(400, {"error": "invalid_request"})
-        if not isinstance(code, str) or not code.strip() or len(code) > MAX_CODE_CHARS:
+        if not skill and (not isinstance(code, str) or not code.strip() or len(code) > MAX_CODE_CHARS):
             return self.reply(400, {"error": "invalid_request"})
         uid = take_slot()
         if uid is None:
             return self.reply(429, {"error": "busy"})
         try:
-            return self.reply(200, run(code, max(1, min(seconds, MAX_SECONDS)), uid))
+            return self.reply(200, run(code, max(1, min(seconds, MAX_SECONDS)), uid, skill))
         except Exception as error:  # noqa: BLE001 - le détail reste dans le journal du conteneur
             print(f"Échec d'exécution : {type(error).__name__}", flush=True)
             return self.reply(500, {"error": "internal"})

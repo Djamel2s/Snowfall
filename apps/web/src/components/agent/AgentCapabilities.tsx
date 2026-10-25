@@ -41,6 +41,9 @@ export default function AgentCapabilities(props: Props) {
   const teamOn = props.organizationTools.includes('delegate') && props.specialists.length > 0
   const logos = new Map(props.catalog.map((entry) => [entry.id, entry]))
   const hiddenSkills = props.agentSkills.filter((id) => !props.skills.some((skill) => skill.id === id))
+  // Scripts d'une compétence : ils ne tournent que si l'agent peut exécuter du code.
+  const canRunCode = props.organizationTools.includes('code_interpreter') && props.tools.includes('code_interpreter')
+  const hasScripts = (skill: Skill) => skill.files.some((file) => file.mediaType === 'text/x-python')
   const count =
     available.filter((id) => props.tools.includes(id)).length +
     props.agentServers.filter((id) => props.servers.some((server) => server.id === id)).length +
@@ -125,6 +128,7 @@ export default function AgentCapabilities(props: Props) {
             icon={skill.confidential ? <Lock size={15} /> : <GraduationCap size={15} />}
             title={skill.name}
             hint={skill.description}
+            note={hasScripts(skill) && !canRunCode && props.agentSkills.includes(skill.id) ? t('studio.skillScriptsOff') : undefined}
             checked={props.agentSkills.includes(skill.id)}
             disabled={!props.agentSkills.includes(skill.id) && props.agentSkills.length >= MAX_SKILLS}
             onChange={() => props.onSkillsChange(toggle(props.agentSkills, skill.id))}
@@ -139,7 +143,7 @@ export default function AgentCapabilities(props: Props) {
   )
 }
 
-function Capability({ icon, title, hint, write, checked, disabled, onChange }: { icon: ReactNode; title: string; hint?: string; write?: boolean; checked: boolean; disabled?: boolean; onChange: () => void }) {
+function Capability({ icon, title, hint, note, write, checked, disabled, onChange }: { icon: ReactNode; title: string; hint?: string; note?: string | undefined; write?: boolean; checked: boolean; disabled?: boolean; onChange: () => void }) {
   const { t } = useI18n()
   return (
     <label className={`studio-capability${checked ? ' on' : ''}${disabled ? ' disabled' : ''}`}>
@@ -147,6 +151,7 @@ function Capability({ icon, title, hint, write, checked, disabled, onChange }: {
       <span className="studio-capability-text">
         <strong>{title}</strong>
         {hint && <small>{hint}</small>}
+        {note && <small className="studio-capability-guard">{note}</small>}
         {write && (
           <small className="studio-capability-guard">
             <ShieldCheck size={11} />

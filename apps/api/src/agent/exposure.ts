@@ -27,7 +27,8 @@ export type Exposure = {
 const isMcp = (name: string) => name.startsWith("mcp_");
 
 /** Résultats écrits par des inconnus. */
-const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name) || name === "delegate_task";
+// Script de compétence : du code écrit par un tiers (souvent téléchargé), sa sortie n'est pas fiable.
+const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name) || name === "delegate_task" || name === "run_skill_script";
 /** Résultats tirés des données de l'organisation. */
 // Compétences : documents internes de l'organisation, comme la base de connaissances.
 const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "delegate_task" || name === "use_skill" || name === "read_skill_file";

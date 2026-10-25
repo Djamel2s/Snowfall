@@ -27,7 +27,7 @@ export type Skill = {
 export type SkillInput = { name: string; description: string; instructions: string; confidential: boolean };
 export type SkillVersion = { version: number; editedBy: string; createdAt: string };
 export type SkillCatalogEntry = { id: string; name: string; description: string; confidential: boolean };
-export type LoadedSkill = { id: string; name: string; instructions: string; files: { id: string; name: string }[] };
+export type LoadedSkill = { id: string; name: string; instructions: string; files: { id: string; name: string; mediaType: string }[] };
 
 export const MAX_SKILL_FILES = 10;
 export const MAX_AGENT_SKILLS = 10;
@@ -303,7 +303,7 @@ export class PostgresSkillStore implements SkillStore {
         id: row.id,
         name: await this.decrypt(client, tenant, row.name, skillAad(tenant.organizationId, row.id, "name")),
         instructions: await this.decrypt(client, tenant, row.instructions, skillAad(tenant.organizationId, row.id, "instructions")),
-        files: files.map((file) => ({ id: file.id, name: file.name })),
+        files: files.map((file) => ({ id: file.id, name: file.name, mediaType: file.mediaType })),
       };
     });
   }
@@ -421,7 +421,7 @@ export class MemorySkillStore implements SkillStore {
 
   async load(tenant: TenantContext, agentId: string, skillId: string) {
     const item = (await this.attached(tenant, agentId, skillId))[0];
-    return item ? { id: item.id, name: item.name, instructions: item.instructions, files: item.files.map(({ id, name }) => ({ id, name })) } : null;
+    return item ? { id: item.id, name: item.name, instructions: item.instructions, files: item.files.map(({ id, name, mediaType }) => ({ id, name, mediaType })) } : null;
   }
 
   async readFile(tenant: TenantContext, agentId: string, skillId: string, fileId: string) {

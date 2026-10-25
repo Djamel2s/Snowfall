@@ -1420,12 +1420,22 @@ export function createAppServer(deps: AppDependencies) {
      * Compétences de l'agent : catalogue (nom, description) dans l'outil use_skill.
      * Une compétence confidentielle n'est jamais proposée à un modèle externe.
      */
-    async function skillsFor(user: AuthenticatedUser, agent: Agent | null, selection: ModelSelection | undefined) {
+    async function skillsFor(
+      user: AuthenticatedUser,
+      agent: Agent | null,
+      selection: ModelSelection | undefined,
+      run: { permitted: Set<ToolId>; conversationId: string; codeRuns: { count: number } },
+    ) {
       if (!agent?.skills?.length || !models.supportsTools?.(selection)) return [];
       const provider = models.providerFor(selection);
       const local = provider === "local" || provider === "echo";
       const catalog = (await skillStore.forAgent(user, agent.id)).filter((skill) => local || !skill.confidential);
-      return skillTools({ store: skillStore, tenant: user, agentId: agent.id, catalog });
+      // Scripts : seulement si l'agent peut exécuter du code (même bac à sable, même plafond d'exécutions).
+      const scripts =
+        run.permitted.has("code_interpreter") && deps.sandbox
+          ? { sandbox: deps.sandbox, scanner: deps.scanner, saveFile: (file: { name: string; mediaType: string; bytes: Buffer }) => generatedFiles.create(user, run.conversationId, file), runs: run.codeRuns }
+          : undefined;
+      return skillTools({ store: skillStore, tenant: user, agentId: agent.id, catalog, scripts });
     }
 
     function agentTools(
@@ -1614,16 +1624,17 @@ export function createAppServer(deps: AppDependencies) {
           ? { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], citations)] }
           : { mode: "none" };
       const threadId = team.threadId ? `${team.threadId}~${subThreadKey(context.callId)}` : undefined;
+      const codeRuns = { count: 0 };
       const tools = agentTools(request, user, specialist, selection, plan, permitted, {
         confidential,
         citations,
         web: new WebSession(task),
         conversationId: team.conversationId,
-        codeRuns: { count: 0 },
+        codeRuns,
         images: { count: 0 },
       });
       tools.push(...(await mcpTools(request, user, specialist, selection, permitted, confidential, context.signal)));
-      tools.push(...(await skillsFor(user, specialist, selection)));
+      tools.push(...(await skillsFor(user, specialist, selection, { permitted, conversationId: team.conversationId, codeRuns })));
       tools.push(...(await teamTools({ ...team, agent: specialist, selection, provider, permitted, confidential, threadId, depth: team.depth + 1 })));
       const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
       const guarded = guardTools(tools, { tainted: false }, (tool, verdict) => {
@@ -1952,16 +1963,18 @@ export function createAppServer(deps: AppDependencies) {
         }
         // Une seule numérotation [n] pour la base et le web, sur toute la réponse.
         const citations = plan.mode === "agent" ? plan.citations : new CitationRegistry().seed(earlier);
+        // Exécutions déjà faites (code du modèle et scripts de compétence) : même plafond à la reprise.
+        const codeRuns = { count: earlier.filter((turn) => turn.role === "tool" && (turn.name === "run_code" || turn.name === "run_skill_script")).length };
         const tools = agentTools(request, user, agent, selection, plan, permitted, {
           confidential,
           citations,
           web: new WebSession(run.request.content).seed(earlier),
           conversationId: run.conversationId,
-          codeRuns: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "run_code").length },
+          codeRuns,
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
-        tools.push(...(await skillsFor(user, agent, selection)));
+        tools.push(...(await skillsFor(user, agent, selection, { permitted, conversationId: run.conversationId, codeRuns })));
         // Équipe d'agents : délégation de tâches (écritures validées par l'utilisateur).
         tools.push(
           ...(await teamTools({

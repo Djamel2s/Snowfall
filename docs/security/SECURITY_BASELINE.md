@@ -323,6 +323,11 @@ adversarial code reviews whose findings were all fixed and covered by tests
   the vendor marks read-only but whose name says otherwise is never treated as a
   read. Remaining: the name check is a heuristic, and imported skills are trusted
   like internal documents.
+- Skill scripts (Python) run only in the code sandbox, only for agents allowed to
+  run code, under the same per-answer and monthly quotas as model-written code
+  (a quota bypass found in review was fixed). A script is third-party code: it
+  cannot reach the network, but it can still produce misleading output or files
+  (antivirus-scanned, served with a sandboxing CSP). Other languages are not run.
 
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 

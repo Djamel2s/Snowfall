@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mockApi } from './mock-api'
+import { fakeAgent, mockApi } from './mock-api'
 
 // Parcours : connecteurs dans la barre latérale. Une liste, une fiche par
 // connecteur, une action principale à la fois : ajouter → se connecter →
@@ -128,14 +128,24 @@ test('membre : connecteurs prêts seulement, connexion depuis la fiche, pas de c
   await expect(after.getByRole('button', { name: 'Se connecter à Jira' })).toBeVisible()
 })
 
-test('compétence importée depuis un .zip : fichiers repris, scripts signalés', async ({ page }) => {
-  const api = await mockApi(page)
+test('compétence importée depuis un .zip : fichiers et script Python repris, autres scripts signalés', async ({ page }) => {
+  const api = await mockApi(page, { agents: [fakeAgent('Juriste', { mine: true })] })
   await page.goto('/')
   await openPanel(page, 'Compétences')
   await page.getByRole('button', { name: 'Importer une compétence (.zip)' }).click()
   const box = page.getByRole('region', { name: 'Importer une compétence (.zip)' })
   await box.locator('input[type="file"]').setInputFiles({ name: 'note.zip', mimeType: 'application/zip', buffer: Buffer.from('PK\u0003\u0004fake') })
   await expect(page.getByRole('button', { name: /note-de-synthese/ }).first()).toBeVisible()
-  await expect(page.getByRole('status')).toContainText('scripts/fill.py (script)')
+  await expect(page.getByRole('status')).toContainText('scripts/deploy.sh (script non Python)')
   expect(api.skills[0]).toMatchObject({ name: 'note-de-synthese' })
+  // Le script Python est gardé, marqué comme tel dans la compétence.
+  // Ouverte d'elle-même après l'import.
+  await expect(page.getByRole('region', { name: /Fichiers de note-de-synthese/ }).getByText(/^script ·/)).toBeVisible()
+
+  // Confiée à un agent qui ne peut pas exécuter de code : le studio prévient.
+  await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
+  await page.getByRole('button', { name: 'Modifier Juriste' }).click()
+  const skills = page.getByRole('group', { name: 'Compétences' })
+  await skills.getByRole('switch', { name: 'note-de-synthese' }).check()
+  await expect(skills).toContainText('Ses scripts ne tourneront pas')
 })

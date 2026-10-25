@@ -23,16 +23,19 @@ export type SandboxResult = {
   files: { name: string; mediaType: string; size: number; data: string }[];
 };
 
+/** Script d'une compétence : ses fichiers (copiés dans skill/), le script lancé et ses arguments. */
+export type SkillRun = { files: { path: string; content: string }[]; entry: string; args: string[] };
+
 export interface CodeSandbox {
-  run(code: string, options: { timeoutSeconds: number; signal: AbortSignal }): Promise<SandboxResult>;
+  run(code: string, options: { timeoutSeconds: number; signal: AbortSignal; skill?: SkillRun | undefined }): Promise<SandboxResult>;
 }
 
 /** Bac à sable par socket Unix (aucun port réseau ouvert). */
 export class UnixSocketSandbox implements CodeSandbox {
   constructor(private readonly socketPath: string) {}
 
-  run(code: string, options: { timeoutSeconds: number; signal: AbortSignal }): Promise<SandboxResult> {
-    const body = JSON.stringify({ code, timeoutSeconds: options.timeoutSeconds });
+  run(code: string, options: { timeoutSeconds: number; signal: AbortSignal; skill?: SkillRun | undefined }): Promise<SandboxResult> {
+    const body = JSON.stringify(options.skill ? { ...options.skill, timeoutSeconds: options.timeoutSeconds } : { code, timeoutSeconds: options.timeoutSeconds });
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
@@ -75,13 +78,56 @@ const shorten = (text: string) => (text.length > OUTPUT_TO_MODEL ? `${text.slice
 /** Nom de fichier lisible et sûr (aucun chemin). */
 const safeName = (name: string) => name.replace(/[^\p{L}\p{N}._ -]/gu, "_").replace(/^\.+/, "").slice(0, 120) || "fichier";
 
-export function codeTool(deps: {
+export type SandboxDeps = {
   sandbox: CodeSandbox;
   scanner?: MalwareScanner | undefined;
   /** Enregistre un fichier produit (chiffré), pour la réponse en cours. */
   saveFile: (input: { name: string; mediaType: string; bytes: Buffer }) => Promise<GeneratedFileMeta>;
+  /** Exécutions de la réponse (code du modèle et scripts de compétence : même plafond). */
   runs: { count: number };
-}) {
+};
+
+export const RUNS_EXHAUSTED = "Limite d'exécutions atteinte pour cette réponse : conclus avec ce que tu as.";
+
+/**
+ * Résultat d'une exécution, pour le modèle : fichiers produits passés à
+ * l'antivirus puis enregistrés (chiffrés), sorties tronquées.
+ */
+export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, "scanner" | "saveFile">) {
+  const saved: GeneratedFileMeta[] = [];
+  const refused: string[] = [];
+  for (const file of result.files.slice(0, 8)) {
+    const bytes = Buffer.from(file.data, "base64");
+    const allowed = (generatedFileMediaTypes as readonly string[]).includes(file.mediaType);
+    if (!allowed || bytes.length === 0 || bytes.length > GENERATED_FILE_MAX_BYTES) {
+      refused.push(file.name);
+      continue;
+    }
+    // Même règle que tout fichier entrant : antivirus, refus si indisponible.
+    if (deps.scanner) {
+      const scan = await deps.scanner.scan(bytes).catch(() => null);
+      if (!scan?.clean) {
+        refused.push(file.name);
+        continue;
+      }
+    }
+    saved.push(await deps.saveFile({ name: safeName(file.name), mediaType: file.mediaType, bytes }));
+  }
+
+  const status = result.timedOut ? "délai dépassé" : result.exitCode === 0 ? "terminé" : `erreur (code ${result.exitCode})`;
+  const parts = [`Exécution ${status} en ${(result.durationMs / 1000).toFixed(1)} s.`];
+  if (result.stdout.trim()) parts.push(`Sortie :\n${shorten(result.stdout)}`);
+  if (result.stderr.trim()) parts.push(`Erreurs :\n${shorten(result.stderr)}`);
+  if (saved.length) parts.push(`Fichiers donnés à l'utilisateur (affichés sous ta réponse) : ${saved.map((file) => file.name).join(", ")}.`);
+  if (refused.length) parts.push(`Fichiers refusés (type, taille ou analyse) : ${refused.join(", ")}.`);
+  return {
+    content: parts.join("\n\n"),
+    summary: saved.length ? `${status} · ${saved.length} fichier(s)` : status,
+    data: { files: saved.map((file) => file.id) },
+  };
+}
+
+export function codeTool(deps: SandboxDeps) {
   return defineTool({
     name: "run_code",
     description:
@@ -97,41 +143,9 @@ export function codeTool(deps: {
       .strict(),
     access: "read",
     async execute({ code }, { signal }) {
-      if (deps.runs.count >= MAX_RUNS) return { content: "Limite d'exécutions atteinte pour cette réponse : conclus avec ce que tu as.", summary: "limite" };
+      if (deps.runs.count >= MAX_RUNS) return { content: RUNS_EXHAUSTED, summary: "limite" };
       deps.runs.count++;
-      const result = await deps.sandbox.run(code, { timeoutSeconds: 30, signal });
-
-      const saved: GeneratedFileMeta[] = [];
-      const refused: string[] = [];
-      for (const file of result.files.slice(0, 8)) {
-        const bytes = Buffer.from(file.data, "base64");
-        const allowed = (generatedFileMediaTypes as readonly string[]).includes(file.mediaType);
-        if (!allowed || bytes.length === 0 || bytes.length > GENERATED_FILE_MAX_BYTES) {
-          refused.push(file.name);
-          continue;
-        }
-        // Même règle que tout fichier entrant : antivirus, refus si indisponible.
-        if (deps.scanner) {
-          const scan = await deps.scanner.scan(bytes).catch(() => null);
-          if (!scan?.clean) {
-            refused.push(file.name);
-            continue;
-          }
-        }
-        saved.push(await deps.saveFile({ name: safeName(file.name), mediaType: file.mediaType, bytes }));
-      }
-
-      const status = result.timedOut ? "délai dépassé" : result.exitCode === 0 ? "terminé" : `erreur (code ${result.exitCode})`;
-      const parts = [`Exécution ${status} en ${(result.durationMs / 1000).toFixed(1)} s.`];
-      if (result.stdout.trim()) parts.push(`Sortie :\n${shorten(result.stdout)}`);
-      if (result.stderr.trim()) parts.push(`Erreurs :\n${shorten(result.stderr)}`);
-      if (saved.length) parts.push(`Fichiers donnés à l'utilisateur (affichés sous ta réponse) : ${saved.map((file) => file.name).join(", ")}.`);
-      if (refused.length) parts.push(`Fichiers refusés (type, taille ou analyse) : ${refused.join(", ")}.`);
-      return {
-        content: parts.join("\n\n"),
-        summary: saved.length ? `${status} · ${saved.length} fichier(s)` : status,
-        data: { files: saved.map((file) => file.id) },
-      };
+      return deliverRun(await deps.sandbox.run(code, { timeoutSeconds: 30, signal }), deps);
     },
   });
 }
@@ -139,7 +153,7 @@ export function codeTool(deps: {
 /** Identifiants des fichiers produits pendant une réponse (pour les rattacher à son message). */
 export function generatedFileIds(turns: { role: string; name?: string; data?: unknown }[]) {
   return turns.flatMap((turn) =>
-    turn.role === "tool" && (turn.name === "run_code" || turn.name === "generate_image") && turn.data && typeof turn.data === "object" && Array.isArray((turn.data as { files?: unknown }).files)
+    turn.role === "tool" && (turn.name === "run_code" || turn.name === "run_skill_script" || turn.name === "generate_image") && turn.data && typeof turn.data === "object" && Array.isArray((turn.data as { files?: unknown }).files)
       ? ((turn.data as { files: unknown[] }).files.filter((id): id is string => typeof id === "string"))
       : [],
   );

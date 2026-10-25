@@ -77,10 +77,35 @@ donne pas le droit de réutiliser sa compétence ailleurs — et la base le refu
 aussi (on ne peut confier à son agent qu'une compétence qu'on possède ou qu'on
 nous a partagée).
 
-## 6. À retenir
+## 6. Les scripts : du code écrit par un tiers
+
+Une compétence au format Anthropic peut contenir des scripts (`scripts/fill.py`) :
+au lieu de demander au modèle de refaire un calcul ou un remplissage à chaque
+fois, on lui donne un programme qui le fait de façon fiable et reproductible.
+
+Mais un script téléchargé est **du code écrit par un inconnu**. Trois règles :
+
+1. **Jamais sur le serveur.** Il tourne dans le bac à sable de l'interpréteur de
+   code : sans réseau, sous un utilisateur jetable, avec des limites de temps, de
+   mémoire et de processus (et gVisor en production, qui isole aussi du noyau).
+2. **Pas de shell.** Les arguments partent en liste (`sys.argv`), jamais dans une
+   ligne de commande : `; rm -rf /` reste un texte, pas une commande. C'est la
+   même idée que les requêtes SQL paramétrées.
+3. **Ce qu'il dit n'est pas fiable.** Sa sortie est traitée comme une page web :
+   non fiable pour la règle de deux, surveillée par le détecteur d'injection.
+
+La revue en attaquant a trouvé une faille de plus : un script n'était compté
+dans **aucun quota**, donc une organisation qui plafonnait l'exécution de code
+pouvait être contournée. Leçon : une nouvelle façon de faire une chose déjà
+limitée doit hériter de **toutes** les limites de l'ancienne. Ici, c'est le
+plafond par réponse et le quota mensuel, avec un test qui échoue sans le correctif.
+
+## 7. À retenir
 
 - **Chargement progressif** : toujours le résumé, le détail à la demande.
 - La **description** décide de tout : elle dit *quand* s'en servir.
 - Une ressource partagée = une surface d'empoisonnement : consentement,
   versions, filtre, règle de deux.
 - La sensibilité reste locale : compétence confidentielle → modèle local.
+- Un script de compétence est du code d'un tiers : bac à sable, arguments en
+  liste, sortie non fiable, mêmes quotas que le code du modèle.

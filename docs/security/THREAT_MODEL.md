@@ -172,6 +172,10 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Membre qui confie à son agent la compétence d'un autre pour la lire (E) | Politique d'insertion d'`agent_skills` : il faut posséder la compétence ou y être autorisé | F | idem (`rejects`) |
 | Donnée sensible d'une compétence envoyée à un modèle externe (I) | Donnée sensible seulement dans une compétence confidentielle ; jamais au catalogue d'un modèle externe ; agent forcé en local, même en changeant seulement de modèle | F | test « compétence confidentielle » |
 | Fichier de référence malveillant (T) | Antivirus, texte extrait seulement, 10 fichiers, résultat tronqué et balisé non fiable | F | test « enregistrement » |
+| Script de compétence hostile (E, I, D) — *scripts, 25 octobre* | Python seulement, exécuté dans le bac à sable (sans réseau, utilisateur dédié, limites CPU/mémoire/processus, gVisor en production), jamais sur l'API ; seulement si l'agent a « Exécuter du code » ; arguments en liste (aucun shell) ; fichiers de la compétence sous `skill/`, chemins validés (ni `..`, ni absolu, ni caché) ; fichiers produits passés à l'antivirus | F | `attack_test.py` (8 contrôles « compétence »), `runs.routes.test.ts` (« script de compétence ») |
+| Sortie de script qui détourne l'agent (T) | Comptée non fiable (règle de deux) ; garde d'injection sur le résultat | M (comme tout contenu externe) | `exposure.test.ts` |
+| Script qui contourne le quota de code (D) — *revue du 25 octobre* | Même compteur que `run_code` : plafond par réponse (5) et quota mensuel de l'organisation. Avant la revue, un script n'était compté dans aucun quota | F | test « script de compétence » (2ᵉ exécution refusée et tracée) |
+| Secret laissé dans un script (I) | Même détecteur que les références : refusé hors compétence confidentielle | F | test « import zip » |
 
 ### 3.4 decies Connecteurs et import de compétences (25 octobre)
 
@@ -182,7 +186,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Connecteur ajouté qui agit sans contrôle (E) | En attente jusqu'à l'examen outil par outil (lecture / écriture décidée par l'administrateur), écritures validées par l'utilisateur | F | tests MCP existants |
 | Zip bomb (D) | Décompression en flux, plafonds sur les octets réellement produits, 100 entrées | F | `archive.test.ts` (12 Mo de zéros en < 100 Ko refusés) |
 | Chemins piégés dans l'archive (T) | Rien n'est écrit sur disque ; chemins nettoyés (`..`, caractères de contrôle) | F | idem |
-| Compétence importée piégée (T) | Mêmes contrôles qu'une compétence saisie ; scripts mis de côté | M (détecteur heuristique) | `runs.routes.test.ts` (« import zip ») |
+| Compétence importée piégée (T) | Mêmes contrôles qu'une compétence saisie ; scripts Python gardés (exécutés seulement dans le bac à sable, voir 3.4 nonies), autres langages mis de côté | M (détecteur heuristique) | `runs.routes.test.ts` (« import zip ») |
 | Fuite des données d'un connecteur par un contenu qu'il renvoie (I) — *revue adversariale du 25 octobre* | Un résultat MCP est non fiable ET privé : à lui seul, il expose la réponse. Retour libre vers le même connecteur (la donnée ne change pas de mains) ; vers le web ou un autre connecteur, accord de l'utilisateur avec ce qui sort. Avant : un ticket Jira piégé pouvait faire ouvrir `evil.example/?d=…` sans accord | F | `exposure.test.ts` (« ticket Jira piégé »), cas d'évaluation `securite-connecteur-exfiltration` (3/3 sur gemini-3.5-flash-lite) |
 | Outil d'écriture annoncé en lecture par l'éditeur (E) — *revue adversariale du 25 octobre* | `readOnlyHint` n'est qu'une déclaration : un outil au nom de modification (create, delete, send…) n'est jamais pris pour une lecture, il est signalé ; la liste de ce qui sera approuvé reste visible dans les modes prédéfinis | M (heuristique sur le nom ; l'administrateur reste juge) | `connectors.spec.ts` (outil `delete_page` piégé) |
 

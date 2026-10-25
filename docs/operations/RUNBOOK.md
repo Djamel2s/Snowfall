@@ -403,7 +403,8 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   du tenant Entra, Agent 365.
 - Une adresse marquée « à vérifier » vient d'un annuaire : la lecture des outils
   confirme qu'elle répond avant toute activation.
-- Compétences › Importer (.zip) : format Anthropic ; scripts non importés.
+- Compétences › Importer (.zip) : format Anthropic ; scripts Python gardés,
+  autres langages (sh, js…) mis de côté.
 - Dépendances : zod 4.6.6 et ip-address 10.7.4 appliqués. Restent (règle des
   14 jours) : fastify 5.12.6 et mermaid 12.2.0 (corrige sa copie de katex)
   installables le 27 octobre ; fast-uri 3.1.9 / 4.2.3 le 2 novembre (vient de
@@ -424,6 +425,11 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   l'historique des versions si un agent change de comportement.
 - Après ajout ou changement d'outils : relancer l'éval des agents
   (`npm run agent:eval`).
+- Scripts (`.py`) : exécutés par l'outil `run_skill_script`, dans le bac à
+  sable, seulement si l'agent a « Exécuter du code » (sinon le studio le
+  signale). Ils comptent dans le quota « code » de l'organisation. Après une
+  modification du bac à sable : `scripts/sandbox-attack.sh` (23 contrôles,
+  dont 8 sur les scripts de compétence) ; en production, gVisor exigé.
 
 ## 29. Parité LibreChat (phase 1)
 

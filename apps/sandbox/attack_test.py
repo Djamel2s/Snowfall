@@ -166,6 +166,46 @@ check("fuite vers l'exécution suivante", "FUITE" not in out["stdout"], out["std
 out = run("import os\nos.symlink('/etc/passwd', 'passwd.txt')\nos.symlink('/etc/shadow', 'shadow.csv')\nprint('liens créés')")
 check("lien symbolique vers un fichier du système", out["files"] == [], ",".join(f["name"] for f in out["files"]))
 
+# ---- Scripts d'une compétence ---------------------------------------------------------
+def run_skill(files, entry, args=(), seconds=10):
+    return call("POST", "/run", {"files": files, "entry": entry, "args": list(args), "timeoutSeconds": seconds})
+
+
+skill_files = [
+    {"path": "scripts/fill.py", "content": "import sys, helpers\nprint(helpers.title(sys.argv[1:]))\nopen('note.md', 'w').write(open(helpers.HERE + '/../references/plan.md').read())\n"},
+    {"path": "scripts/helpers.py", "content": "import os\nHERE = os.path.dirname(os.path.abspath(__file__))\ndef title(args): return ' | '.join(args)\n"},
+    {"path": "references/plan.md", "content": "# Plan\nI. Faits\n"},
+]
+status, out = run_skill(skill_files, "scripts/fill.py", ["Dossier Orion", "; touch PWNED", "$(id)"])
+check(
+    "compétence : script, module voisin, référence, arguments",
+    status == 200 and out["stdout"].strip() == "Dossier Orion | ; touch PWNED | $(id)" and [f["name"] for f in out["files"]] == ["note.md"],
+    f"{status} {out.get('stdout', '')[:60]!r} {[f['name'] for f in out.get('files', [])]}",
+)
+
+status, out = run_skill(skill_files + [{"path": "scripts/probe.py", "content": "import os\nprint('PWNED' if os.path.exists('PWNED') else 'rien')\nprint(sorted(os.listdir('.')))\n"}], "scripts/probe.py")
+check("compétence : arguments jamais passés à un shell", status == 200 and out["stdout"].startswith("rien"), out.get("stdout", "")[:80])
+
+bad_paths = ["../evil.py", "/etc/evil.py", "scripts/../../evil.py", ".hidden.py", "scripts//evil.py", "scripts/.git/x.py", "a/b/c/d/e/f.py", "évil.py", "C:\\evil.py"]
+accepted = []
+for path in bad_paths:
+    status, _ = run_skill([{"path": path, "content": "print('x')"}], path)
+    if status != 400:
+        accepted.append(path)
+check("compétence : chemins piégés refusés", not accepted, ", ".join(accepted))
+
+status, _ = run_skill([{"path": "a.py", "content": "print(1)"}], "b.py")
+check("compétence : script absent des fichiers refusé", status == 400, str(status))
+status, _ = run_skill([{"path": "a.py", "content": "print(1)"}, {"path": "a.py/b.py", "content": "print(2)"}], "a.py")
+check("compétence : fichier et dossier de même nom refusés", status == 400, str(status))
+status, _ = run_skill([{"path": "a.py", "content": "x" * (3 * 1024 * 1024)}], "a.py")
+check("compétence : fichiers trop gros refusés", status in (400, 413), str(status))
+status, _ = run_skill([{"path": "a.py", "content": "print(1)"}], "a.py", ["x"] * 50)
+check("compétence : trop d'arguments refusés", status == 400, str(status))
+
+status, out = run_skill([{"path": "net.py", "content": "import socket\ntry:\n    socket.create_connection(('1.1.1.1', 80), timeout=2); print('OUVERT')\nexcept OSError: print('bloqué')\n"}], "net.py")
+check("compétence : réseau fermé aussi", status == 200 and "OUVERT" not in out["stdout"], out.get("stdout", "").strip())
+
 # ---- Rapport -------------------------------------------------------------------------
 print(f"Isolation : {health.get('isolation', '?')}")
 width = max(len(name) for name, _, _ in results)

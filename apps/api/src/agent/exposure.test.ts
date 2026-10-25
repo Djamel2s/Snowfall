@@ -52,6 +52,8 @@ describe("Règle de deux : contenu externe + données internes → accord pour s
     assert.equal(isExposed(exposureOf([tool("search_knowledge")])), false);
     assert.equal(isExposed(exposureOf([tool("read_webpage"), tool("search_knowledge")])), true);
     assert.equal(isExposed(exposureOf([tool("mcp_jira_ab12_get"), tool("search_knowledge")])), true);
+    // Sortie d'un script de compétence (code écrit par un tiers) : non fiable.
+    assert.equal(isExposed(exposureOf([tool("run_skill_script"), tool("search_knowledge")])), true);
     // Un appel en erreur n'a rien lu.
     assert.equal(isExposed(exposureOf([tool("read_webpage", true), tool("search_knowledge")])), false);
     // Pièce jointe : externe et interne à la fois.

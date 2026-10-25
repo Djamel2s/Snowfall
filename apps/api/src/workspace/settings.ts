@@ -38,7 +38,8 @@ export type ToolMeter = (typeof toolMeters)[number];
 
 /** Catégorie d'un outil exposé au modèle (null : non compté). */
 export function meterOf(toolName: string): ToolMeter | null {
-  if (toolName === "run_code") return "code";
+  // Script de compétence : même bac à sable, même plafond (sinon un contournement du quota).
+  if (toolName === "run_code" || toolName === "run_skill_script") return "code";
   if (toolName === "generate_image") return "image";
   if (toolName === "web_search" || toolName === "read_webpage") return "web";
   if (toolName.startsWith("mcp_")) return "mcp";

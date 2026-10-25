@@ -414,9 +414,14 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       return json(route, { server }, 201)
     }
     if (key === 'POST /skills/import') {
-      const skill = { id: id(), name: 'note-de-synthese', description: 'Rédiger une note de synthèse juridique', instructions: '1. Faits.', confidential: url.searchParams.get('confidential') === 'true', version: 1, mine: true, canEdit: true, shared: false, files: [{ id: id(), name: 'references/plan.md', mediaType: 'text/markdown', size: 12, createdAt: now }], updatedAt: now }
+      // Comme l'API : script Python gardé, autres langages mis de côté.
+      const skill = {
+        id: id(), name: 'note-de-synthese', description: 'Rédiger une note de synthèse juridique', instructions: '1. Faits.', confidential: url.searchParams.get('confidential') === 'true', version: 1, mine: true, canEdit: true, shared: false,
+        files: [{ id: id(), name: 'references/plan.md', mediaType: 'text/markdown', size: 12, createdAt: now }, { id: id(), name: 'scripts/fill.py', mediaType: 'text/x-python', size: 240, createdAt: now }],
+        updatedAt: now,
+      }
       skills.unshift(skill)
-      return json(route, { skill, skipped: [{ name: 'scripts/fill.py', reason: 'script' }] }, 201)
+      return json(route, { skill, skipped: [{ name: 'scripts/deploy.sh', reason: 'script' }] }, 201)
     }
     if (key === 'POST /organization/mcp-servers') {
       const body = request.postDataJSON() as { name: string; url: string; openapi?: unknown }

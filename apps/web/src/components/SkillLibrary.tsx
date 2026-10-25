@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Check, FileText, FileUp, GraduationCap, Lock, Paperclip, Pencil, Plus, Share2, Trash2, Users, X } from 'lucide-react'
+import { Check, FileCode, FileText, FileUp, GraduationCap, Lock, Paperclip, Pencil, Plus, Share2, Trash2, Users, X } from 'lucide-react'
 import { api, type Skill, type SkillInput } from '../lib/api'
 import { formatSize } from '../lib/format'
 import { useI18n } from '../lib/i18n'
@@ -212,10 +212,11 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
                   <ul className="file-list">
                     {skill.files.map((file) => (
                       <li key={file.id}>
-                        <FileText size={13} />
+                        {file.mediaType === 'text/x-python' ? <FileCode size={13} /> : <FileText size={13} />}
                         <span className="file-name" title={file.name}>
                           {file.name}
-                          <small>{formatSize(file.size)}</small>
+                          {/* Script : exécuté dans le bac à sable, si l'agent peut exécuter du code. */}
+                          <small>{file.mediaType === 'text/x-python' ? `${t('skills.script')} · ${formatSize(file.size)}` : formatSize(file.size)}</small>
                         </span>
                         {skill.canEdit && canWrite && (
                           <button type="button" className="icon-button" aria-label={t('skills.removeFile', { name: file.name })} title={t('common.delete')} onClick={() => void removeFile(skill, file.id)}>
@@ -228,7 +229,7 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
                   {skill.files.length === 0 && <p className="settings-hint">{t('skills.noFiles')}</p>}
                   {skill.canEdit && canWrite && skill.files.length < 10 && (
                     <>
-                      <input ref={fileInput} type="file" hidden accept=".pdf,.docx,.txt,.md,.csv,.json" aria-label={t('skills.addFile')} onChange={(event) => void upload(skill, event.target.files)} />
+                      <input ref={fileInput} type="file" hidden accept=".pdf,.docx,.txt,.md,.csv,.json,.py" aria-label={t('skills.addFile')} onChange={(event) => void upload(skill, event.target.files)} />
                       <button type="button" className="settings-secondary" onClick={() => fileInput.current?.click()}>
                         <Paperclip size={13} />
                         {t('skills.addFile')}
