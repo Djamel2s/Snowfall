@@ -425,11 +425,18 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   l'historique des versions si un agent change de comportement.
 - Après ajout ou changement d'outils : relancer l'éval des agents
   (`npm run agent:eval`).
+- Migrations `skill_originals` et `skill_originals_enforcement` (colonne chiffrée
+  des modèles binaires) : `npm run db:migrate` (droits réappliqués), puis
+  reconstruire l'image du bac à sable et redémarrer l'API.
+- Modèles (DOCX, XLSX, PDF, PNG, JPEG, 2 Mio au plus) : marqués « modèle » dans la
+  bibliothèque ; copiés à côté des scripts, jamais envoyés au modèle.
+- Pièces jointes d'une conversation : un script les reçoit par leur nom, dans
+  `inputs/` (5 au plus), seulement celles de la conversation en cours.
 - Scripts (`.py`) : exécutés par l'outil `run_skill_script`, dans le bac à
   sable, seulement si l'agent a « Exécuter du code » (sinon le studio le
   signale). Ils comptent dans le quota « code » de l'organisation. Après une
-  modification du bac à sable : `scripts/sandbox-attack.sh` (23 contrôles,
-  dont 8 sur les scripts de compétence) ; en production, gVisor exigé.
+  modification du bac à sable : `scripts/sandbox-attack.sh` (27 contrôles,
+  dont 12 sur les scripts de compétence) ; en production, gVisor exigé.
 
 ## 29. Parité LibreChat (phase 1)
 

@@ -1933,6 +1933,7 @@ describe("Compétences des agents", () => {
     };
     let skillId = "";
     let scriptId = "";
+    let scriptResult = "";
     const seen: ChatRequest[] = [];
     const model: ChatModel = {
       id: "m",
@@ -1946,10 +1947,12 @@ describe("Compétences des agents", () => {
             yield { type: "token", text: last.content.includes("non exécutables ici") ? "Scripts indisponibles." : "?" };
             return;
           }
-          yield { type: "tool_call", call: { id: "r1", name: "run_skill_script", arguments: { skill: skillId, script: scriptId, arguments: ["Dossier Orion", "; rm -rf /"] } } };
+          // Le modèle tente aussi de récupérer un fichier qui n'est pas dans la conversation.
+          yield { type: "tool_call", call: { id: "r1", name: "run_skill_script", arguments: { skill: skillId, script: scriptId, arguments: ["Dossier Orion", "; rm -rf /"], files: ["../../etc/passwd", "rapport-rh.pdf"] } } };
           return;
         }
         if (last?.role === "tool") {
+          scriptResult = last.content;
           yield { type: "token", text: "Voici la note." };
           return;
         }
@@ -1964,8 +1967,11 @@ describe("Compétences des agents", () => {
     skillId = skill.id;
     await skills.addFile(alice, skill.id, { name: "scripts/fill.py", mediaType: "text/x-python", size: 20, text: "import sys\nprint(sys.argv)" });
     await skills.addFile(alice, skill.id, { name: "références/plan détaillé.md", mediaType: "text/markdown", size: 6, text: "# Plan" });
-    // Référence PDF : seul son texte extrait est gardé, inutile à un script (non copiée).
-    await skills.addFile(alice, skill.id, { name: "modele.pdf", mediaType: "application/pdf", size: 9, text: "Texte du PDF" });
+    // Référence PDF sans original : seul son texte extrait existe, inutile à un script (non copiée).
+    await skills.addFile(alice, skill.id, { name: "ancien.pdf", mediaType: "application/pdf", size: 9, text: "Texte du PDF" });
+    // Modèle Word avec son original : copié tel quel (binaire) à côté du script.
+    const docx = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
+    await skills.addFile(alice, skill.id, { name: "modèle.docx", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: docx.length, text: "Objet :", original: docx });
 
     const make = async (tools: string[]) => {
       const agent = ((await (await api.post("/agents", { name: "Juriste", avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", tools, skills: [skill.id] })).json()) as { agent: { id: string } }).agent;
@@ -1987,14 +1993,17 @@ describe("Compétences des agents", () => {
         code: "",
         skill: {
           files: [
-            { path: "scripts/fill.py", content: "import sys\nprint(sys.argv)" },
-            { path: "references/plan_detaille.md", content: "# Plan" },
+            { path: "skill/scripts/fill.py", content: "import sys\nprint(sys.argv)" },
+            { path: "skill/references/plan_detaille.md", content: "# Plan" },
+            { path: "skill/modele.docx", data: docx.toString("base64") },
           ],
-          entry: "scripts/fill.py",
+          entry: "skill/scripts/fill.py",
           args: ["Dossier Orion", "; rm -rf /"],
         },
       },
     ]);
+    // Fichiers demandés hors de la conversation : jamais copiés, et le modèle le sait.
+    assert.match(scriptResult, /introuvables dans la conversation \(ou trop lourdes\) : \.\.\/\.\.\/etc\/passwd, rapport-rh\.pdf/);
     const files = ((await (await api.get(`/conversations/${withCode}/files`)).json()) as { files: { name: string }[] }).files;
     assert.deepEqual(files.map((file) => file.name), ["note.md"]);
     // Même quota que le code du modèle : au-delà du plafond mensuel, refusé et tracé.

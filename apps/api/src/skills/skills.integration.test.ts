@@ -121,7 +121,11 @@ describe("Compétences : RLS, partage, lecture à travers un agent, chiffrement"
     const skill = await skills.create(as(alice), { ...input, instructions: "Méthode Orion confidentielle" });
     await skills.addFile(as(alice), skill.id, { name: "orion.txt", mediaType: "text/plain", size: 5, text: "Annexe Orion" });
     await sharing.setGrants(as(alice), "skill", skill.id, [{ principal: { type: "organization" }, permission: "view" }]);
-    const raw = await owner.query("SELECT s.name, s.instructions, f.content, v.instructions AS history FROM skills s JOIN skill_files f ON f.skill_id = s.id JOIN skill_versions v ON v.skill_id = s.id WHERE s.id = $1", [skill.id]);
+    // Lecture brute DANS le contexte de l'organisation (sinon la RLS ne renvoie rien, et le test passerait à vide).
+    const raw = await withTenant(pool, as(alice), (client) =>
+      client.query("SELECT s.name, s.instructions, f.content, v.instructions AS history FROM skills s JOIN skill_files f ON f.skill_id = s.id JOIN skill_versions v ON v.skill_id = s.id WHERE s.id = $1", [skill.id]),
+    );
+    assert.equal(raw.rowCount, 1);
     assert.ok(!/Orion|synthèse/i.test(JSON.stringify(raw.rows)));
     await assert.rejects(
       withTenant(pool, as(alice), (client) => client.query("UPDATE skills SET instructions = 'clair' WHERE id = $1", [skill.id])),
@@ -133,5 +137,32 @@ describe("Compétences : RLS, partage, lecture à travers un agent, chiffrement"
       [skill.id],
     );
     assert.equal(Number(left.rows[0].n), 0);
+  });
+
+  it("modèle binaire : original chiffré, intact, lisible seulement à travers un agent qui a la compétence ; refusé en clair", async () => {
+    const skill = await skills.create(as(alice), input);
+    const original = Buffer.concat([Buffer.from("PK"), Buffer.from("Modèle Orion"), randomBytes(512)]);
+    const file = await skills.addFile(as(alice), skill.id, { name: "modele.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: original.length, text: "[Classeur]", original });
+    const withSkill = await agents.create(as(alice), { ...agentInput, skills: [skill.id] });
+    const without = await agents.create(as(alice), agentInput);
+
+    // Au repos : chiffré (ni le texte ni les octets d'origine).
+    const raw = await withTenant(pool, as(alice), (client) => client.query("SELECT original FROM skill_files WHERE id = $1", [file!.id]));
+    assert.equal(raw.rowCount, 1);
+    assert.match(raw.rows[0].original, /^[0-9]+:v1\./);
+    assert.ok(!raw.rows[0].original.includes("Orion"));
+    // Intact à travers l'agent qui l'utilise ; rien pour un autre agent ou un autre membre.
+    assert.ok((await skills.readOriginal(as(alice), withSkill.id, skill.id, file!.id))?.equals(original));
+    assert.equal(await skills.readOriginal(as(alice), without.id, skill.id, file!.id), null);
+    assert.equal(await skills.readOriginal(as(bob), withSkill.id, skill.id, file!.id), null);
+    assert.equal((await skills.load(as(alice), withSkill.id, skill.id))?.files[0]?.hasOriginal, true);
+    // La base refuse un original en clair.
+    await assert.rejects(
+      withTenant(pool, as(alice), (client) => client.query("UPDATE skill_files SET original = 'clair' WHERE id = $1", [file!.id])),
+      /skill_files_original_encrypted_check/,
+    );
+    await agents.delete(as(alice), withSkill.id);
+    await agents.delete(as(alice), without.id);
+    await skills.delete(as(alice), skill.id);
   });
 });

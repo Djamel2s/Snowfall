@@ -172,21 +172,23 @@ def run_skill(files, entry, args=(), seconds=10):
 
 
 skill_files = [
-    {"path": "scripts/fill.py", "content": "import sys, helpers\nprint(helpers.title(sys.argv[1:]))\nopen('note.md', 'w').write(open(helpers.HERE + '/../references/plan.md').read())\n"},
-    {"path": "scripts/helpers.py", "content": "import os\nHERE = os.path.dirname(os.path.abspath(__file__))\ndef title(args): return ' | '.join(args)\n"},
-    {"path": "references/plan.md", "content": "# Plan\nI. Faits\n"},
+    {"path": "skill/scripts/fill.py", "content": "import sys, helpers\nprint(helpers.title(sys.argv[1:]))\nopen('note.md', 'w').write(open(helpers.HERE + '/../references/plan.md').read())\n"},
+    {"path": "skill/scripts/helpers.py", "content": "import os\nHERE = os.path.dirname(os.path.abspath(__file__))\ndef title(args): return ' | '.join(args)\n"},
+    {"path": "skill/references/plan.md", "content": "# Plan\nI. Faits\n"},
 ]
-status, out = run_skill(skill_files, "scripts/fill.py", ["Dossier Orion", "; touch PWNED", "$(id)"])
+status, out = run_skill(skill_files, "skill/scripts/fill.py", ["Dossier Orion", "; touch PWNED", "$(id)"])
 check(
     "compétence : script, module voisin, référence, arguments",
     status == 200 and out["stdout"].strip() == "Dossier Orion | ; touch PWNED | $(id)" and [f["name"] for f in out["files"]] == ["note.md"],
     f"{status} {out.get('stdout', '')[:60]!r} {[f['name'] for f in out.get('files', [])]}",
 )
 
-status, out = run_skill(skill_files + [{"path": "scripts/probe.py", "content": "import os\nprint('PWNED' if os.path.exists('PWNED') else 'rien')\nprint(sorted(os.listdir('.')))\n"}], "scripts/probe.py")
+status, out = run_skill(skill_files + [{"path": "skill/scripts/probe.py", "content": "import os\nprint('PWNED' if os.path.exists('PWNED') else 'rien')\nprint(sorted(os.listdir('.')))\n"}], "skill/scripts/probe.py")
 check("compétence : arguments jamais passés à un shell", status == 200 and out["stdout"].startswith("rien"), out.get("stdout", "")[:80])
 
-bad_paths = ["../evil.py", "/etc/evil.py", "scripts/../../evil.py", ".hidden.py", "scripts//evil.py", "scripts/.git/x.py", "a/b/c/d/e/f.py", "évil.py", "C:\\evil.py"]
+bad_paths = ["../evil.py", "/etc/evil.py", "skill/../../evil.py", "skill/.hidden.py", "skill//evil.py", "skill/.git/x.py", "skill/a/b/c/d/e/f.py", "skill/évil.py", "C:\\evil.py",
+             # Rien à la racine (sorties, main.py, stdout.txt), ni hors de skill/ et inputs/.
+             "evil.py", "main.py", "stdout.txt", "tmp/evil.py", "skill", "inputs"]
 accepted = []
 for path in bad_paths:
     status, _ = run_skill([{"path": path, "content": "print('x')"}], path)
@@ -194,16 +196,37 @@ for path in bad_paths:
         accepted.append(path)
 check("compétence : chemins piégés refusés", not accepted, ", ".join(accepted))
 
-status, _ = run_skill([{"path": "a.py", "content": "print(1)"}], "b.py")
+status, _ = run_skill([{"path": "skill/a.py", "content": "print(1)"}], "skill/b.py")
 check("compétence : script absent des fichiers refusé", status == 400, str(status))
-status, _ = run_skill([{"path": "a.py", "content": "print(1)"}, {"path": "a.py/b.py", "content": "print(2)"}], "a.py")
+status, _ = run_skill([{"path": "skill/a.py", "content": "print(1)"}, {"path": "skill/a.py/b.py", "content": "print(2)"}], "skill/a.py")
 check("compétence : fichier et dossier de même nom refusés", status == 400, str(status))
-status, _ = run_skill([{"path": "a.py", "content": "x" * (3 * 1024 * 1024)}], "a.py")
+status, _ = run_skill([{"path": "skill/a.py", "content": "x" * (9 * 1024 * 1024)}], "skill/a.py")
 check("compétence : fichiers trop gros refusés", status in (400, 413), str(status))
-status, _ = run_skill([{"path": "a.py", "content": "print(1)"}], "a.py", ["x"] * 50)
+status, _ = run_skill([{"path": "skill/a.py", "content": "print(1)"}], "skill/a.py", ["x"] * 50)
 check("compétence : trop d'arguments refusés", status == 400, str(status))
+# Un fichier de l'utilisateur ne peut pas être le script lancé.
+status, _ = run_skill([{"path": "inputs/evil.py", "content": "print('lancé')"}], "inputs/evil.py")
+check("compétence : fichier de l'utilisateur jamais lancé", status == 400, str(status))
+status, _ = run_skill([{"path": "skill/a.py", "content": "print(1)", "data": "eA=="}], "skill/a.py")
+check("compétence : texte ET binaire à la fois refusés", status == 400, str(status))
+status, _ = run_skill([{"path": "skill/a.py", "content": "print(1)"}, {"path": "inputs/x.bin", "data": "pas du base64 !"}], "skill/a.py")
+check("compétence : base64 invalide refusé", status == 400, str(status))
 
-status, out = run_skill([{"path": "net.py", "content": "import socket\ntry:\n    socket.create_connection(('1.1.1.1', 80), timeout=2); print('OUVERT')\nexcept OSError: print('bloqué')\n"}], "net.py")
+# Binaire intact (modèle Excel de la compétence, fichier de l'utilisateur), lu par le script.
+blob = bytes(range(256)) * 64
+status, out = run_skill(
+    [
+        {"path": "skill/run.py", "content": "import hashlib\nfor p in ['skill/modele.xlsx', 'inputs/loyers.xlsx']:\n    print(hashlib.sha256(open(p, 'rb').read()).hexdigest())\n"},
+        {"path": "skill/modele.xlsx", "data": base64.b64encode(blob).decode()},
+        {"path": "inputs/loyers.xlsx", "data": base64.b64encode(blob[::-1]).decode()},
+    ],
+    "skill/run.py",
+)
+import hashlib
+expected = [hashlib.sha256(blob).hexdigest(), hashlib.sha256(blob[::-1]).hexdigest()]
+check("compétence : fichiers binaires transmis intacts, jamais rendus en sortie", status == 200 and out["stdout"].split() == expected and out["files"] == [], f"{status} {[f['name'] for f in out.get('files', [])]}")
+
+status, out = run_skill([{"path": "skill/net.py", "content": "import socket\ntry:\n    socket.create_connection(('1.1.1.1', 80), timeout=2); print('OUVERT')\nexcept OSError: print('bloqué')\n"}], "skill/net.py")
 check("compétence : réseau fermé aussi", status == 200 and "OUVERT" not in out["stdout"], out.get("stdout", "").strip())
 
 # ---- Rapport -------------------------------------------------------------------------

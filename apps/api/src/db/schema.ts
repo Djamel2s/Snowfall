@@ -1108,6 +1108,9 @@ export const skillFiles = pgTable.withRLS(
     userId: uuid("user_id").notNull(),
     name: text("name").notNull(),
     content: text("content").notNull(),
+    // Original binaire (modèle Word, classeur…), chiffré : copié à côté des scripts
+    // dans le bac à sable. Absent pour un fichier texte (le contenu suffit).
+    original: text("original"),
     mediaType: text("media_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

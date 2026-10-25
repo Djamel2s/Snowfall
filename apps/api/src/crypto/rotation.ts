@@ -162,7 +162,8 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     table: "skill_files",
     scope: "user",
     keys: ["id"],
-    fields: (["name", "content"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => skillFileAad(t.organizationId, s(row.id), field) })),
+    // « original » : facultatif (NULL ignoré), binaire rechiffré à l'identique.
+    fields: (["name", "content", "original"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => skillFileAad(t.organizationId, s(row.id), field) })),
   },
   {
     table: "skill_versions",

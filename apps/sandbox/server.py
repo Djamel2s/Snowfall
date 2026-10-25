@@ -36,16 +36,18 @@ WORK_ROOT = os.environ.get("SANDBOX_WORK", "/work")
 RUNNER_UIDS = [int(uid) for uid in os.environ.get("SANDBOX_RUNNER_UIDS", "10001,10002").split(",")]
 
 MAX_CODE_CHARS = 50_000
-# Scripts d'une compétence : ses fichiers (texte) copiés dans skill/, puis un
-# script lancé avec des arguments (liste, jamais via un shell).
+# Scripts d'une compétence : ses fichiers copiés dans skill/, ceux de
+# l'utilisateur dans inputs/ (texte, ou binaire en base64), puis un script lancé
+# avec des arguments (liste, jamais via un shell).
 MAX_INPUT_FILES = 20
-MAX_INPUT_BYTES = 2 * 1024 * 1024
+MAX_INPUT_BYTES = 8 * 1024 * 1024
 MAX_ARGS = 20
 MAX_ARG_CHARS = 2_000
-MAX_BODY_BYTES = 4 * 1024 * 1024
-# Chemin relatif simple : segments [A-Za-z0-9_.-], 5 niveaux au plus ; « . », « .. »
-# et fichiers cachés refusés à part (rien ne sort de skill/).
-SKILL_PATH = re.compile(r"^[A-Za-z0-9_.-]{1,80}(/[A-Za-z0-9_.-]{1,80}){0,4}$")
+MAX_BODY_BYTES = 12 * 1024 * 1024
+# Chemin relatif simple sous skill/ ou inputs/ : segments [A-Za-z0-9_.-], 6 niveaux
+# au plus ; « . », « .. » et fichiers cachés refusés à part. Rien n'arrive à la
+# racine du dossier (là où sont les sorties et les fichiers internes).
+SKILL_PATH = re.compile(r"^(skill|inputs)(/[A-Za-z0-9_.-]{1,80}){1,5}$")
 MAX_SECONDS = 60
 OUTPUT_CHARS = 20_000
 MAX_FILES = 8
@@ -233,22 +235,31 @@ def parse_skill(body):
     files, entry, args = body.get("files"), body.get("entry"), body.get("args", [])
     if not isinstance(files, list) or not 0 < len(files) <= MAX_INPUT_FILES:
         raise ValueError("files")
-    total, paths = 0, set()
+    total, paths, prepared = 0, set(), []
     for item in files:
-        if not isinstance(item, dict) or not valid_skill_path(item.get("path")) or not isinstance(item.get("content"), str):
+        if not isinstance(item, dict) or not valid_skill_path(item.get("path")):
+            raise ValueError("file")
+        # Texte (« content ») ou binaire (« data », base64 strict) : l'un des deux.
+        if isinstance(item.get("content"), str) and "data" not in item:
+            data = item["content"].encode("utf-8")
+        elif isinstance(item.get("data"), str) and "content" not in item:
+            data = base64.b64decode(item["data"], validate=True)
+        else:
             raise ValueError("file")
         # Pas de doublon, ni de fichier qui serait aussi un dossier (« a » et « a/b »).
         if item["path"] in paths or any(other.startswith(item["path"] + "/") or item["path"].startswith(other + "/") for other in paths):
             raise ValueError("path")
         paths.add(item["path"])
-        total += len(item["content"].encode("utf-8"))
-    if total > MAX_INPUT_BYTES:
-        raise ValueError("too_large")
-    if entry not in paths or not entry.endswith(".py"):
+        total += len(data)
+        if total > MAX_INPUT_BYTES:
+            raise ValueError("too_large")
+        prepared.append({"path": item["path"], "data": data})
+    # Le script lancé est un script de la compétence, jamais un fichier de l'utilisateur.
+    if entry not in paths or not entry.startswith("skill/") or not entry.endswith(".py"):
         raise ValueError("entry")
     if not isinstance(args, list) or len(args) > MAX_ARGS or any(not isinstance(arg, str) or len(arg) > MAX_ARG_CHARS or "\x00" in arg for arg in args):
         raise ValueError("args")
-    return {"files": files, "entry": entry, "args": args}
+    return {"files": prepared, "entry": entry, "args": args}
 
 
 def run(code, seconds, uid, skill=None):
@@ -262,24 +273,27 @@ def run(code, seconds, uid, skill=None):
         # Fichiers préparés AVANT de céder le dossier : ensuite, ce serveur n'a
         # plus le droit d'y écrire (pas de contournement des permissions).
         if skill:
-            # Compétence : ses fichiers dans skill/ (jamais rendus comme résultats :
-            # seuls les fichiers créés à la racine du dossier le sont).
-            root = os.path.join(workdir, "skill")
-            os.mkdir(root, 0o700)
+            # Compétence : ses fichiers dans skill/, ceux de l'utilisateur dans inputs/
+            # (jamais rendus comme résultats : seuls les fichiers créés à la racine
+            # du dossier le sont).
+            roots = set()
             for item in skill["files"]:
-                target = os.path.join(root, *item["path"].split("/"))
+                parts = item["path"].split("/")
+                roots.add(os.path.join(workdir, parts[0]))
+                target = os.path.join(workdir, *parts)
                 os.makedirs(os.path.dirname(target), 0o700, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as handle:
-                    handle.write(item["content"])
-            # Tout est écrit : l'arborescence est relevée en entier, PUIS cédée à
-            # l'utilisateur de l'emplacement, du plus profond au plus haut (une fois
+                with open(target, "wb") as handle:
+                    handle.write(item["data"])
+            # Tout est écrit : les arborescences sont relevées en entier, PUIS cédées
+            # à l'utilisateur de l'emplacement, du plus profond au plus haut (une fois
             # cédé, un dossier n'est plus lisible par ce serveur).
-            owned = [root]
-            for current, folders, names in os.walk(root):
-                owned.extend(os.path.join(current, name) for name in folders + names)
+            owned = list(roots)
+            for root in roots:
+                for current, folders, names in os.walk(root):
+                    owned.extend(os.path.join(current, name) for name in folders + names)
             for path in sorted(owned, key=lambda item: item.count(os.sep), reverse=True):
                 os.lchown(path, uid, uid)
-            command = ["python3", "-E", "-s", "-X", "utf8", os.path.join(root, *skill["entry"].split("/")), *skill["args"]]
+            command = ["python3", "-E", "-s", "-X", "utf8", os.path.join(workdir, *skill["entry"].split("/")), *skill["args"]]
         else:
             with open(os.path.join(workdir, "main.py"), "w", encoding="utf-8") as handle:
                 handle.write(code)

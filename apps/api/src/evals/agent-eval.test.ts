@@ -197,7 +197,8 @@ describe("Évaluation des agents : banc", () => {
     for (const item of agentCases) {
       // Outils de connecteur : nom exposé comme en production (mcp_<serveur>_<id>_<outil>).
       const connector = (item.connector?.tools ?? []).map((tool) => exposedName({ id: "eval0connector", name: item.connector!.name }, tool.name));
-      const offered = new Set<string>([...item.tools, ...(item.tools.includes("web_search") ? ["read_webpage"] : []), ...connector]);
+      const skills = item.skills?.length ? ["use_skill", "read_skill_file", "run_skill_script"] : [];
+      const offered = new Set<string>([...item.tools, ...(item.tools.includes("web_search") ? ["read_webpage"] : []), ...connector, ...skills]);
       for (const check of item.checks) {
         if ("tool" in check && check.tool && check.type !== "tool_not_called") assert.ok(offered.has(check.tool), `${item.id} : ${check.tool}`);
       }

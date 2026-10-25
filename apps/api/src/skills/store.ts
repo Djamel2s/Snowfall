@@ -8,7 +8,8 @@ import { withTenant, type TenantContext } from "../db/tenant.js";
 // pour les instructions complètes, puis read_skill_file pour une référence.
 // Chargement possible seulement pour une compétence confiée à l'agent.
 
-export type SkillFileMeta = { id: string; name: string; mediaType: string; size: number; createdAt: string };
+/** hasOriginal : modèle binaire gardé pour les scripts (Word, PDF, Excel, image). */
+export type SkillFileMeta = { id: string; name: string; mediaType: string; size: number; createdAt: string; hasOriginal: boolean };
 export type Skill = {
   id: string;
   name: string;
@@ -27,7 +28,9 @@ export type Skill = {
 export type SkillInput = { name: string; description: string; instructions: string; confidential: boolean };
 export type SkillVersion = { version: number; editedBy: string; createdAt: string };
 export type SkillCatalogEntry = { id: string; name: string; description: string; confidential: boolean };
-export type LoadedSkill = { id: string; name: string; instructions: string; files: { id: string; name: string; mediaType: string }[] };
+/** hasOriginal : un modèle binaire est gardé (copié à côté des scripts, jamais lu par le modèle). */
+export type LoadedSkill = { id: string; name: string; instructions: string; files: { id: string; name: string; mediaType: string; hasOriginal: boolean }[] };
+export type SkillFileInput = { name: string; mediaType: string; size: number; text: string; original?: Buffer | undefined };
 
 export const MAX_SKILL_FILES = 10;
 export const MAX_AGENT_SKILLS = 10;
@@ -47,16 +50,18 @@ export interface SkillStore {
   update(tenant: TenantContext, id: string, input: SkillInput): Promise<Skill | null>;
   delete(tenant: TenantContext, id: string): Promise<boolean>;
   versions(tenant: TenantContext, id: string): Promise<SkillVersion[]>;
-  addFile(tenant: TenantContext, skillId: string, file: { name: string; mediaType: string; size: number; text: string }): Promise<SkillFileMeta | null>;
+  addFile(tenant: TenantContext, skillId: string, file: SkillFileInput): Promise<SkillFileMeta | null>;
   removeFile(tenant: TenantContext, skillId: string, fileId: string): Promise<boolean>;
   /** Compétences confiées à un agent (nom et description seulement). */
   forAgent(tenant: TenantContext, agentId: string): Promise<SkillCatalogEntry[]>;
   load(tenant: TenantContext, agentId: string, skillId: string): Promise<LoadedSkill | null>;
   readFile(tenant: TenantContext, agentId: string, skillId: string, fileId: string): Promise<{ name: string; text: string } | null>;
+  /** Octets d'origine d'un modèle binaire (bac à sable seulement). */
+  readOriginal(tenant: TenantContext, agentId: string, skillId: string, fileId: string): Promise<Buffer | null>;
 }
 
 export const skillAad = (organizationId: string, id: string, field: "name" | "description" | "instructions") => `skill-${field}:${organizationId}:${id}`;
-export const skillFileAad = (organizationId: string, id: string, field: "name" | "content") => `skill-file-${field}:${organizationId}:${id}`;
+export const skillFileAad = (organizationId: string, id: string, field: "name" | "content" | "original") => `skill-file-${field}:${organizationId}:${id}`;
 export const skillVersionAad = (organizationId: string, id: string, field: "description" | "instructions") => `skill-version-${field}:${organizationId}:${id}`;
 
 type Row = {
@@ -90,8 +95,8 @@ export class PostgresSkillStore implements SkillStore {
   }
 
   private async files(client: PoolClient, tenant: TenantContext, skillId: string) {
-    const rows = await client.query<{ id: string; name: string; mediaType: string; size: number; createdAt: string }>(
-      `SELECT id, name, media_type AS "mediaType", size_bytes AS size, created_at AS "createdAt"
+    const rows = await client.query<{ id: string; name: string; mediaType: string; size: number; createdAt: string; hasOriginal: boolean }>(
+      `SELECT id, name, media_type AS "mediaType", size_bytes AS size, created_at AS "createdAt", original IS NOT NULL AS "hasOriginal"
        FROM skill_files WHERE organization_id = $1 AND skill_id = $2 ORDER BY created_at, id`,
       [tenant.organizationId, skillId],
     );
@@ -228,7 +233,7 @@ export class PostgresSkillStore implements SkillStore {
     });
   }
 
-  addFile(tenant: TenantContext, skillId: string, file: { name: string; mediaType: string; size: number; text: string }) {
+  addFile(tenant: TenantContext, skillId: string, file: SkillFileInput) {
     return withTenant(this.pool, tenant, async (client) => {
       const skill = (
         await client.query<{ userId: string; access: string | null }>(
@@ -243,8 +248,8 @@ export class PostgresSkillStore implements SkillStore {
       const org = tenant.organizationId;
       const row = (
         await client.query<{ createdAt: string }>(
-          `INSERT INTO skill_files (id, skill_id, organization_id, user_id, name, content, media_type, size_bytes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING created_at AS "createdAt"`,
+          `INSERT INTO skill_files (id, skill_id, organization_id, user_id, name, content, original, media_type, size_bytes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING created_at AS "createdAt"`,
           [
             id,
             skillId,
@@ -252,13 +257,14 @@ export class PostgresSkillStore implements SkillStore {
             skill.userId,
             await this.keyring.encrypt(client, org, file.name, skillFileAad(org, id, "name")),
             await this.keyring.encrypt(client, org, file.text, skillFileAad(org, id, "content")),
+            file.original ? await this.keyring.encryptBytes(client, org, file.original, skillFileAad(org, id, "original")) : null,
             file.mediaType,
             file.size,
           ],
         )
       ).rows[0]!;
       await client.query("UPDATE skills SET updated_at = now() WHERE id = $1 AND organization_id = $2", [skillId, org]);
-      return { id, name: file.name, mediaType: file.mediaType, size: file.size, createdAt: new Date(row.createdAt).toISOString() };
+      return { id, name: file.name, mediaType: file.mediaType, size: file.size, createdAt: new Date(row.createdAt).toISOString(), hasOriginal: Boolean(file.original) };
     });
   }
 
@@ -303,7 +309,7 @@ export class PostgresSkillStore implements SkillStore {
         id: row.id,
         name: await this.decrypt(client, tenant, row.name, skillAad(tenant.organizationId, row.id, "name")),
         instructions: await this.decrypt(client, tenant, row.instructions, skillAad(tenant.organizationId, row.id, "instructions")),
-        files: files.map((file) => ({ id: file.id, name: file.name, mediaType: file.mediaType })),
+        files: files.map((file) => ({ id: file.id, name: file.name, mediaType: file.mediaType, hasOriginal: file.hasOriginal })),
       };
     });
   }
@@ -324,9 +330,23 @@ export class PostgresSkillStore implements SkillStore {
       };
     });
   }
+
+  readOriginal(tenant: TenantContext, agentId: string, skillId: string, fileId: string) {
+    return withTenant(this.pool, tenant, async (client) => {
+      const row = (
+        await client.query<{ id: string; original: string | null }>(
+          `SELECT f.id, f.original FROM skill_files f JOIN skills ON skills.id = f.skill_id
+           WHERE f.organization_id = $1 AND ${ATTACHED} AND f.skill_id = $3 AND f.id = $4`,
+          [tenant.organizationId, agentId, skillId, fileId],
+        )
+      ).rows[0];
+      if (!row?.original) return null;
+      return this.keyring.decryptBytes(client, tenant.organizationId, row.original, skillFileAad(tenant.organizationId, row.id, "original"));
+    });
+  }
 }
 
-type MemorySkill = Omit<Skill, "mine" | "canEdit" | "shared"> & { tenant: TenantContext; fileTexts: Map<string, string>; history: SkillVersion[] };
+type MemorySkill = Omit<Skill, "mine" | "canEdit" | "shared"> & { tenant: TenantContext; fileTexts: Map<string, string>; originals: Map<string, Buffer>; history: SkillVersion[] };
 
 /**
  * En mémoire : développement sans base, tests. `access` dit le droit accordé
@@ -360,7 +380,7 @@ export class MemorySkillStore implements SkillStore {
   }
 
   async create(tenant: TenantContext, input: SkillInput) {
-    const item: MemorySkill = { id: randomUUID(), ...input, version: 1, files: [], updatedAt: new Date().toISOString(), tenant, fileTexts: new Map(), history: [] };
+    const item: MemorySkill = { id: randomUUID(), ...input, version: 1, files: [], updatedAt: new Date().toISOString(), tenant, fileTexts: new Map(), originals: new Map(), history: [] };
     item.history.push({ version: 1, editedBy: tenant.userId, createdAt: item.updatedAt });
     this.items.set(item.id, item);
     return this.view(item, tenant);
@@ -391,13 +411,14 @@ export class MemorySkillStore implements SkillStore {
     return item && this.visible(tenant, item) ? [...item.history].reverse() : [];
   }
 
-  async addFile(tenant: TenantContext, skillId: string, file: { name: string; mediaType: string; size: number; text: string }) {
+  async addFile(tenant: TenantContext, skillId: string, file: SkillFileInput) {
     const item = this.items.get(skillId);
     if (!item || !this.visible(tenant, item) || (item.tenant.userId !== tenant.userId && this.access(tenant, skillId) !== "edit")) return null;
     if (item.files.length >= MAX_SKILL_FILES) throw new SkillRuleError("TOO_MANY_FILES");
-    const meta = { id: randomUUID(), name: file.name, mediaType: file.mediaType, size: file.size, createdAt: new Date().toISOString() };
+    const meta = { id: randomUUID(), name: file.name, mediaType: file.mediaType, size: file.size, createdAt: new Date().toISOString(), hasOriginal: Boolean(file.original) };
     item.files.push(meta);
     item.fileTexts.set(meta.id, file.text);
+    if (file.original) item.originals.set(meta.id, Buffer.from(file.original));
     return meta;
   }
 
@@ -407,6 +428,7 @@ export class MemorySkillStore implements SkillStore {
     const before = item.files.length;
     item.files = item.files.filter((file) => file.id !== fileId);
     item.fileTexts.delete(fileId);
+    item.originals.delete(fileId);
     return item.files.length < before;
   }
 
@@ -421,12 +443,17 @@ export class MemorySkillStore implements SkillStore {
 
   async load(tenant: TenantContext, agentId: string, skillId: string) {
     const item = (await this.attached(tenant, agentId, skillId))[0];
-    return item ? { id: item.id, name: item.name, instructions: item.instructions, files: item.files.map(({ id, name, mediaType }) => ({ id, name, mediaType })) } : null;
+    return item ? { id: item.id, name: item.name, instructions: item.instructions, files: item.files.map(({ id, name, mediaType }) => ({ id, name, mediaType, hasOriginal: item.originals.has(id) })) } : null;
   }
 
   async readFile(tenant: TenantContext, agentId: string, skillId: string, fileId: string) {
     const item = (await this.attached(tenant, agentId, skillId))[0];
     const file = item?.files.find((entry) => entry.id === fileId);
     return item && file ? { name: file.name, text: item.fileTexts.get(fileId) ?? "" } : null;
+  }
+
+  async readOriginal(tenant: TenantContext, agentId: string, skillId: string, fileId: string) {
+    const item = (await this.attached(tenant, agentId, skillId))[0];
+    return item?.originals.get(fileId) ?? null;
   }
 }

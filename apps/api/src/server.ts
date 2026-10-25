@@ -1420,11 +1420,33 @@ export function createAppServer(deps: AppDependencies) {
      * Compétences de l'agent : catalogue (nom, description) dans l'outil use_skill.
      * Une compétence confidentielle n'est jamais proposée à un modèle externe.
      */
+    /**
+     * Pièces jointes transmises à un script, par leur nom : cherchées dans CETTE
+     * conversation seulement (messages enregistrés et message en cours), jamais
+     * dans « Mes fichiers » ni ailleurs. Le plus récent l'emporte à nom égal.
+     */
+    function scriptInputs(user: AuthenticatedUser, conversationId: string, current: string[]) {
+      return async (names: string[]) => {
+        const attachments = deps.attachments;
+        if (!attachments || !names.length) return [];
+        const history = (await conversationStore.getMessages(user, conversationId)) ?? [];
+        const pending = current.length ? await attachments.claimable(user, conversationId, current) : [];
+        const byName = new Map([...history.flatMap((message) => message.attachments ?? []), ...pending].map((file) => [file.name, file.id]));
+        const found: { name: string; bytes: Buffer }[] = [];
+        for (const name of names) {
+          const id = byName.get(name);
+          const file = id ? await attachments.content(user, id) : null;
+          if (file) found.push({ name, bytes: file.bytes });
+        }
+        return found;
+      };
+    }
+
     async function skillsFor(
       user: AuthenticatedUser,
       agent: Agent | null,
       selection: ModelSelection | undefined,
-      run: { permitted: Set<ToolId>; conversationId: string; codeRuns: { count: number } },
+      run: { permitted: Set<ToolId>; conversationId: string; codeRuns: { count: number }; attachmentIds?: string[] },
     ) {
       if (!agent?.skills?.length || !models.supportsTools?.(selection)) return [];
       const provider = models.providerFor(selection);
@@ -1433,7 +1455,13 @@ export function createAppServer(deps: AppDependencies) {
       // Scripts : seulement si l'agent peut exécuter du code (même bac à sable, même plafond d'exécutions).
       const scripts =
         run.permitted.has("code_interpreter") && deps.sandbox
-          ? { sandbox: deps.sandbox, scanner: deps.scanner, saveFile: (file: { name: string; mediaType: string; bytes: Buffer }) => generatedFiles.create(user, run.conversationId, file), runs: run.codeRuns }
+          ? {
+              sandbox: deps.sandbox,
+              scanner: deps.scanner,
+              saveFile: (file: { name: string; mediaType: string; bytes: Buffer }) => generatedFiles.create(user, run.conversationId, file),
+              runs: run.codeRuns,
+              inputs: scriptInputs(user, run.conversationId, run.attachmentIds ?? []),
+            }
           : undefined;
       return skillTools({ store: skillStore, tenant: user, agentId: agent.id, catalog, scripts });
     }
@@ -1974,7 +2002,7 @@ export function createAppServer(deps: AppDependencies) {
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
-        tools.push(...(await skillsFor(user, agent, selection, { permitted, conversationId: run.conversationId, codeRuns })));
+        tools.push(...(await skillsFor(user, agent, selection, { permitted, conversationId: run.conversationId, codeRuns, attachmentIds: run.request.attachmentIds })));
         // Équipe d'agents : délégation de tâches (écritures validées par l'utilisateur).
         tools.push(
           ...(await teamTools({

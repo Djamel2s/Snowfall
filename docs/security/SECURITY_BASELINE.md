@@ -328,6 +328,15 @@ adversarial code reviews whose findings were all fixed and covered by tests
   (a quota bypass found in review was fixed). A script is third-party code: it
   cannot reach the network, but it can still produce misleading output or files
   (antivirus-scanned, served with a sandboxing CSP). Other languages are not run.
+- Skill templates (DOCX, XLSX, PDF, PNG, JPEG, up to 2 MiB) keep their original
+  bytes, encrypted, for scripts only. Workbook cells are checked for sensitive
+  data; images and scanned PDFs are not read, so they are not checked.
+- A script receives the user's files only by name, from the current
+  conversation (never the file library), under `inputs/`.
+- Review finding: two encryption-at-rest assertions in the skills integration
+  test passed vacuously (a raw read without tenant context returns no row under
+  FORCE RLS), and that test file was in no test list. Both fixed: the read runs
+  in the organization context and asserts one row; the file now runs with the suite.
 
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 

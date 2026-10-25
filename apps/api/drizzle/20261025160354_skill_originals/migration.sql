@@ -1,0 +1,1 @@
+ALTER TABLE "skill_files" ADD COLUMN "original" text;

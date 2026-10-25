@@ -56,7 +56,8 @@ export type ConversationSettings = {
 }
 
 /** Compétence : savoir-faire que l'agent charge quand la demande correspond à sa description. */
-export type SkillFile = { id: string; name: string; mediaType: string; size: number; createdAt: string }
+/** hasOriginal : modèle binaire (Word, PDF, Excel, image) gardé pour les scripts de la compétence. */
+export type SkillFile = { id: string; name: string; mediaType: string; size: number; createdAt: string; hasOriginal?: boolean }
 export type Skill = {
   id: string
   name: string

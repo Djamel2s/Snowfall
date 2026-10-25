@@ -89,7 +89,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const conversationPatches: Record<string, unknown>[] = []
   const continueCalls: string[] = []
   const forks: { from: string; to: string }[] = []
-  const skills: { id: string; name: string; description: string; instructions: string; confidential: boolean; version: number; mine: boolean; canEdit: boolean; shared: boolean; files: { id: string; name: string; mediaType: string; size: number; createdAt: string }[]; updatedAt: string }[] = []
+  const skills: { id: string; name: string; description: string; instructions: string; confidential: boolean; version: number; mine: boolean; canEdit: boolean; shared: boolean; files: { id: string; name: string; mediaType: string; size: number; createdAt: string; hasOriginal?: boolean }[]; updatedAt: string }[] = []
   const agentSaves: Record<string, unknown>[] = []
   const catalogAdds: Record<string, unknown>[] = []
   const emptyJsonBodies: string[] = []
@@ -417,7 +417,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       // Comme l'API : script Python gardé, autres langages mis de côté.
       const skill = {
         id: id(), name: 'note-de-synthese', description: 'Rédiger une note de synthèse juridique', instructions: '1. Faits.', confidential: url.searchParams.get('confidential') === 'true', version: 1, mine: true, canEdit: true, shared: false,
-        files: [{ id: id(), name: 'references/plan.md', mediaType: 'text/markdown', size: 12, createdAt: now }, { id: id(), name: 'scripts/fill.py', mediaType: 'text/x-python', size: 240, createdAt: now }],
+        files: [
+          { id: id(), name: 'references/plan.md', mediaType: 'text/markdown', size: 12, createdAt: now },
+          { id: id(), name: 'scripts/fill.py', mediaType: 'text/x-python', size: 240, createdAt: now },
+          { id: id(), name: 'assets/modele.xlsx', mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 8200, createdAt: now, hasOriginal: true },
+        ],
         updatedAt: now,
       }
       skills.unshift(skill)

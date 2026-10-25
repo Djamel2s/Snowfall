@@ -140,7 +140,10 @@ test('compétence importée depuis un .zip : fichiers et script Python repris, a
   expect(api.skills[0]).toMatchObject({ name: 'note-de-synthese' })
   // Le script Python est gardé, marqué comme tel dans la compétence.
   // Ouverte d'elle-même après l'import.
-  await expect(page.getByRole('region', { name: /Fichiers de note-de-synthese/ }).getByText(/^script ·/)).toBeVisible()
+  const files = page.getByRole('region', { name: /Fichiers de note-de-synthese/ })
+  await expect(files.getByText(/^script ·/)).toBeVisible()
+  // Le modèle Excel est gardé tel quel, pour les scripts.
+  await expect(files.getByText(/^modèle ·/)).toBeVisible()
 
   // Confiée à un agent qui ne peut pas exécuter de code : le studio prévient.
   await page.getByRole('button', { name: 'Agents', exact: true }).first().click()

@@ -1,13 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { detectFile, sanitizeFileName } from "../attachments/detect.js";
-import { ExtractionError, extractText } from "../attachments/extract.js";
+import { sanitizeFileName } from "../attachments/detect.js";
 import { ATTACHMENT_MAX_BYTES } from "../db/schema.js";
 import { detectInjection } from "../security/injection.js";
 import type { MalwareScanner } from "../security/antivirus.js";
 import { detectSensitive } from "../security/sensitive.js";
 import { readZip, SkillArchiveError, splitSkillArchive } from "../skills/archive.js";
-import { isOtherScript, isPythonScript, scriptText, SKILL_SCRIPT_TYPE } from "../skills/scripts.js";
+import { prepareSkillFile } from "../skills/files.js";
 import { MAX_SKILL_FILES, SkillRuleError, type SkillInput, type SkillStore } from "../skills/store.js";
 import type { RouteKit } from "./kit.js";
 import { scanUpload } from "./scan.js";
@@ -126,27 +125,16 @@ export function registerSkillRoutes(api: FastifyInstance, kit: RouteKit, store: 
 
     const bytes = request.body;
     const name = decodeName(request.headers["x-file-name"]);
-    // Script Python : gardé tel quel (texte), exécuté plus tard dans le bac à sable seulement.
-    const script = isPythonScript(name) ? scriptText(bytes) : null;
-    if (isPythonScript(name) && script === null) return reply.code(422).send({ error: "Unreadable document", reason: "skill_script_invalid" });
-    const detected = script === null ? detectFile(bytes, name) : null;
-    if (script === null && (!detected || detected.kind !== "document")) return reply.code(415).send({ error: "Unsupported file" });
-    const file = { mediaType: script === null ? detected!.mediaType : SKILL_SCRIPT_TYPE };
+    // Même règle qu'à l'import : référence (texte), script Python, ou modèle binaire.
+    const file = await prepareSkillFile(bytes, name);
+    if (file === "script" || file === "unsupported") return reply.code(415).send({ error: "Unsupported file" });
+    if (file === "unreadable") return reply.code(422).send({ error: "Unreadable document" });
     if (!(await scanUpload(kit, scanner, request, reply, user, bytes, { type: "skill", id: params.data.id }))) return reply;
-
-    let text: string;
-    try {
-      text = script ?? (await extractText(bytes, detected!.mediaType as Parameters<typeof extractText>[1])).trim();
-    } catch (error) {
-      if (error instanceof ExtractionError) return reply.code(422).send({ error: "Unreadable document" });
-      throw error;
-    }
-    if (!text.trim()) return reply.code(422).send({ error: "Unreadable document" });
     // Une compétence ordinaire peut partir vers un modèle externe : rien de sensible dedans.
-    if (!skill.confidential && detectSensitive(text).length) return reply.code(400).send({ error: "Invalid request", reason: "skill_file_sensitive" });
+    if (!skill.confidential && detectSensitive(file.text).length) return reply.code(400).send({ error: "Invalid request", reason: "skill_file_sensitive" });
 
     try {
-      const saved = await store.addFile(user, params.data.id, { name, mediaType: file.mediaType, size: bytes.length, text });
+      const saved = await store.addFile(user, params.data.id, { name, mediaType: file.mediaType, size: bytes.length, text: file.text, ...(file.original ? { original: file.original } : {}) });
       if (!saved) return reply.code(404).send({ error: "Not found" });
       await kit.record(request, user, { eventType: "skill.file_add", targetType: "skill", targetId: params.data.id, details: { mediaType: file.mediaType, size: bytes.length } });
       return reply.code(201).send({ file: saved });
@@ -183,46 +171,23 @@ export function registerSkillRoutes(api: FastifyInstance, kit: RouteKit, store: 
     const rejected = rejection(input.data);
     if (rejected) return reply.code(400).send({ error: "Invalid request", reason: rejected });
 
-    // Références : texte extrait ; scripts Python gardés (exécutés dans le bac à sable) ;
-    // autres langages mis de côté (rien pour les exécuter).
-    const files: { name: string; mediaType: string; size: number; text: string }[] = [];
+    // Références : texte extrait (et original d'un modèle binaire) ; scripts Python gardés
+    // (exécutés dans le bac à sable) ; autres langages mis de côté (rien pour les exécuter).
+    const files: { name: string; mediaType: string; size: number; text: string; original?: Buffer }[] = [];
     const skipped: { name: string; reason: "script" | "unsupported" | "unreadable" | "limit" }[] = [];
     for (const entry of archive.others) {
       const name = entry.path.slice(0, 120);
-      if (isOtherScript(name)) {
-        skipped.push({ name, reason: "script" });
-        continue;
-      }
-      if (isPythonScript(name)) {
-        const script = scriptText(entry.data);
-        if (script === null || !script.trim()) skipped.push({ name, reason: "unreadable" });
-        else if (files.length >= MAX_SKILL_FILES) skipped.push({ name, reason: "limit" });
-        else if (!confidential && detectSensitive(script).length) return reply.code(400).send({ error: "Invalid request", reason: "skill_file_sensitive", file: name });
-        else files.push({ name, mediaType: SKILL_SCRIPT_TYPE, size: entry.data.length, text: script });
-        continue;
-      }
-      const buffer = Buffer.from(entry.data);
-      const file = detectFile(buffer, name.split("/").pop() ?? name);
-      if (!file || file.kind !== "document") {
-        skipped.push({ name, reason: "unsupported" });
+      const file = await prepareSkillFile(Buffer.from(entry.data), name.split("/").pop() ?? name);
+      if (typeof file === "string") {
+        skipped.push({ name, reason: file });
         continue;
       }
       if (files.length >= MAX_SKILL_FILES) {
         skipped.push({ name, reason: "limit" });
         continue;
       }
-      let text = "";
-      try {
-        text = (await extractText(buffer, file.mediaType)).trim();
-      } catch (error) {
-        if (!(error instanceof ExtractionError)) throw error;
-      }
-      if (!text) {
-        skipped.push({ name, reason: "unreadable" });
-        continue;
-      }
-      if (!confidential && detectSensitive(text).length) return reply.code(400).send({ error: "Invalid request", reason: "skill_file_sensitive", file: name });
-      files.push({ name, mediaType: file.mediaType, size: buffer.length, text });
+      if (!confidential && detectSensitive(file.text).length) return reply.code(400).send({ error: "Invalid request", reason: "skill_file_sensitive", file: name });
+      files.push({ name, mediaType: file.mediaType, size: entry.data.length, text: file.text, ...(file.original ? { original: file.original } : {}) });
     }
 
     const skill = await store.create(user, input.data);

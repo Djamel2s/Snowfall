@@ -44,7 +44,7 @@ const privileges: Record<string, string[]> = {
   resource_grants: ["SELECT", "INSERT", "DELETE"],
   // Compétences : l'auteur n'est jamais modifiable ; fichiers et versions en ajout (rechiffrés en place par la rotation).
   skills: ["SELECT", "INSERT", "UPDATE (name, description, instructions, confidential, version, updated_at)", "DELETE"],
-  skill_files: ["SELECT", "INSERT", "UPDATE (name, content)", "DELETE"],
+  skill_files: ["SELECT", "INSERT", "UPDATE (name, content, original)", "DELETE"],
   skill_versions: ["SELECT", "INSERT", "UPDATE (description, instructions)"],
   agent_skills: ["SELECT", "INSERT", "DELETE"],
   conversation_presets: ["SELECT", "INSERT", "DELETE"],

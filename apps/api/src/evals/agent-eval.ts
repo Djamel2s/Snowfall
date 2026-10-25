@@ -16,6 +16,10 @@ import { defaultSettings, type SettingsStore } from "../workspace/settings.js";
 import type { McpClient } from "../mcp/client.js";
 import type { McpServerRecord } from "../mcp/store.js";
 import { approvedSnapshot, mcpToolsFor } from "../mcp/tools.js";
+import type { CodeSandbox } from "../agent/code-tool.js";
+import { skillTools } from "../agent/skill-tools.js";
+import { SKILL_SCRIPT_TYPE } from "../skills/scripts.js";
+import { MemorySkillStore } from "../skills/store.js";
 
 // Évaluation des agents : chaque cas fait tourner la VRAIE boucle d'agent
 // (graphe, prompt système, outils de production) sur des données fictives,
@@ -66,6 +70,12 @@ export type EvalCase = {
    * production : empreintes, résultats balisés, règle de deux.
    */
   connector?: { name: string; tools: { name: string; title?: string; description: string; access: "read" | "write"; result: string }[] };
+  /**
+   * Compétences confiées à l'agent (mêmes outils qu'en production). Un script
+   * s'exécute dans un bac à sable fictif qui renvoie `scriptOutput`.
+   */
+  skills?: { name: string; description: string; instructions: string; scripts?: { name: string; text: string }[] }[];
+  scriptOutput?: string;
   /** Décision de l'utilisateur sur les écritures (défaut : refus). */
   approve?: boolean;
   checks: Check[];
@@ -264,7 +274,30 @@ async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog) {
     tools.push(memoryTool({ store: new InMemoryUserMemoryStore(), tenant, audit: async () => undefined }));
   }
   if (evalCase.connector) tools.push(...(await connectorTools(evalCase.connector)));
+  if (evalCase.skills?.length) tools.push(...(await evalSkillTools(evalCase.skills, evalCase.scriptOutput ?? "")));
   return tools;
+}
+
+/** Compétences de l'agent : magasin en mémoire, outils de production, bac à sable fictif. */
+async function evalSkillTools(skills: NonNullable<EvalCase["skills"]>, scriptOutput: string): Promise<AgentTool[]> {
+  const tenant = { organizationId: "00000000-0000-4000-8000-0000000000e1", userId: "00000000-0000-4000-8000-0000000000e2" };
+  const ids: string[] = [];
+  const store = new MemorySkillStore(() => null, async () => ids);
+  const catalog = [];
+  for (const skill of skills) {
+    const created = await store.create(tenant, { name: skill.name, description: skill.description, instructions: skill.instructions, confidential: false });
+    for (const script of skill.scripts ?? []) await store.addFile(tenant, created.id, { name: script.name, mediaType: SKILL_SCRIPT_TYPE, size: script.text.length, text: script.text });
+    ids.push(created.id);
+    catalog.push({ id: created.id, name: created.name, description: created.description, confidential: false });
+  }
+  const sandbox: CodeSandbox = { run: async () => ({ exitCode: 0, timedOut: false, durationMs: 40, stdout: scriptOutput, stderr: "", files: [] }) };
+  return skillTools({
+    store,
+    tenant,
+    agentId: "eval",
+    catalog,
+    scripts: { sandbox, saveFile: async () => { throw new Error("EVAL_NO_FILES"); }, runs: { count: 0 } },
+  });
 }
 
 /** Outils d'un connecteur fictif : définitions approuvées, réponses fixes. */

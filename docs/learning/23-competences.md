@@ -100,7 +100,28 @@ pouvait être contournée. Leçon : une nouvelle façon de faire une chose déj�
 limitée doit hériter de **toutes** les limites de l'ancienne. Ici, c'est le
 plafond par réponse et le quota mensuel, avec un test qui échoue sans le correctif.
 
-## 7. À retenir
+## 7. Modèles et fichiers de l'utilisateur
+
+Un script devient vraiment utile quand il remplit **un modèle** (le classeur de
+l'agence, le courrier à en-tête) avec **les fichiers de l'utilisateur** :
+
+- l'**original** du modèle est gardé (chiffré) en plus de son texte : le modèle
+  lit le texte pour comprendre, le script reçoit les octets pour remplir ;
+- les pièces jointes sont désignées **par leur nom** et cherchées **dans la
+  conversation en cours seulement** : demander `../../etc/passwd` ou un fichier
+  d'une autre conversation ne donne rien. C'est le principe du *moindre accès* :
+  le script n'a que ce que la demande justifie.
+
+Leçon de la revue : un test qui vérifie « aucune donnée en clair dans les lignes
+lues » passe aussi… quand aucune ligne n'est lue. Avec la RLS forcée, une lecture
+hors contexte d'organisation ne renvoie rien : le test passait à vide. Toujours
+vérifier d'abord qu'on lit bien quelque chose (`rowCount === 1`), puis le contenu.
+
+Mesure (25 octobre, `gemini-3.5-flash-lite`, 4 cas × 3) : **12/12**. Bonne
+compétence choisie, aucune quand c'est inutile, script lancé avec les bons
+arguments, sortie piégée ignorée.
+
+## 8. À retenir
 
 - **Chargement progressif** : toujours le résumé, le détail à la demande.
 - La **description** décide de tout : elle dit *quand* s'en servir.

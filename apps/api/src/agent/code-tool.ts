@@ -24,7 +24,9 @@ export type SandboxResult = {
 };
 
 /** Script d'une compétence : ses fichiers (copiés dans skill/), le script lancé et ses arguments. */
-export type SkillRun = { files: { path: string; content: string }[]; entry: string; args: string[] };
+/** Chemins sous skill/ (la compétence) ou inputs/ (fichiers de l'utilisateur) ; texte, ou binaire en base64. */
+export type SkillRunFile = { path: string; content: string } | { path: string; data: string };
+export type SkillRun = { files: SkillRunFile[]; entry: string; args: string[] };
 
 export interface CodeSandbox {
   run(code: string, options: { timeoutSeconds: number; signal: AbortSignal; skill?: SkillRun | undefined }): Promise<SandboxResult>;

@@ -176,6 +176,8 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Sortie de script qui détourne l'agent (T) | Comptée non fiable (règle de deux) ; garde d'injection sur le résultat | M (comme tout contenu externe) | `exposure.test.ts` |
 | Script qui contourne le quota de code (D) — *revue du 25 octobre* | Même compteur que `run_code` : plafond par réponse (5) et quota mensuel de l'organisation. Avant la revue, un script n'était compté dans aucun quota | F | test « script de compétence » (2ᵉ exécution refusée et tracée) |
 | Secret laissé dans un script (I) | Même détecteur que les références : refusé hors compétence confidentielle | F | test « import zip » |
+| Modèle binaire piégé ou volé (T, I) — *modèles, 25 octobre* | Formats reconnus à leur contenu (DOCX, XLSX, PDF, PNG, JPEG), 2 Mio au plus, antivirus ; original chiffré (contrainte en base, rotation des clés), lisible seulement à travers un agent qui a la compétence, jamais envoyé au modèle ; cellules d'un classeur contrôlées (données sensibles) | M : une image ou un PDF scanné ne sont pas lus (pas de contrôle des données sensibles) | `files.test.ts`, `skills.integration.test.ts` (« modèle binaire »), `rotation.integration.test.ts` |
+| Script qui récupère des fichiers hors de la conversation (I, E) | Pièces jointes cherchées par leur nom dans CETTE conversation seulement (messages et message en cours), jamais dans « Mes fichiers » ; copiées sous `inputs/` (noms rendus sûrs, jamais exécutées, jamais à la racine) ; 5 au plus | F | `runs.routes.test.ts` (`../../etc/passwd` refusé), `files.test.ts`, `attack_test.py` |
 
 ### 3.4 decies Connecteurs et import de compétences (25 octobre)
 

@@ -6,6 +6,7 @@ import { PostgresAgentStore } from "../agents/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { PostgresUserMemoryStore } from "../memory/store.js";
 import { PostgresPromptStore } from "../prompts/store.js";
+import { PostgresSkillStore } from "../skills/store.js";
 import { LocalKeyEncryptionProvider } from "./envelope.js";
 import { organizationKeyContext, OrganizationKeyring } from "./keyring.js";
 import { reencryptTable, staleValues, tablesFor } from "./rotation.js";
@@ -69,6 +70,7 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     const conversations = new PostgresConversationStore(pool, keyring);
     const memories = new PostgresUserMemoryStore(pool, keyring);
     const prompts = new PostgresPromptStore(pool, keyring);
+    const skills = new PostgresSkillStore(pool, keyring);
     // Données de l'organisation et de deux membres (dont un qui partira), sur la version 1.
     const agent = await agents.create(as(alice), { name: "Juriste", avatar, instructions: "Cite toujours l'article.", provider: "mistral", model: "mistral-small-latest" });
     const conversation = await conversations.create(as(alice), undefined, agent.id);
@@ -76,6 +78,12 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     await conversations.setFeedback(as(alice), conversation.id, exchange.assistantMessage.id, { rating: "down", comment: "Imprécis" });
     await memories.add(as(alice), "Préfère des réponses courtes");
     await prompts.create(as(gone), { name: "Résumé", content: "Résume en 3 points." });
+    // Compétence avec un modèle binaire (colonne facultative « original ») et une référence texte.
+    const skill = await skills.create(as(alice), { name: "Quittances", description: "Faire les quittances", instructions: "Lance fill.py.", confidential: false });
+    const template = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), randomBytes(300)]);
+    const binary = await skills.addFile(as(alice), skill.id, { name: "modele.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: template.length, text: "[Classeur]", original: template });
+    await skills.addFile(as(alice), skill.id, { name: "plan.md", mediaType: "text/markdown", size: 6, text: "# Plan" });
+    const withSkill = await agents.create(as(alice), { name: "Gestion", avatar, instructions: "", provider: "mistral", model: "mistral-small-latest", skills: [skill.id] });
 
     // Rotation : version 2 de la clé d'organisation.
     await inTenant(null, async (client) => {
@@ -99,5 +107,9 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     assert.equal((await conversations.get(as(alice), conversation.id))?.title, "Question confidentielle");
     assert.deepEqual((await memories.list(as(alice))).map((memory) => memory.content), ["Préfère des réponses courtes"]);
     assert.deepEqual((await prompts.list(as(gone))).map((prompt) => prompt.content), ["Résume en 3 points."]);
+    // Original binaire rechiffré à l'identique (AAD « original ») ; fichier sans original intact.
+    assert.ok((await skills.readOriginal(as(alice), withSkill.id, skill.id, binary!.id))?.equals(template));
+    const loaded = await skills.load(as(alice), withSkill.id, skill.id);
+    assert.deepEqual(loaded?.files.map((file) => [file.name, file.hasOriginal]), [["modele.xlsx", true], ["plan.md", false]]);
   });
 });
