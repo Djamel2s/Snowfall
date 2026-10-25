@@ -1139,7 +1139,7 @@ function App() {
         agentEditor={studioAgent}
         onAgentEditorClose={() => setStudioAgent(undefined)}
         agentEditorNotice={studioNotice}
-        onAgentSaved={(saved, notice) => {
+        onAgentSaved={(saved, notice, test) => {
           const isNew = !agents.some((agent) => agent.id === saved.id)
           setAgents((current) =>
             isNew ? [...current, saved] : current.map((agent) => (agent.id === saved.id ? saved : agent)),
@@ -1151,7 +1151,7 @@ function App() {
             return
           }
           setStudioAgent(undefined)
-          if (isNew) void newChat(saved)
+          if (isNew || test) void newChat(saved)
         }}
         onAgentDeleted={(id) => {
           setAgents((current) => current.filter((agent) => agent.id !== id))

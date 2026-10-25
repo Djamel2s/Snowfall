@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (841 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (847 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -601,28 +601,33 @@ html[data-theme="light"] {
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
   border: 1px solid rgba(27, 40, 56, 0.18);
   background: rgba(26, 26, 26, 0.06);
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]::after,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]::after,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]::after {
   background: #5b6a82;
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
   border-color: rgba(23, 34, 47, 0.5);
   background: rgba(32, 46, 67, 0.35);
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
   background: #111822;
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
   outline: 2px solid rgba(23, 34, 47, 0.5);
 }
@@ -1029,24 +1034,58 @@ html[data-theme="light"] {
   background: rgba(34, 155, 92, 0.18) !important;
 }
 
-:root[data-theme="light"] .studio-tool {
-  border: 1px solid rgba(27, 40, 56, 0.12);
+:root[data-theme="light"] .studio-section-head span {
+  color: #111822;
+}
+
+:root[data-theme="light"] .studio-section-head small {
   color: #5b6a82;
 }
 
-:root[data-theme="light"] .studio-tool:hover {
-  color: #111822;
-  border-color: rgba(23, 34, 47, 0.3);
+:root[data-theme="light"] .studio-group-label {
+  color: #475870;
 }
 
-:root[data-theme="light"] .studio-tool[aria-pressed="true"] {
-  border-color: rgba(32, 47, 65, 0.45);
-  background: rgba(32, 47, 65, 0.1);
+:root[data-theme="light"] .studio-capability {
+  border: 1px solid rgba(27, 40, 56, 0.1);
+}
+
+:root[data-theme="light"] .studio-capability:hover {
+  border-color: rgba(23, 34, 47, 0.26);
+}
+
+:root[data-theme="light"] .studio-capability.on {
+  border-color: rgba(32, 47, 65, 0.38);
+  background: rgba(32, 47, 65, 0.07);
+}
+
+:root[data-theme="light"] .studio-capability-icon {
+  color: #445770;
+}
+
+:root[data-theme="light"] .studio-capability.on .studio-capability-icon {
   color: #111822;
 }
 
-:root[data-theme="light"] .studio-tool-guard {
+:root[data-theme="light"] .studio-capability-text strong {
+  color: #111822;
+}
+
+:root[data-theme="light"] .studio-capability-text small {
+  color: #5b6a82;
+}
+
+:root[data-theme="light"] .studio-capability-text small.studio-capability-guard {
   color: #3f311f;
+}
+
+:root[data-theme="light"] .studio-test {
+  border: 1px solid rgba(27, 40, 56, 0.16);
+  color: #111822;
+}
+
+:root[data-theme="light"] .studio-test:hover:not(:disabled) {
+  border-color: rgba(23, 34, 47, 0.4);
 }
 
 :root[data-theme="light"] .reasoning-toggle {
@@ -1790,10 +1829,6 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .tool-details code {
   color: #1a2636;
-}
-
-:root[data-theme="light"] .agent-avatar img {
-  box-shadow: 0 0 0 1px rgba(27, 40, 56, 0.18);
 }
 
 :root[data-theme="light"] .studio-icon {

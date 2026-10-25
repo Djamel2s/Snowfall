@@ -35,9 +35,9 @@ test('compétence créée avec un fichier, puis confiée à un agent', async ({ 
   // Confier la compétence à l'agent, depuis son studio.
   await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
   await page.getByRole('button', { name: 'Modifier Juriste' }).click()
-  const picker = page.getByRole('group', { name: 'Compétences de l’agent'.replace('’', "'") })
-  await picker.getByRole('button', { name: 'Note de synthèse' }).click()
-  await expect(picker.getByRole('button', { name: 'Note de synthèse' })).toHaveAttribute('aria-pressed', 'true')
+  const picker = page.getByRole('group', { name: 'Compétences' })
+  await picker.getByRole('switch', { name: 'Note de synthèse' }).check()
+  await expect(picker.getByRole('switch', { name: 'Note de synthèse' })).toBeChecked()
   await page.screenshot({ path: info.outputPath('studio-competences.png') })
   await page.getByRole('button', { name: 'Enregistrer', exact: true }).click()
   await expect.poll(() => api.agentSaves.at(-1)?.skills).toEqual([api.skills[0]!.id])

@@ -72,18 +72,53 @@ test('studio : réglages des réponses enregistrés avec l’agent', async ({ pa
   expect(((await saved).postDataJSON() as { parameters: unknown }).parameters).toEqual({ creativity: 'precise', length: 'concise' })
 })
 
-test('studio : consulter des agents — choix des spécialistes enregistré avec l’agent', async ({ page }) => {
+test('studio : son équipe se choisit directement, l’outil suit', async ({ page }) => {
   await mockApi(page, { agents, orgTools: ['search_knowledge', 'save_to_knowledge', 'delegate'] })
   await openAgents(page)
   await page.getByRole('button', { name: 'Modifier Juriste' }).click()
-  await page.getByRole('group', { name: 'Outils' }).getByRole('button', { name: /Déléguer à des agents/ }).click()
-  const specialists = page.getByRole('group', { name: /Son équipe/ })
+  const specialists = page.getByRole('group', { name: 'Son équipe' })
   // Un agent ne se consulte pas lui-même.
-  await expect(specialists.getByRole('button', { name: 'Juriste' })).toHaveCount(0)
-  await specialists.getByRole('button', { name: 'Support RH' }).click()
+  await expect(specialists.getByRole('switch', { name: 'Juriste' })).toHaveCount(0)
+  await specialists.getByRole('switch', { name: 'Support RH' }).check()
   const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().includes('/api/agents/'))
   await page.getByRole('button', { name: /Enregistrer/ }).first().click()
   const body = (await saved).postDataJSON() as { tools: string[]; delegates: string[] }
   expect(body.tools).toContain('delegate')
   expect(body.delegates).toEqual(['agent-supportrh'])
+})
+
+test('studio : ce que l’agent peut faire — une ligne par capacité, écritures signalées', async ({ page }, info) => {
+  await mockApi(page, { agents, mcpOAuth: true, orgTools: ['search_knowledge', 'save_to_knowledge', 'web_search', 'mcp'], platformTools: ['search_knowledge', 'save_to_knowledge', 'web_search', 'mcp'] })
+  await openAgents(page)
+  await page.getByRole('button', { name: 'Modifier Juriste' }).click()
+  const can = page.getByRole('region', { name: 'Ce que l’agent peut faire'.replace('’', "'") })
+  const builtIn = can.getByRole('group', { name: 'Capacités' })
+  await expect(builtIn.getByRole('switch', { name: 'Chercher dans ses documents' })).toBeChecked()
+  await expect(builtIn.getByRole('switch', { name: 'Chercher sur le web' })).toBeChecked()
+  // Écrire demande l'accord : c'est dit sur la ligne même.
+  await expect(builtIn.locator('label', { hasText: 'Enrichir ses documents' })).toContainText('Vous demande avant d’agir'.replace('’', "'"))
+  // Connecteur choisi directement, sans activer d'abord un outil « Connecteurs ».
+  const connectors = can.getByRole('group', { name: 'Connecteurs' })
+  await connectors.getByRole('switch', { name: 'Jira' }).check()
+  await builtIn.getByRole('switch', { name: 'Chercher sur le web' }).uncheck()
+  await expect(can.getByText('2 activé(s)')).toBeVisible()
+  await can.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: info.outputPath('capacites.png') })
+  const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().includes('/api/agents/'))
+  await page.getByRole('button', { name: 'Enregistrer', exact: true }).click()
+  const body = (await saved).postDataJSON() as { tools: string[]; mcpServers: string[] }
+  expect(body.tools).toEqual(['search_knowledge', 'mcp'])
+  expect(body.mcpServers).toEqual(['mcp-1'])
+})
+
+test('studio : « Enregistrer et tester » ouvre une conversation avec l’agent', async ({ page }) => {
+  await mockApi(page, { agents })
+  await openAgents(page)
+  await page.getByRole('button', { name: 'Modifier Juriste' }).click()
+  const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().includes('/api/agents/'))
+  const created = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/api/conversations'))
+  await page.getByRole('button', { name: 'Enregistrer et tester' }).click()
+  await saved
+  expect(((await created).postDataJSON() as { agentId: string }).agentId).toBe('agent-juriste')
+  await expect(page.getByRole('form', { name: 'Modifier l’agent' })).toHaveCount(0)
 })

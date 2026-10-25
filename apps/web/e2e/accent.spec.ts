@@ -58,3 +58,31 @@ test('thème clair : la couleur de l’agent est assombrie pour rester lisible',
   // Luminance assez basse pour un texte lisible sur fond clair.
   expect(0.299 * parts[0]! + 0.587 * parts[1]! + 0.114 * parts[2]!).toBeLessThan(140)
 })
+
+test('photo d’agent : même taille et même position que le logo', async ({ page }, info) => {
+  // PNG 1×1 : seule compte la boîte où la photo s'affiche.
+  const photo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const agent = { ...fakeAgent('Alfred', { mine: true }), avatar: { kind: 'image', data: photo } }
+  await mockApi(page, { answer: 'Bonjour.', agents: [agent] })
+  await page.goto('/')
+  const menu = page.getByRole('button', { name: 'Ouvrir le menu' })
+  if (await menu.isVisible().catch(() => false)) await menu.click()
+  await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
+  await page.getByRole('button', { name: /Alfred/ }).first().click()
+  await page.getByPlaceholder(/Posez votre question/).fill('salut')
+  await page.keyboard.press('Enter')
+  const image = page.locator('.message-assistant .message-avatar-image img').last()
+  await expect(image).toBeVisible()
+  // Position mesurée par rapport au haut de son message (nom au-dessus du texte).
+  const box = (selector: string) =>
+    page.locator(selector).last().evaluate((element) => {
+      const own = element.getBoundingClientRect()
+      const message = element.closest('.message')!.getBoundingClientRect()
+      return { size: own.width, top: own.top - message.top }
+    })
+  const logo = await box('.message-user .message-user-logo')
+  const agentPhoto = await box('.message-assistant .message-avatar-image img')
+  expect(Math.abs(agentPhoto.size - logo.size)).toBeLessThanOrEqual(1)
+  expect(Math.abs(agentPhoto.top - logo.top)).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: info.outputPath('photo.png') })
+})

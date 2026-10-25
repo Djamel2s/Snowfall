@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronLeft, Globe, GraduationCap, ImagePlus, Lock, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2, Users } from 'lucide-react'
+import { Camera, Check, ChevronLeft, MessageSquareText, Sparkles, Trash2 } from 'lucide-react'
 import {
   api,
-  toolAccess,
   toolIds,
   type ToolId,
   type Agent,
   type AgentAvatarData,
   type AgentParameters,
   type Skill,
+  type CatalogConnector,
   type McpServer,
   type AlienAvatar,
   type ProviderCatalog,
@@ -24,6 +24,7 @@ import ModelSelect from './ModelSelect'
 import SharePanel from './SharePanel'
 import KnowledgePanel from './KnowledgePanel'
 import AgentQuality from './AgentQuality'
+import AgentCapabilities from './agent/AgentCapabilities'
 import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
 
 type Props = {
@@ -34,7 +35,8 @@ type Props = {
   notice?: string
   onClose: () => void
   /** notice : l'agent est créé mais des documents ont échoué ; le studio reste ouvert. */
-  onSaved: (agent: Agent, notice?: string) => void
+  /** test : ouvrir aussitôt une conversation avec l'agent enregistré. */
+  onSaved: (agent: Agent, notice?: string, test?: boolean) => void
   onDeleted: (id: string) => void
 }
 
@@ -55,8 +57,9 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
   const [tools, setTools] = useState<ToolId[]>(agent?.tools ?? ['search_knowledge'])
   // Outils activés par l'organisation : l'auteur choisit parmi eux.
   const [organizationTools, setOrganizationTools] = useState<readonly ToolId[]>(toolIds)
-  // Serveurs MCP approuvés par l'admin, et ceux confiés à l'agent.
+  // Connecteurs prêts (approuvés par l'admin), leurs logos, et ceux confiés à l'agent.
   const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+  const [connectorCatalog, setConnectorCatalog] = useState<CatalogConnector[]>([])
   const [agentMcp, setAgentMcp] = useState<string[]>(agent?.mcpServers ?? [])
   const [agentDelegates, setAgentDelegates] = useState<string[]>(agent?.delegates ?? [])
   // Compétences : celles que je vois (bibliothèque), et celles déjà confiées.
@@ -119,6 +122,10 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
             .listMcpServers()
             .then((servers) => !cancelled && setMcpServers(servers.filter((server) => server.status === 'approved')))
             .catch(() => undefined)
+          api
+            .mcpCatalog()
+            .then((items) => !cancelled && setConnectorCatalog(items))
+            .catch(() => undefined)
         }
       })
       // Réglages illisibles : on montre tout, le serveur filtre à l'enregistrement.
@@ -152,22 +159,29 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
     }
   }
 
-  async function save() {
+  async function save(test = false) {
     if (!provider || !model || !name.trim()) return
     setSaving(true)
     setError('')
+    // Connecteurs et équipe : l'outil suit les choix (au moins un connecteur, au moins un spécialiste).
+    const delegates = organizationTools.includes('delegate') && specialists.length > 0 ? agentDelegates : []
+    const chosen = [
+      ...tools.filter((id) => id !== 'mcp' && id !== 'delegate'),
+      ...(agentMcp.length ? (['mcp'] as const) : []),
+      ...(delegates.length ? (['delegate'] as const) : []),
+    ].filter((id) => organizationTools.includes(id))
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], delegates: tools.includes('delegate') ? agentDelegates : [], parameters, skills: agentSkills },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: chosen, mcpServers: chosen.includes('mcp') ? agentMcp : [], delegates: chosen.includes('delegate') ? delegates : [], parameters, skills: agentSkills },
         agent?.id,
       )
       setSavedInstructions(saved.instructions)
       if (agent || (draft.items.length === 0 && !draft.confidential)) {
-        onSaved(saved)
+        onSaved(saved, undefined, test)
         return
       }
       const failures = await submitKnowledgeDraft(api, 'agents', saved.id, draft, t('knowledge.failed.generic'))
-      onSaved(saved, failures.length ? `${t('knowledge.draftFailed')} ${failures.join(' · ')}` : undefined)
+      onSaved(saved, failures.length ? `${t('knowledge.draftFailed')} ${failures.join(' · ')}` : undefined, test)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('studio.saveFailed'))
     } finally {
@@ -310,99 +324,26 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         onChange={(event) => setInstructions(event.target.value)}
       />
 
-      {organizationTools.length > 0 && (
-        <div className="studio-tools" role="group" aria-label={t('studio.tools')}>
-          {organizationTools.map((id) => {
-            const Icon = id === 'search_knowledge' ? Search : id === 'web_search' ? Globe : id === 'code_interpreter' ? SquareTerminal : id === 'mcp' ? Plug : id === 'delegate' ? Users : id === 'image_generation' ? ImagePlus : PenLine
-            const write = toolAccess[id] === 'write'
-            return (
-              <button
-                key={id}
-                type="button"
-                className="studio-tool"
-                aria-pressed={tools.includes(id)}
-                title={write ? t('tool.approvalRequired') : t(`tool.${id}`)}
-                onClick={() => setTools(tools.includes(id) ? tools.filter((tool) => tool !== id) : [...tools, id])}
-              >
-                <Icon size={13} />
-                {t(`tool.${id}`)}
-                {write && <ShieldCheck size={12} className="studio-tool-guard" />}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {tools.includes('mcp') && organizationTools.includes('mcp') && mcpServers.length > 0 && (
-        <div className="studio-tools" role="group" aria-label={t('studio.mcpServers')}>
-          {mcpServers.map((server) => (
-            <button
-              key={server.id}
-              type="button"
-              className="studio-tool"
-              aria-pressed={agentMcp.includes(server.id)}
-              title={server.tools.map((tool) => tool.title ?? tool.name).join(' · ')}
-              onClick={() => setAgentMcp(agentMcp.includes(server.id) ? agentMcp.filter((id) => id !== server.id) : [...agentMcp, server.id])}
-            >
-              <Plug size={13} />
-              {server.name}
-              {server.tools.some((tool) => tool.access === 'write') && <ShieldCheck size={12} className="studio-tool-guard" />}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {tools.includes('delegate') && organizationTools.includes('delegate') && specialists.length > 0 && (
-        <div className="studio-tools" role="group" aria-label={t('studio.delegates')}>
-          {specialists.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="studio-tool"
-              aria-pressed={agentDelegates.includes(item.id)}
-              disabled={!agentDelegates.includes(item.id) && agentDelegates.length >= 5}
-              onClick={() => setAgentDelegates(agentDelegates.includes(item.id) ? agentDelegates.filter((id) => id !== item.id) : [...agentDelegates, item.id])}
-            >
-              <Users size={13} />
-              {item.name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {(skillLibrary.length > 0 || agentSkills.length > 0) && (
-        <>
-          <span className="studio-parameters-label">{t('skills.title')}</span>
-          <div className="studio-tools" role="group" aria-label={t('studio.skills')}>
-            {skillLibrary.map((skill) => (
-              <button
-                key={skill.id}
-                type="button"
-                className="studio-tool"
-                title={skill.description}
-                aria-pressed={agentSkills.includes(skill.id)}
-                disabled={!agentSkills.includes(skill.id) && agentSkills.length >= 10}
-                onClick={() => setAgentSkills(agentSkills.includes(skill.id) ? agentSkills.filter((id) => id !== skill.id) : [...agentSkills, skill.id])}
-              >
-                {skill.confidential ? <Lock size={13} /> : <GraduationCap size={13} />}
-                {skill.name}
-              </button>
-            ))}
-            {/* Confiée par quelqu'un d'autre et non partagée avec moi : je peux seulement la retirer. */}
-            {agentSkills
-              .filter((id) => !skillLibrary.some((skill) => skill.id === id))
-              .map((id) => (
-                <button key={id} type="button" className="studio-tool" aria-pressed onClick={() => setAgentSkills(agentSkills.filter((item) => item !== id))}>
-                  <GraduationCap size={13} />
-                  {t('studio.skillHidden')}
-                </button>
-              ))}
-          </div>
-          <p className="settings-hint">{t('studio.skillsHint')}</p>
-        </>
-      )}
+      <AgentCapabilities
+        organizationTools={organizationTools}
+        tools={tools}
+        onToolsChange={setTools}
+        servers={mcpServers}
+        catalog={connectorCatalog}
+        agentServers={agentMcp}
+        onServersChange={setAgentMcp}
+        specialists={specialists}
+        delegates={agentDelegates}
+        onDelegatesChange={setAgentDelegates}
+        skills={skillLibrary}
+        agentSkills={agentSkills}
+        onSkillsChange={setAgentSkills}
+      />
 
       <div className="studio-parameters" role="group" aria-label={t('studio.answers')}>
+        <div className="studio-section-head">
+          <span>{t('studio.answers')}</span>
+        </div>
         <span className="studio-parameters-label">{t('studio.creativity')}</span>
         <div className="settings-segmented" role="radiogroup" aria-label={t('studio.creativity')}>
           {([undefined, 'precise', 'balanced', 'creative'] as const).map((value) => (
@@ -455,14 +396,17 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
 
       {error && <p className="studio-error" role="alert">{error}</p>}
 
-      <button
-        type="submit"
-        className="studio-save"
-        disabled={saving || !name.trim() || !provider || !model}
-      >
-        <Check size={16} />
-        {agent ? t('common.save') : t('common.create')}
-      </button>
+      <div className="studio-actions">
+        <button type="submit" className="studio-save" disabled={saving || !name.trim() || !provider || !model}>
+          <Check size={16} />
+          {agent ? t('common.save') : t('common.create')}
+        </button>
+        {/* Essayer tout de suite : enregistre, puis ouvre une conversation avec l'agent. */}
+        <button type="button" className="studio-test" disabled={saving || !name.trim() || !provider || !model} onClick={() => void save(true)}>
+          <MessageSquareText size={15} />
+          {t('studio.test')}
+        </button>
+      </div>
 
       {/* Partage : avec qui, pour lire ou modifier (auteur ou administrateur). Enregistré à part. */}
       {agent?.canShare && <SharePanel resource={{ type: 'agent', id: agent.id, name: agent.name }} onError={setError} />}

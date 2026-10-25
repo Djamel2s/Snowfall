@@ -91,7 +91,7 @@ type SidebarProps = {
   agentEditor: Agent | null | undefined
   agentEditorNotice?: string
   onAgentEditorClose: () => void
-  onAgentSaved: (agent: Agent, notice?: string) => void
+  onAgentSaved: (agent: Agent, notice?: string, test?: boolean) => void
   onAgentDeleted: (id: string) => void
   onCreateAgent?: () => void
   onStartAgent: (agent: Agent) => void

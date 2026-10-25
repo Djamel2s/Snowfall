@@ -94,6 +94,19 @@ bomb**). On ne fait donc jamais confiance aux tailles annoncées : on décompres
 Les chemins (`../../etc/passwd`) ne servent qu'à l'affichage : rien n'est écrit
 sur le disque.
 
+### Dans le studio de l'agent : choisir ce qu'il peut faire
+
+Le studio présente une section **« Ce que l'agent peut faire »**, avec une ligne
+par capacité : ce qu'elle fait en une phrase, et un interrupteur. Les connecteurs
+prêts, les agents de son équipe et les compétences se cochent **directement**.
+L'outil technique correspondant (`mcp`, `delegate`) est activé tout seul dès qu'un
+élément est choisi : l'utilisateur raisonne en « Jira », pas en « outil MCP ».
+Les capacités qui écrivent portent la mention « Vous demande avant d'agir » :
+c'est l'approbation humaine (*human-in-the-loop*), rendue visible au moment du choix.
+
+« Enregistrer et tester » ouvre aussitôt une conversation avec l'agent. Une
+consigne ou un outil se juge en situation, sur une vraie question.
+
 ## 7. À retenir
 
 - Connecteur = adresse MCP + mode d'authentification.

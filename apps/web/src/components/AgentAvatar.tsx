@@ -24,9 +24,9 @@ export function AgentAvatar({
   )
 }
 
-/** Avatar d'un message d'agent : l'alien en pied, animé ; une photo reste en vignette. */
+/** Avatar d'un message d'agent : l'alien en pied, animé ; une photo à la taille du logo (42 px). */
 export function MessageAgentAvatar({ avatar, mood = 'idle' }: { avatar: AgentAvatarData; mood?: AlienMood }) {
-  return <AgentAvatar avatar={avatar} size={avatar.kind === 'alien' ? 64 : 30} mood={mood} full />
+  return <AgentAvatar avatar={avatar} size={avatar.kind === 'alien' ? 64 : 42} mood={mood} full />
 }
 
 export function ProviderLogo({ provider, size = 18 }: { provider: ProviderId; size?: number }) {

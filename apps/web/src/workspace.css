@@ -211,6 +211,7 @@
 
 /* Interrupteur : case native restylée (reste accessible au clavier). */
 .settings-panel input[type="checkbox"][role="switch"],
+.studio-capability input[type="checkbox"][role="switch"],
 .agent-schedules input[type="checkbox"][role="switch"] {
   position: relative;
   width: 30px;
@@ -226,6 +227,7 @@
 }
 
 .settings-panel input[type="checkbox"][role="switch"]::after,
+.studio-capability input[type="checkbox"][role="switch"]::after,
 .agent-schedules input[type="checkbox"][role="switch"]::after {
   position: absolute;
   top: 2px;
@@ -239,10 +241,13 @@
 }
 
 .settings-panel input[type="checkbox"][role="switch"]:checked,
+.studio-capability input[type="checkbox"][role="switch"]:checked,
 .agent-schedules input[type="checkbox"][role="switch"]:checked { border-color: rgba(185, 217, 255, .5); background: rgba(156, 196, 255, .35); }
 .settings-panel input[type="checkbox"][role="switch"]:checked::after,
+.studio-capability input[type="checkbox"][role="switch"]:checked::after,
 .agent-schedules input[type="checkbox"][role="switch"]:checked::after { background: #eef5ff; transform: translateX(13px); }
 .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
+.studio-capability input[type="checkbox"][role="switch"]:focus-visible,
 .agent-schedules input[type="checkbox"][role="switch"]:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: 2px; }
 
 .settings-meter { display: grid; gap: 5px; }
@@ -921,29 +926,59 @@
 .approval-approve { border-color: rgba(142, 230, 184, .45) !important; background: rgba(142, 230, 184, .1) !important; color: #b8f2d2 !important; }
 .approval-approve:hover:not(:disabled) { background: rgba(142, 230, 184, .18) !important; }
 
-/* ---- Outils de l'agent (studio) ------------------------------------------ */
+/* ---- Ce que l'agent peut faire (studio) ------------------------------------ */
 
-.studio-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.studio-capabilities { display: grid; min-width: 0; gap: 12px; }
+.studio-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.studio-section-head span { color: #dbe6f5; font-size: 12px; font-weight: 700; }
+.studio-section-head small { color: #7d8ca4; font-size: 11px; }
+.studio-capability-list { display: grid; min-width: 0; gap: 4px; }
+.studio-capability-list > .settings-hint { margin: 0 0 2px; }
+.studio-group-label { margin-top: 2px; color: #8fa0b8; font-size: 11.5px; }
 
-.studio-tool {
-  display: inline-flex;
+.studio-capability {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  border: 1px solid rgba(183, 210, 244, .12);
-  border-radius: 999px;
-  background: transparent;
-  color: #7d8ca4;
-  font: inherit;
-  font-size: 11.5px;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(183, 210, 244, .1);
+  border-radius: 10px;
   cursor: pointer;
-  transition: color .15s, border-color .15s, background .15s;
+  transition: border-color .15s, background .15s;
 }
 
-.studio-tool:hover { color: #dbe6f5; border-color: rgba(185, 217, 255, .3); }
-.studio-tool[aria-pressed="true"] { border-color: rgba(158, 202, 255, .45); background: rgba(158, 202, 255, .1); color: #cfe2ff; }
-.studio-tool-guard { color: #ffd7a1; }
+.studio-capability:hover { border-color: rgba(185, 217, 255, .26); }
+.studio-capability.on { border-color: rgba(158, 202, 255, .38); background: rgba(158, 202, 255, .07); }
+.studio-capability.disabled { opacity: .5; cursor: default; }
+.studio-capability-icon { display: inline-flex; flex: none; justify-content: center; width: 22px; color: #8fa2bb; }
+.studio-capability.on .studio-capability-icon { color: #cfe2ff; }
+.studio-capability-text { display: grid; flex: 1; min-width: 0; gap: 1px; }
+.studio-capability-text strong { color: #dbe6f5; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.studio-capability-text small { color: #7d8ca4; font-size: 10.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.studio-capability-text small.studio-capability-guard { display: inline-flex; align-items: center; gap: 4px; color: #ffd7a1; }
+
+.studio-actions { display: grid; gap: 6px; }
+
+.studio-test {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  border: 1px solid rgba(183, 210, 244, .16);
+  border-radius: 11px;
+  background: transparent;
+  color: #cfe2ff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.studio-test:hover:not(:disabled) { border-color: rgba(185, 217, 255, .4); }
+.studio-test:disabled { cursor: not-allowed; opacity: .35; }
+
 /* ---- Réflexion du modèle -------------------------------------------------- */
 
 .reasoning { margin: 0 0 10px; }

@@ -11,7 +11,6 @@
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
-  box-shadow: 0 0 0 1px rgba(183, 210, 244, .18);
 }
 
 
@@ -899,6 +898,9 @@
   font-size: 12px;
 }
 
+/* Photo d'agent : mêmes taille et position que le logo. */
+.message-avatar-image .agent-avatar { margin-top: 6px; }
+
 /* Centré sur le nom et la première ligne du message, comme la tête de l'alien. */
 .message-user-logo { display: block; width: 42px; height: 42px; margin-top: 6px; object-fit: contain; }
 
@@ -908,6 +910,8 @@
   .messages { --message-rail: 46px; }
   .message-badge { width: 29px; height: 29px; }
   .message-user-logo { width: 32px; height: 32px; margin-top: 3px; }
+  /* zoom 32/42 : réduit aussi la marge (4 px → 3 px), comme le logo. */
+  .message-avatar-image .agent-avatar { zoom: .762; margin-top: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
