@@ -247,7 +247,24 @@ export const agents = pgTable.withRLS(
       sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google', 'local')`,
     ),
     check("agents_model_check", sql`length(${table.model}) BETWEEN 1 AND 120`),
-    tenantPolicy("agents_tenant", table.organizationId),
+    // Lecture : son auteur, un administrateur, ou une autorisation (personne, groupe,
+    // organisation). Sans utilisateur (tâches système : rotation des clés), l'organisation.
+    pgPolicy("agents_read", {
+      as: "permissive",
+      for: "select",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND (${currentUser} IS NULL OR ${table.createdBy} = ${currentUser} OR snowfall_is_admin() OR snowfall_access('agent', ${table.id}) IS NOT NULL)`,
+    }),
+    // Écriture : dans l'organisation ; qui peut modifier ou supprimer est vérifié par l'API.
+    pgPolicy("agents_insert", { as: "permissive", for: "insert", to: "public", withCheck: sql`${table.organizationId} = ${currentOrganization}` }),
+    pgPolicy("agents_update", {
+      as: "permissive",
+      for: "update",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization}`,
+      withCheck: sql`${table.organizationId} = ${currentOrganization}`,
+    }),
+    pgPolicy("agents_delete", { as: "permissive", for: "delete", to: "public", using: sql`${table.organizationId} = ${currentOrganization}` }),
   ],
 );
 
@@ -281,6 +298,15 @@ export const conversations = pgTable.withRLS(
     title: text("title"),
     // Donnée sensible détectée un jour dans la conversation : modèle local à jamais.
     sensitive: boolean("sensitive").notNull().default(false),
+    // Réglages propres à la conversation (priment sur ceux de l'agent) ;
+    // NULL = réglage de l'agent ou du fournisseur. Instructions chiffrées.
+    creativity: text("creativity"),
+    length: text("length"),
+    instructions: text("instructions"),
+    // Archivée : hors de l'historique, consultable dans « Archivées ».
+    archived: boolean("archived").notNull().default(false),
+    // Étiquettes de l'utilisateur : liste JSON chiffrée (un libellé peut être parlant).
+    tags: text("tags"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -333,6 +359,11 @@ export const messages = pgTable.withRLS(
     content: text("content").notNull(),
     // Sources citées par une réponse (base de connaissances), JSON chiffré.
     sources: text("sources"),
+    // Auteur d'une réponse : « agent:<id> » ou « model:<fournisseur>:<modèle> » (le
+    // modèle ou l'agent peut changer en cours de conversation). Aucun contenu.
+    author: text("author"),
+    // Réponse inachevée (longueur maximale atteinte, ou arrêtée) : elle peut être continuée.
+    incomplete: boolean("incomplete").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -579,6 +610,9 @@ export const userPreferences = pgTable.withRLS(
     reduceMotion: text("reduce_motion").notNull().default("system"),
     // Mémoire : désactivée tant que l'utilisateur ne l'a pas activée.
     memoryEnabled: boolean("memory_enabled").notNull().default(false),
+    theme: text("theme").notNull().default("system"),
+    // « Qui je suis, comment me répondre » : chiffré (données personnelles).
+    instructionsEnc: text("instructions_enc"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -783,7 +817,7 @@ export const agentRuns = pgTable.withRLS(
       columns: [table.conversationId, table.organizationId, table.userId],
       foreignColumns: [conversations.id, conversations.organizationId, conversations.userId],
     }).onDelete("cascade"),
-    check("agent_runs_kind_check", sql`${table.kind} IN ('message', 'regenerate')`),
+    check("agent_runs_kind_check", sql`${table.kind} IN ('message', 'regenerate', 'continue')`),
     check("agent_runs_status_check", sql`${table.status} IN ('running', 'waiting', 'done', 'failed', 'cancelled')`),
     check("agent_runs_lease_owner_check", sql`${table.leaseOwner} IS NULL OR length(${table.leaseOwner}) BETWEEN 1 AND 80`),
     tenantPolicy("agent_runs_tenant", table.organizationId, table.userId),
@@ -925,9 +959,9 @@ export const generatedFiles = pgTable.withRLS(
 );
 
 // ---- Bibliothèque de prompts --------------------------------------------------
-// Prompts réutilisables (variables {{nom}}), privés ou partagés avec
-// l'organisation. Nom et contenu chiffrés. Lecture : les siens et ceux partagés ;
-// écriture : son auteur seulement.
+// Prompts réutilisables (variables {{nom}}). Nom et contenu chiffrés. Lecture :
+// les siens et ceux qu'on lui partage (personne, groupe, organisation ; voir
+// resource_grants) ; écriture : l'auteur, ou un éditeur autorisé (vérifié par l'API).
 export const prompts = pgTable.withRLS(
   "prompts",
   {
@@ -938,7 +972,6 @@ export const prompts = pgTable.withRLS(
     userId: uuid("user_id").notNull(),
     name: text("name").notNull(),
     content: text("content").notNull(),
-    shared: boolean("shared").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -948,9 +981,219 @@ export const prompts = pgTable.withRLS(
       as: "permissive",
       for: "select",
       to: "public",
-      using: sql`${table.organizationId} = ${currentOrganization} AND (${table.shared} OR ${table.userId} = ${currentUser})`,
+      using: sql`${table.organizationId} = ${currentOrganization} AND (${table.userId} = ${currentUser} OR snowfall_access('prompt', ${table.id}) IS NOT NULL)`,
     }),
     tenantPolicy("prompts_owner", table.organizationId, table.userId),
+    // Un éditeur autorisé modifie le contenu (jamais l'auteur ni l'organisation).
+    pgPolicy("prompts_editor_update", {
+      as: "permissive",
+      for: "update",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND snowfall_access('prompt', ${table.id}) = 'edit'`,
+      withCheck: sql`${table.organizationId} = ${currentOrganization}`,
+    }),
+  ],
+);
+
+// ---- Groupes de membres et droits fins ----------------------------------------------
+// Groupes (gérés par les administrateurs) et autorisations par agent ou par prompt :
+// une personne, un groupe ou toute l'organisation ; lecture ou modification.
+// Lecture contrôlée aussi par la RLS des agents et des prompts (snowfall_access).
+export const memberGroups = pgTable.withRLS(
+  "member_groups",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Chiffré avec la clé de l'organisation.
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("member_groups_organization_idx").on(table.organizationId),
+    unique("member_groups_id_org_unique").on(table.id, table.organizationId),
+  ],
+);
+
+export const memberGroupMembers = pgTable.withRLS(
+  "member_group_members",
+  {
+    groupId: uuid("group_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.userId] }),
+    index("member_group_members_user_idx").on(table.organizationId, table.userId),
+    foreignKey({
+      name: "member_group_members_group_fk",
+      columns: [table.groupId, table.organizationId],
+      foreignColumns: [memberGroups.id, memberGroups.organizationId],
+    }).onDelete("cascade"),
+    // Départ de l'organisation : retiré de ses groupes.
+    foreignKey({
+      name: "member_group_members_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+  ],
+);
+
+export const resourceGrants = pgTable.withRLS(
+  "resource_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    resourceType: text("resource_type").notNull(),
+    resourceId: uuid("resource_id").notNull(),
+    // organization : toute l'organisation (principal_id NULL).
+    principalType: text("principal_type").notNull(),
+    principalId: uuid("principal_id"),
+    permission: text("permission").notNull(),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("resource_grants_resource_idx").on(table.organizationId, table.resourceType, table.resourceId),
+    index("resource_grants_principal_idx").on(table.organizationId, table.principalType, table.principalId),
+    uniqueIndex("resource_grants_unique").on(table.resourceType, table.resourceId, table.principalType, sql`coalesce(${table.principalId}, '00000000-0000-0000-0000-000000000000'::uuid)`),
+    check("resource_grants_type_check", sql`${table.resourceType} IN ('agent', 'prompt', 'skill')`),
+    check("resource_grants_permission_check", sql`${table.permission} IN ('view', 'edit')`),
+    check(
+      "resource_grants_principal_check",
+      sql`(${table.principalType} = 'organization' AND ${table.principalId} IS NULL) OR (${table.principalType} IN ('user', 'group') AND ${table.principalId} IS NOT NULL)`,
+    ),
+  ],
+);
+
+// ---- Compétences (skills) -------------------------------------------------------------
+// Savoir-faire réutilisable par les agents : description (quand s'en servir),
+// instructions détaillées, fichiers de référence. Chargés à la demande par
+// l'agent (outil use_skill). Tout est chiffré. Lecture (RLS, voir migration) :
+// l'auteur, ceux à qui elle est partagée, et ceux qui voient un agent qui l'utilise.
+export const skills = pgTable.withRLS(
+  "skills",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    instructions: text("instructions").notNull(),
+    // Confidentielle : réservée aux agents sur modèle local.
+    confidential: boolean("confidential").notNull().default(false),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("skills_organization_idx").on(table.organizationId),
+    unique("skills_id_org_unique").on(table.id, table.organizationId),
+  ],
+);
+
+// Fichiers de référence d'une compétence : seul leur texte extrait est gardé (chiffré).
+export const skillFiles = pgTable.withRLS(
+  "skill_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    skillId: uuid("skill_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    // Propriétaire de la compétence (rotation des clés par membre).
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    content: text("content").notNull(),
+    mediaType: text("media_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("skill_files_skill_idx").on(table.skillId),
+    foreignKey({
+      name: "skill_files_skill_fk",
+      columns: [table.skillId, table.organizationId],
+      foreignColumns: [skills.id, skills.organizationId],
+    }).onDelete("cascade"),
+  ],
+);
+
+// Historique : une version par changement de description ou d'instructions (ajout seul).
+export const skillVersions = pgTable.withRLS(
+  "skill_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    skillId: uuid("skill_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    // Propriétaire de la compétence (rotation) ; editedBy : auteur du changement.
+    userId: uuid("user_id").notNull(),
+    editedBy: uuid("edited_by").notNull(),
+    version: integer("version").notNull(),
+    description: text("description").notNull(),
+    instructions: text("instructions").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("skill_versions_unique").on(table.skillId, table.version),
+    foreignKey({
+      name: "skill_versions_skill_fk",
+      columns: [table.skillId, table.organizationId],
+      foreignColumns: [skills.id, skills.organizationId],
+    }).onDelete("cascade"),
+  ],
+);
+
+// Compétences confiées à un agent (identifiants seulement, aucun contenu).
+export const agentSkills = pgTable.withRLS(
+  "agent_skills",
+  {
+    agentId: uuid("agent_id").notNull(),
+    skillId: uuid("skill_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.agentId, table.skillId] }),
+    index("agent_skills_skill_idx").on(table.skillId),
+    foreignKey({
+      name: "agent_skills_agent_fk",
+      columns: [table.agentId, table.organizationId],
+      foreignColumns: [agents.id, agents.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "agent_skills_skill_fk",
+      columns: [table.skillId, table.organizationId],
+      foreignColumns: [skills.id, skills.organizationId],
+    }).onDelete("cascade"),
+  ],
+);
+
+// ---- Préréglages de conversation ---------------------------------------------------
+// Réglages nommés (créativité, longueur, instructions) réappliqués en un clic.
+// Privés : visibles par leur auteur seul. Nom et instructions chiffrés.
+export const conversationPresets = pgTable.withRLS(
+  "conversation_presets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    creativity: text("creativity"),
+    length: text("length"),
+    instructions: text("instructions"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("conversation_presets_owner_idx").on(table.organizationId, table.userId),
+    foreignKey({
+      name: "conversation_presets_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    tenantPolicy("conversation_presets_owner", table.organizationId, table.userId),
   ],
 );
 

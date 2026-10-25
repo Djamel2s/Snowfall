@@ -90,7 +90,7 @@ export function createAnthropicModel(model: string, settings: ProviderSettings):
         max_tokens: Math.min(request.generation?.maxOutputTokens ?? settings.maxOutputTokens, settings.maxOutputTokens),
         // Température : refusée avec la réflexion (modèles récents) ; sinon celle de l'agent.
         ...(request.generation?.temperature !== undefined && !SUPPORTS_EFFORT.test(model) ? { temperature: request.generation.temperature } : {}),
-        system: buildSystemPrompt(request.instructions, request.summary, request.memories),
+        system: buildSystemPrompt(request.instructions, request.summary, request.memories, request.profile),
         messages: toAnthropicMessages(conversationTurns(request)),
         ...(request.tools?.length ? { tools: toAnthropicTools(request.tools) } : {}),
         // Cache automatique : tout le début de requête (outils, système, historique)
@@ -122,6 +122,7 @@ export function createAnthropicModel(model: string, settings: ProviderSettings):
 
       const final = await stream.finalMessage();
       if (final.stop_reason === "refusal") throw new ModelRefusalError();
+      if (final.stop_reason === "max_tokens") yield { type: "truncated" };
 
       // Blocs de réflexion (signés) : gardés avec le tour pour être renvoyés tels quels.
       const blocks: { type: string }[] = final.content;

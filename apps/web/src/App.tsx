@@ -4,6 +4,7 @@ import {
   api,
   type Agent,
   type AttachmentMeta,
+  type ConversationSettings,
   isPaused,
   type KnowledgeOwnerKind,
   type Message,
@@ -21,8 +22,14 @@ import { toAttachmentImage } from './lib/image'
 import './App.css'
 import './agents.css'
 import './workspace.css'
-import { ArrowUp, BookOpen, Check, Copy, Hourglass, Menu, Paperclip, Pencil, RefreshCw, Square, X } from 'lucide-react'
+// Thème clair : généré (scripts/generate-light-theme.mjs) puis retouché ; actif sous data-theme="light".
+import './theme-light.css'
+import './theme-light-fixes.css'
+import { ArrowUp, BookOpen, Check, Copy, GitFork, Hourglass, Menu, Paperclip, Pencil, RefreshCw, SlidersHorizontal, Square, StepForward, X } from 'lucide-react'
 import Sidebar, { type SidebarPanel } from './components/Sidebar'
+import { accentOf } from './lib/alien'
+import ConversationPanel from './components/ConversationPanel'
+import { CompareMenu, ComparePair } from './components/Compare'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
 import AttachmentChip from './components/AttachmentChip'
@@ -36,7 +43,7 @@ import ConversationMenu from './components/ConversationMenu'
 import SharedView from './components/SharedView'
 import PromptPicker from './components/PromptPicker'
 import PromptVariables from './components/PromptVariables'
-import { promptVariables, slashQuery } from './lib/prompts'
+import { askedVariables, automaticValues, fillPrompt, slashQuery } from './lib/prompts'
 import MessageFeedback from './components/MessageFeedback'
 import { DictationButton, ReadAloudButton } from './components/Voice'
 import AgentGraph from './components/AgentGraph'
@@ -50,6 +57,7 @@ import { usePinnedConversations } from './hooks/usePinnedConversations'
 import { migrateLegacyProjects } from './lib/legacy-projects'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
 import {
+  authorOf,
   mentionAt,
   modelLabel,
   readLastChoice,
@@ -71,6 +79,9 @@ type Conversation = {
   temporary?: boolean
   /** Donnée sensible détectée : modèle local, définitivement. */
   sensitive?: boolean
+  settings?: ConversationSettings
+  archived?: boolean
+  tags?: string[]
   messages: Message[]
   updatedAt: number
 }
@@ -86,7 +97,7 @@ type PendingFile = {
   attachment?: AttachmentMeta
 }
 
-const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduceMotion: 'system', memory: false }
+const defaultPreferences: Preferences = { locale: null, sendOnEnter: true, reduceMotion: 'system', memory: false, theme: 'system', instructions: '' }
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 const ACCEPT = '.pdf,.docx,.txt,.md,.csv,.json,image/png,image/jpeg,image/webp'
 const DOCUMENT_MAX = 10 * 1024 * 1024
@@ -131,10 +142,16 @@ const toConversation = (item: {
   projectId: string | null
   temporary?: boolean
   sensitive?: boolean
+  settings?: ConversationSettings
+  archived?: boolean
+  tags?: string[]
   updatedAt: string
 }): Conversation => ({
   ...(item.temporary ? { temporary: true } : {}),
   ...(item.sensitive ? { sensitive: true } : {}),
+  ...(item.settings ? { settings: item.settings } : {}),
+  ...(item.archived ? { archived: true } : {}),
+  ...(item.tags?.length ? { tags: item.tags } : {}),
   id: item.id,
   title: item.title,
   agentId: item.agentId,
@@ -202,6 +219,10 @@ function App() {
     onStart: () => setError(''),
   })
   const { sending, streamingText, agentSteps, paused, regenerating, reasoning, reasoningByMessage } = run
+  // Réponse en cours de continuation : son début, affiché avant la suite.
+  const [continuing, setContinuing] = useState<string | null>(null)
+  // Comparaison : la réponse d'avant (à gauche) et celle du modèle comparé (à droite).
+  const [comparison, setComparison] = useState<{ conversationId: string; left: Message; leftLabel: string; rightLabel: string; rightId: string | null } | null>(null)
   // L'avatar réfléchit en attendant le premier mot, puis « parle » pendant la réponse.
   const agentMood = sending ? (streamingText ? 'talking' : 'thinking') : 'idle'
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -273,13 +294,26 @@ function App() {
   const canWrite = session.user.role !== 'reader'
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>(mcpCallback ? 'settings' : 'chats')
+  const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>(mcpCallback ? 'connectors' : 'chats')
   const { pinnedIds, togglePinned } = usePinnedConversations()
 
   // Animations réduites à la demande, en plus de la préférence système.
   useEffect(() => {
     document.documentElement.classList.toggle('reduce-motion', preferences.reduceMotion === 'on')
   }, [preferences.reduceMotion])
+
+  // Thème : choisi, ou celui du système (suivi en direct s'il change).
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: light)')
+    const apply = () => {
+      const light = preferences.theme === 'light' || (preferences.theme === 'system' && Boolean(media?.matches))
+      document.documentElement.dataset.theme = light ? 'light' : 'dark'
+      document.documentElement.style.colorScheme = light ? 'light' : 'dark'
+    }
+    apply()
+    media?.addEventListener('change', apply)
+    return () => media?.removeEventListener('change', apply)
+  }, [preferences.theme])
 
   function fail(cause: unknown, fallback: Parameters<typeof t>[0]) {
     setError(cause instanceof Error ? cause.message : t(fallback))
@@ -296,6 +330,7 @@ function App() {
   // l'historique ni dans les journaux).
   // Un seul envoi : le state est à usage unique (le mode strict de React rejoue les effets).
   const callbackSent = useRef(false)
+  const [returnedServerId, setReturnedServerId] = useState<string | undefined>(undefined)
   useEffect(() => {
     if (!mcpCallback || callbackSent.current) return
     callbackSent.current = true
@@ -303,7 +338,11 @@ function App() {
     if (!mcpCallback.state || !mcpCallback.code) return
     api
       .finishMcpConnection(mcpCallback.state, mcpCallback.code)
-      .then((result) => setConnectionNotice(t('connections.done', { name: result.name })))
+      .then((result) => {
+        setConnectionNotice(t('connections.done', { name: result.name }))
+        // Au retour : la fiche du connecteur s'ouvre (choix des outils, ou prêt).
+        setReturnedServerId(result.serverId)
+      })
       .catch(() => setConnectionNotice(t('connections.failed')))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -460,6 +499,12 @@ function App() {
     api.savePreferences(next).catch((cause) => fail(cause, 'error.send'))
   }
 
+  /** Enregistrement attendu : un refus du serveur (ex. donnée sensible) remonte à l'appelant. */
+  async function savePreferencesNow(next: Preferences) {
+    await api.savePreferences(next)
+    setPreferences(next)
+  }
+
   /** keepInput : création au premier envoi, le message tapé est gardé. */
   async function newChat(agent?: Agent, options: { keepInput?: boolean; temporary?: boolean } = {}): Promise<Conversation | null> {
     const temporary = options.temporary ?? temporaryMode
@@ -508,10 +553,10 @@ function App() {
     }
   }
 
-  /** Change d'agent ou de modèle tant que la conversation n'a pas commencé. */
+  /** Change d'agent ou de modèle, avant comme après le premier message (la réponse suivante l'utilise). */
   async function selectResponder(choice: ResponderChoice) {
     const conversation = activeConversation
-    if (!conversation || conversation.messages.length > 0 || !canWrite) return
+    if (!conversation || !canWrite) return
 
     const next =
       choice.kind === 'agent'
@@ -590,6 +635,15 @@ function App() {
     try {
       const saved = await api.updateConversation(id, { title })
       updateConversation(id, (conversation) => ({ ...conversation, title: saved.title }))
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
+  }
+
+  async function archiveConversation(id: string, archived: boolean) {
+    try {
+      await api.updateConversation(id, { archived })
+      updateConversation(id, (conversation) => ({ ...conversation, archived }))
     } catch (cause) {
       fail(cause, 'error.send')
     }
@@ -809,6 +863,80 @@ function App() {
     )
   }
 
+  /** Nom affiché de l'auteur d'une réponse (agent ou modèle). */
+  function authorLabel(message: Message) {
+    const who = authorOf(message.author, agents, catalog.providers) ?? responder
+    return who.kind === 'agent' ? who.agent.name : who.kind === 'model' ? who.label : 'Snowfall'
+  }
+
+  /** Comparer : la même question à un autre modèle ; les deux réponses côte à côte. */
+  async function compareWith(selection: ModelSelection) {
+    const conversation = activeConversation
+    const last = conversation?.messages.at(-1)
+    if (!conversation || sending || last?.role !== 'assistant') return
+    setComparison({ conversationId: conversation.id, left: last, leftLabel: authorLabel(last), rightLabel: modelLabel(catalog.providers, selection), rightId: null })
+    run.setRegenerating(true)
+    let kept = false
+    await run.stream(
+      conversation.id,
+      async (signal, onToken) => {
+        const result = await api.regenerate(conversation.id, { signal, onToken, ...run.handlers }, selection)
+        if (isPaused(result)) return 'paused'
+        kept = true
+        updateConversation(conversation.id, (current) => ({ ...current, messages: [...current.messages.slice(0, -1), result.assistantMessage] }))
+        setComparison((current) => (current ? { ...current, rightId: result.assistantMessage.id } : current))
+        void run.refreshMessages(conversation.id).catch(() => undefined)
+        return result.assistantMessage.id
+      },
+      () => undefined,
+    )
+    if (!kept) setComparison(null)
+  }
+
+  /** Garder la réponse de gauche : sa version redevient celle affichée. */
+  async function keepLeft() {
+    const kept = comparison
+    setComparison(null)
+    if (kept) await selectBranch(kept.left.id)
+  }
+
+  /** Bifurquer : la copie (jusqu'à ce message) s'ouvre ; l'originale reste intacte. */
+  async function forkFrom(messageId: string) {
+    const conversation = activeConversation
+    if (!conversation || sending) return
+    try {
+      const copy = await api.forkConversation(conversation.id, messageId)
+      setConversations((current) => [toConversation(copy), ...current])
+      setActiveId(copy.id)
+    } catch (cause) {
+      fail(cause, 'error.send')
+    }
+  }
+
+  /** Continuer : le début reste affiché, la suite s'y ajoute en direct. */
+  async function continueAnswer() {
+    const conversation = activeConversation
+    const last = conversation?.messages.at(-1)
+    if (!conversation || sending || last?.role !== 'assistant' || !last.incomplete) return
+    setContinuing(last.content)
+    run.setRegenerating(true)
+
+    await run.stream(
+      conversation.id,
+      async (signal, onToken) => {
+        const result = await api.continueAnswer(conversation.id, { signal, onToken, ...run.handlers })
+        if (isPaused(result)) return 'paused'
+        updateConversation(conversation.id, (current) => ({
+          ...current,
+          messages: [...current.messages.slice(0, -1), result.assistantMessage],
+        }))
+        return result.assistantMessage.id
+      },
+      () => undefined,
+    )
+    setContinuing(null)
+  }
+
   async function regenerate() {
     const conversation = activeConversation
     if (!conversation || sending) return
@@ -907,15 +1035,18 @@ function App() {
     }
   }
 
+  /** Variables automatiques des prompts ({{date}}, {{utilisateur}}…), au moment de l'insertion. */
+  const promptAutomatic = () => automaticValues({ now: new Date(), locale: document.documentElement.lang || 'fr', user: username })
+
   /** Prompt choisi : inséré tel quel, ou après avoir renseigné ses variables. */
   function applyPrompt(prompt: Prompt) {
     setPromptQuery(null)
     setSidebarOpen(false)
-    if (promptVariables(prompt.content).length) {
+    if (askedVariables(prompt.content).length) {
       setPendingPrompt(prompt)
       return
     }
-    setInput(prompt.content)
+    setInput(fillPrompt(prompt.content, {}, promptAutomatic()))
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
@@ -974,6 +1105,7 @@ function App() {
         onRenameConversation={(id, title) => void renameConversation(id, title)}
         onMoveConversation={(id, projectId) => void moveConversation(id, projectId)}
         onTogglePinned={togglePinned}
+        onArchiveConversation={(id, archived) => void archiveConversation(id, archived)}
         onLogout={() => void endSession()}
         onSearchChange={setSearch}
         onSidebarOpenChange={setSidebarOpen}
@@ -1029,12 +1161,37 @@ function App() {
         }}
         preferences={preferences}
         onPreferencesChange={savePreferences}
+        onPreferencesSave={savePreferencesNow}
         onConversationsImported={() => void reloadConversations()}
         prompts={prompts}
         canWrite={canWrite}
+        isAdmin={session.user.role === 'owner' || session.user.role === 'admin'}
         onPromptsChange={setPrompts}
         connectionNotice={connectionNotice}
+        returnedServerId={returnedServerId}
         onUsePrompt={applyPrompt}
+        conversationPanel={
+          activeConversation && !activeConversation.temporary ? (
+            // Une autre conversation repart de ses propres réglages (nouvelle instance).
+            <ConversationPanel
+              key={activeConversation.id}
+              conversation={activeConversation}
+              canWrite={canWrite}
+              onSettingsSaved={(settings) => updateConversation(activeConversation.id, (current) => ({ ...current, settings }))}
+              onFilingSaved={({ tags, archived }) => updateConversation(activeConversation.id, (current) => ({ ...current, tags, archived }))}
+              onFileAttached={(attachment, sensitive) => {
+                setPendingFiles((current) => [
+                  ...current,
+                  { localId: crypto.randomUUID(), conversationId: activeConversation.id, name: attachment.name, size: attachment.size, kind: attachment.kind, status: 'ready', attachment },
+                ])
+                // Fichier venu d'une conversation sensible : celle-ci reste sur un modèle local.
+                if (sensitive) updateConversation(activeConversation.id, (current) => ({ ...current, sensitive: true }))
+              }}
+              onClose={() => setSidebarPanel('chats')}
+              onError={setError}
+            />
+          ) : undefined
+        }
       />
 
       <section className="chat-workspace">
@@ -1047,14 +1204,26 @@ function App() {
             >
               <Menu size={19} />
             </button>
-            {activeAgent && !sharedToken && (
+            {!sharedToken && canWrite && activeConversation && !conversationIsEmpty && (
+              <ResponderPicker
+                variant="chip"
+                current={responder}
+                agents={agents}
+                providers={catalog.providers}
+                open={pickerOpen}
+                mention={null}
+                onOpenChange={(open) => (open ? setPickerOpen(true) : closePicker())}
+                onPick={pickResponder}
+              />
+            )}
+            {activeAgent && !sharedToken && (conversationIsEmpty || !canWrite) && (
               <span className="topbar-agent">
                 <AgentAvatar avatar={activeAgent.avatar} size={24} mood={agentMood} />
                 {activeAgent.name}
                 <ProviderLogo provider={activeAgent.provider} size={12} />
               </span>
             )}
-            {responder.kind === 'model' && !sharedToken && (
+            {responder.kind === 'model' && !sharedToken && (conversationIsEmpty || !canWrite) && (
               <span className="topbar-agent topbar-model">
                 <ProviderLogo provider={responder.provider} size={14} />
                 {responder.label}
@@ -1082,6 +1251,22 @@ function App() {
                   {t('temporary.badge')}
                 </span>
               )
+            )}
+            {activeConversation && !activeConversation.temporary && !sharedToken && (
+              <button
+                type="button"
+                className={`icon-button${sidebarPanel === 'conversation' ? ' active' : ''}${activeConversation.settings ? ' has-settings' : ''}`}
+                aria-label={t('conversationPanel.open')}
+                title={t('conversationPanel.open')}
+                aria-pressed={sidebarPanel === 'conversation'}
+                onClick={() => {
+                  setSidebarPanel(sidebarPanel === 'conversation' ? 'chats' : 'conversation')
+                  setSidebarOpen(true)
+                  setSidebarCollapsed(false)
+                }}
+              >
+                <SlidersHorizontal size={16} />
+              </button>
             )}
             {activeConversation && activeConversation.messages.length > 0 && !sharedToken && (
               <ConversationMenu
@@ -1157,18 +1342,24 @@ function App() {
               </section>
             ) : (
               <section className="messages" aria-live="polite">
-                {shownMessages.map((message, messageIndex) => (
-                  <article className={`message message-${message.role}`} key={message.id}>
+                {shownMessages.map((message, messageIndex) => {
+                  // Auteur réel de cette réponse (l'agent ou le modèle a pu changer depuis).
+                  const who = message.role === 'assistant' ? (authorOf(message.author, agents, catalog.providers) ?? responder) : responder
+                  const whoAgent = who.kind === 'agent' ? who.agent : null
+                  // Couleur de l'auteur réel de cette réponse (agent : son avatar ; modèle : bleu du logo).
+                  const accent = message.role === 'assistant' ? { ['--accent' as string]: accentOf(whoAgent?.avatar) } : undefined
+                  return (
+                  <article className={`message message-${message.role}`} key={message.id} style={accent}>
                     <div
-                      className={`message-avatar ${message.role === 'assistant' && activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}
+                      className={`message-avatar ${message.role === 'assistant' && whoAgent ? `message-avatar-agent message-avatar-${whoAgent.avatar.kind}` : ''}`}
                     >
                       {message.role === 'user' ? (
                         <img src="/logo.png" alt="" className="message-user-logo" />
-                      ) : activeAgent ? (
-                        <MessageAgentAvatar avatar={activeAgent.avatar} />
-                      ) : responder.kind === 'model' ? (
+                      ) : whoAgent ? (
+                        <MessageAgentAvatar avatar={whoAgent.avatar} />
+                      ) : who.kind === 'model' ? (
                         <span className="message-badge">
-                          <ProviderLogo provider={responder.provider} size={16} />
+                          <ProviderLogo provider={who.provider} size={16} />
                         </span>
                       ) : (
                         <span className="message-badge">✳</span>
@@ -1176,7 +1367,7 @@ function App() {
                     </div>
                     <div className="message-body">
                       <div className="message-author">
-                        {message.role === 'user' ? username : assistantName}
+                        {message.role === 'user' ? username : whoAgent?.name ?? (who.kind === 'model' ? who.label : 'Snowfall')}
                       </div>
 
                       {message.attachments?.length ? (
@@ -1221,7 +1412,17 @@ function App() {
                       ) : message.role === 'assistant' ? (
                         <>
                           {reasoningByMessage[message.id] && <Reasoning text={reasoningByMessage[message.id]!} />}
-                          <Markdown source={message.content} showCode={wantsCode(shownMessages[messageIndex - 1]?.content ?? '')} />
+                          {comparison?.rightId === message.id && comparison.conversationId === activeConversation?.id ? (
+                            <ComparePair
+                              left={{ label: comparison.leftLabel, content: comparison.left.content }}
+                              right={{ label: comparison.rightLabel, content: message.content }}
+                              done
+                              onKeepLeft={() => void keepLeft()}
+                              onKeepRight={() => setComparison(null)}
+                            />
+                          ) : (
+                            <Markdown source={message.content} showCode={wantsCode(shownMessages[messageIndex - 1]?.content ?? '')} />
+                          )}
                           {activeConversation &&
                             (() => {
                               const files = (generatedFiles[activeConversation.id] ?? []).filter((file) => file.messageId === message.id)
@@ -1249,6 +1450,31 @@ function App() {
                               {voice.speech && <ReadAloudButton text={message.content} onError={setError} />}
                               {canWrite && (
                                 <MessageFeedback feedback={message.feedback} disabled={sending} canShare={Boolean(activeConversation?.agentId) && !activeConversation?.temporary} onChange={(feedback, options) => rateMessage(message.id, feedback, options?.share)} />
+                              )}
+                              {canWrite && !activeConversation?.temporary && (
+                                <button
+                                  className="copy-message"
+                                  aria-label={t('chat.fork')}
+                                  title={t('chat.fork')}
+                                  disabled={sending}
+                                  onClick={() => void forkFrom(message.id)}
+                                >
+                                  <GitFork size={14} />
+                                </button>
+                              )}
+                              {message.id === lastAssistantId && canWrite && message.incomplete && (
+                                <button
+                                  className="copy-message"
+                                  aria-label={t('chat.continue')}
+                                  title={t('chat.continue')}
+                                  disabled={sending}
+                                  onClick={() => void continueAnswer()}
+                                >
+                                  <StepForward size={14} />
+                                </button>
+                              )}
+                              {message.id === lastAssistantId && canWrite && (
+                                <CompareMenu providers={catalog.providers} current={message.author ?? null} disabled={sending} onPick={(selection) => void compareWith(selection)} />
                               )}
                               {message.id === lastAssistantId && canWrite && (
                                 <button
@@ -1279,10 +1505,11 @@ function App() {
                       )}
                     </div>
                   </article>
-                ))}
+                  )
+                })}
 
                 {sending && (
-                  <div className="message message-assistant">
+                  <div className="message message-assistant" style={{ ['--accent' as string]: accentOf(activeAgent?.avatar) }}>
                     <div className={`message-avatar ${activeAgent ? `message-avatar-agent message-avatar-${activeAgent.avatar.kind}` : ''}`}>
                       {activeAgent ? (
                         <MessageAgentAvatar avatar={activeAgent.avatar} mood={agentMood} />
@@ -1298,8 +1525,25 @@ function App() {
                       <div className="message-author">{assistantName}</div>
                       {reasoning && <Reasoning text={reasoning} thinking={!streamingText && !paused} />}
                       {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={run.decide} />}
-                      {streamingText ? (
-                        <Markdown source={streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
+                      {comparison && !comparison.rightId && comparison.conversationId === activeConversation?.id ? (
+                        <ComparePair
+                          left={{ label: comparison.leftLabel, content: comparison.left.content }}
+                          right={{ label: comparison.rightLabel, content: streamingText }}
+                          done={false}
+                          onKeepLeft={() => undefined}
+                          onKeepRight={() => undefined}
+                        />
+                      ) : streamingText || continuing ? (
+                        <>
+                          <Markdown source={(continuing ?? '') + streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
+                          {!streamingText && (
+                            <div className="typing-indicator" aria-label={t('chat.answering')}>
+                              <span />
+                              <span />
+                              <span />
+                            </div>
+                          )}
+                        </>
                       ) : (
                         <div className="typing-indicator" aria-label={t('chat.answering')}>
                           <span />
@@ -1332,6 +1576,7 @@ function App() {
               {pendingPrompt && (
                 <PromptVariables
                   prompt={pendingPrompt}
+                  automatic={promptAutomatic()}
                   onCancel={() => setPendingPrompt(null)}
                   onInsert={(text) => {
                     setPendingPrompt(null)

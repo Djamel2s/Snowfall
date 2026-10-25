@@ -2,17 +2,18 @@ import { useState, type FormEvent } from 'react'
 import { Check, X } from 'lucide-react'
 import type { Prompt } from '../lib/api'
 import { useI18n } from '../lib/i18n'
-import { fillPrompt, promptVariables } from '../lib/prompts'
+import { askedVariables, fillPrompt } from '../lib/prompts'
 
 /** Prompt à variables : on les renseigne, puis le texte complet arrive dans la zone de saisie. */
-export default function PromptVariables({ prompt, onInsert, onCancel }: { prompt: Prompt; onInsert: (text: string) => void; onCancel: () => void }) {
+export default function PromptVariables({ prompt, automatic, onInsert, onCancel }: { prompt: Prompt; automatic: Record<string, string>; onInsert: (text: string) => void; onCancel: () => void }) {
   const { t } = useI18n()
-  const variables = promptVariables(prompt.content)
+  // Date, heure, utilisateur… : remplis d'office, jamais demandés.
+  const variables = askedVariables(prompt.content)
   const [values, setValues] = useState<Record<string, string>>({})
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    onInsert(fillPrompt(prompt.content, values))
+    onInsert(fillPrompt(prompt.content, values, automatic))
   }
 
   return (

@@ -84,6 +84,9 @@ describe("Antivirus sur les routes", () => {
         forModel: async () => new Map(),
         content: async () => null,
         delete: async () => false,
+        library: async () => [],
+        copy: async () => null,
+        remove: async () => false,
       },
     });
     return { app, events, stored, conversations };

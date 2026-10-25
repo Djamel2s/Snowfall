@@ -180,3 +180,23 @@ describe("Flux d'appels d'outils", () => {
     assert.deepEqual(sent?.tools?.[0]?.functionDeclarations[0]?.parametersJsonSchema, { type: "object", additionalProperties: false });
   });
 });
+
+describe("OpenAI/local : réponse coupée", () => {
+  let server: Server;
+  let port = 0;
+  before(async () => {
+    server = createServer((_request, response) => {
+      const events = [{ choices: [{ delta: { content: "Début" } }] }, { choices: [{ delta: {}, finish_reason: "length" }] }];
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+  after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  it("finish_reason « length » : signalé", async () => {
+    const model = createOpenAiCompatibleModel("local", "llama", { apiKey: "x", baseUrl: `http://127.0.0.1:${port}/v1`, maxOutputTokens: 100, timeoutMs: 5_000 });
+    assert.deepEqual(await collect(model.stream({ history: [], message: "x" })), [{ type: "token", text: "Début" }, { type: "truncated" }]);
+  });
+});

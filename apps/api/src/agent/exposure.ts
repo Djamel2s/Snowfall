@@ -19,7 +19,8 @@ const isMcp = (name: string) => name.startsWith("mcp_");
 /** Résultats écrits par des inconnus. */
 const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name) || name === "delegate_task";
 /** Résultats tirés des données de l'organisation. */
-const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "delegate_task";
+// Compétences : documents internes de l'organisation, comme la base de connaissances.
+const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "delegate_task" || name === "use_skill" || name === "read_skill_file";
 /** Appels dont les arguments quittent la plateforme. */
 export const isOutbound = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name);
 

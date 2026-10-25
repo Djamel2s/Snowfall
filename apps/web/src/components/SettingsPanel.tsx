@@ -18,22 +18,21 @@ import {
   type Role,
   type Usage,
 } from '../lib/api'
+import GroupsSettings from './GroupsSettings'
 import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
-import McpSettings from './McpSettings'
 import MyDataSettings from './MyDataSettings'
 import MemorySettings from './MemorySettings'
-import McpConnections from './McpConnections'
 import DecisionWorkshop from './DecisionWorkshop'
 
 type Props = {
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
+  /** Enregistrement attendu (refus du serveur affiché) : instructions personnalisées. */
+  onPreferencesSave: (preferences: Preferences) => Promise<void>
   /** Conversations importées : la liste est relue. */
   onConversationsImported: () => void
-  /** Retour d'une connexion OAuth à un outil externe (message à afficher). */
-  connectionNotice?: string | undefined
 }
 
 const roles: Role[] = ['owner', 'admin', 'member', 'reader']
@@ -112,7 +111,33 @@ function RoutingSettings({ value, choices, onChange }: { value: Routing | null; 
   )
 }
 
-export default function SettingsPanel({ preferences, onPreferencesChange, onConversationsImported, connectionNotice }: Props) {
+/** Instructions personnalisées : enregistrées à la demande (elles partent avec chaque message). */
+function InstructionsSettings({ value, onSave, saved }: { value: string; onSave: (value: string) => void; saved: boolean }) {
+  const { t } = useI18n()
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? value
+  return (
+    <section className="settings-card" aria-label={t('instructions.title')}>
+      <h3>{t('instructions.title')}</h3>
+      <textarea
+        className="settings-workshop-input"
+        rows={4}
+        maxLength={1500}
+        value={text}
+        placeholder={t('instructions.placeholder')}
+        aria-label={t('instructions.title')}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <p className="settings-hint">{t('instructions.hint')}</p>
+      <button type="button" className="settings-save" disabled={draft === null || draft === value} onClick={() => onSave(text)}>
+        <Check size={14} />
+        {saved ? t('settings.saved') : t('common.save')}
+      </button>
+    </section>
+  )
+}
+
+export default function SettingsPanel({ preferences, onPreferencesChange, onPreferencesSave, onConversationsImported }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
   const session = getSession()
   const isAdmin = session.user.role === 'owner' || session.user.role === 'admin'
@@ -310,11 +335,27 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
                 ))}
               </div>
             </div>
+            <div className="settings-row">
+              <span>{t('settings.theme')}</span>
+              <div className="settings-segmented" role="radiogroup" aria-label={t('settings.theme')}>
+                {(['system', 'dark', 'light'] as const).map((value) => (
+                  <button key={value} type="button" role="radio" aria-checked={preferences.theme === value} onClick={() => updatePreferences({ theme: value })}>
+                    {t(`settings.theme.${value}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
 
-          <MemorySettings enabled={preferences.memory} onToggle={(memory) => updatePreferences({ memory })} onError={setError} />
+          <InstructionsSettings
+            value={preferences.instructions}
+            onSave={(instructions) => run('instructions', async () => {
+              await onPreferencesSave({ ...preferences, instructions })
+            })}
+            saved={saved === 'instructions'}
+          />
 
-          <McpConnections notice={connectionNotice} onError={setError} />
+          <MemorySettings enabled={preferences.memory} onToggle={(memory) => updatePreferences({ memory })} onError={setError} />
 
           <section className="settings-card" aria-label={t('settings.usage')}>
             <h3>{t('settings.usage')}</h3>
@@ -590,7 +631,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
                 </button>
               </section>
 
-              {(organization?.platformTools ?? []).includes('mcp') && <McpSettings onError={setError} />}
+              {/* Serveurs MCP et catalogue : barre latérale › Connecteurs (pas un réglage de plus ici). */}
+              {(organization?.platformTools ?? []).includes('mcp') && <p className="settings-hint">{t('connectors.movedHint')}</p>}
             </>
           )}
 
@@ -712,6 +754,8 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onConv
                   </>
                 )}
               </section>
+
+              <GroupsSettings members={members} onError={setError} />
 
               {isOwner && (
                 <section className="settings-card" aria-label={t('settings.sso')}>

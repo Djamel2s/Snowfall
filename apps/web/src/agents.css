@@ -848,7 +848,8 @@
 }
 
 .message-avatar-alien .agent-avatar {
-  margin: -6px -14px 0;
+  /* Tête de la taille du logo (≈ 42 px), alignée comme lui sous le nom. */
+  margin: 0 -2px 0;
   animation: message-alien-bob 4.5s ease-in-out infinite;
 }
 
@@ -867,7 +868,7 @@
 /* Téléphone : alien réduit en proportion (zoom réduit aussi sa place) pour
    tenir dans la colonne d'avatar, sans déborder jusqu'au bord de l'écran. */
 @media (max-width: 640px) {
-  .message-avatar-alien .agent-avatar { zoom: .62; }
+  .message-avatar-alien .agent-avatar { zoom: .76; }
 }
 
 /* Colonne d'avatar commune (toi, l'agent, le modèle) : tous les textes démarrent
@@ -1243,3 +1244,9 @@
 .agent-graph-card li button:hover { background: rgba(220, 70, 90, .18); color: #ffd6db; }
 .agent-graph-card-actions { display: flex; gap: 6px; }
 @media (max-width: 640px) { .agent-graph-hint { display: none; } }
+
+/* ---- Sélecteur compact de l'en-tête (conversation commencée) ------------- */
+.responder-chip { position: relative; min-width: 0; }
+.responder-chip-button { max-width: 100%; padding: 4px 8px; border: 0; border-radius: 9px; background: transparent; font: inherit; cursor: pointer; }
+.responder-chip-button:hover, .responder-chip-button[aria-expanded="true"] { background: rgba(255, 255, 255, .06); }
+.responder-chip .responder-popover { top: calc(100% + 8px); bottom: auto; left: 0; max-width: calc(100vw - 32px); }

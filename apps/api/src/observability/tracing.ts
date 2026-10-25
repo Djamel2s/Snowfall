@@ -44,7 +44,7 @@ export type RunInfo = {
   conversationId: string;
   userId: string;
   organizationId: string;
-  kind: "message" | "regenerate";
+  kind: "message" | "regenerate" | "continue";
   provider: string;
   model: string;
   agent?: { id: string; name: string } | undefined;

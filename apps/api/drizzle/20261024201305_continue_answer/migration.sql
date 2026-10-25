@@ -1,0 +1,2 @@
+ALTER TABLE "messages" ADD COLUMN "incomplete" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_kind_check", ADD CONSTRAINT "agent_runs_kind_check" CHECK ("kind" IN ('message', 'regenerate', 'continue'));

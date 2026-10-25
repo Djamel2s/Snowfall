@@ -1,0 +1,20 @@
+/* Retouches à la main du thème clair (le reste est généré : theme-light.css). */
+
+/* Logo « Snowfall » : le raccourci `background` généré annule le découpage
+   au texte ; on le rétablit avec un dégradé lisible sur fond clair. */
+:root[data-theme="light"] .sidebar-panel-header {
+  background: linear-gradient(100deg, #2f5f9e 5%, #3d74b8 20%, #0b1424 50%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+/* Couleur de l'auteur sur fond clair : la même teinte, assombrie pour rester lisible
+   (un agent « neige » ou « rose » serait sinon invisible sur blanc). */
+:root[data-theme="light"] .message-assistant .markdown a { color: color-mix(in srgb, var(--accent) 55%, #000000); text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+:root[data-theme="light"] .message-assistant .markdown blockquote { border-left-color: color-mix(in srgb, var(--accent) 60%, #000000); }
+:root[data-theme="light"] .message-assistant .markdown li::marker { color: color-mix(in srgb, var(--accent) 60%, #000000); }
+:root[data-theme="light"] .message-assistant .markdown :not(pre) > code { background: color-mix(in srgb, var(--accent) 16%, transparent); color: color-mix(in srgb, var(--accent) 45%, #000000); }
+:root[data-theme="light"] .message-assistant .md-table th { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+:root[data-theme="light"] .message-assistant .md-artifact-open { color: color-mix(in srgb, var(--accent) 55%, #000000); }
+:root[data-theme="light"] .message-assistant .md-link-unverified button { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: color-mix(in srgb, var(--accent) 50%, #000000); }
+:root[data-theme="light"] .message-assistant .md-link-unverified { text-decoration-color: color-mix(in srgb, var(--accent) 60%, #000000); }

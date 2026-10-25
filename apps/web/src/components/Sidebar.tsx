@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Plus,
   Search,
@@ -19,7 +19,13 @@ import {
   MoreHorizontal,
   TextSearch,
   ScrollText,
+  GraduationCap,
+  Plug,
   Waypoints,
+  Archive,
+  ArrowLeft,
+  ArchiveRestore,
+  Tag,
 } from 'lucide-react'
 import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
@@ -28,14 +34,20 @@ import SettingsPanel from './SettingsPanel'
 import AgentCatalog from './AgentCatalog'
 import AgentSchedules from './AgentSchedules'
 import PromptLibrary from './PromptLibrary'
+import SkillLibrary from './SkillLibrary'
+// Logos et catalogue chargés à l'ouverture du panneau seulement.
+const ConnectorsPanel = lazy(() => import('./ConnectorsPanel'))
 import KnowledgePanel from './KnowledgePanel'
 
-export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'settings'
+export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'skills' | 'connectors' | 'settings' | 'conversation'
 
 export type SidebarConversation = {
   id: string
   title: string
   projectId: string | null
+  /** Archivée : hors de l'historique, dans « Archivées ». */
+  archived?: boolean
+  tags?: string[]
 }
 
 type SidebarProps = {
@@ -50,6 +62,8 @@ type SidebarProps = {
   sidebarOpen: boolean
   sidebarCollapsed: boolean
   sidebarPanel: SidebarPanel
+  /** Panneau « Cette conversation » (réglages, préréglages), fourni par l'application. */
+  conversationPanel?: ReactNode
   search: string
   searchResults: SearchHit[]
   pinnedIds: string[]
@@ -61,6 +75,7 @@ type SidebarProps = {
   onRenameConversation: (id: string, title: string) => void
   onMoveConversation: (id: string, projectId: string | null) => void
   onTogglePinned: (id: string) => void
+  onArchiveConversation: (id: string, archived: boolean) => void
   onLogout: () => void
   onSearchChange: (value: string) => void
   onSidebarOpenChange: (open: boolean) => void
@@ -90,13 +105,18 @@ type SidebarProps = {
   currentUserId: string
   preferences: Preferences
   onPreferencesChange: (preferences: Preferences) => void
+  onPreferencesSave: (preferences: Preferences) => Promise<void>
   onConversationsImported: () => void
   prompts: Prompt[]
   canWrite: boolean
+  /** Administrateur de l'organisation (catalogue des connecteurs). */
+  isAdmin: boolean
   onPromptsChange: (prompts: Prompt[]) => void
   onUsePrompt: (prompt: Prompt) => void
   /** Retour d'une connexion OAuth à un outil externe. */
   connectionNotice?: string | undefined
+  /** Connecteur auquel on vient de se connecter : sa fiche s'ouvre. */
+  returnedServerId?: string | undefined
 }
 
 /** Champ de saisie en place (nouveau projet, renommage). */
@@ -172,6 +192,9 @@ export default function Sidebar(props: SidebarProps) {
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [movingFor, setMovingFor] = useState<string | null>(null)
   const [armed, setArmed] = useState<string | null>(null)
+  // Rangement : vue des archivées, filtre par étiquette.
+  const [showArchived, setShowArchived] = useState(false)
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -187,7 +210,17 @@ export default function Sidebar(props: SidebarProps) {
     return () => document.removeEventListener('pointerdown', close)
   }, [menuFor])
 
-  const filteredConversations = visibleConversations.filter((conversation) =>
+  // Recherche : partout (archivées comprises) ; sinon, l'étagère choisie.
+  const archivedCount = visibleConversations.filter((conversation) => conversation.archived).length
+  const archivedView = showArchived && archivedCount > 0
+  const tags = [...new Set(visibleConversations.filter((conversation) => !conversation.archived).flatMap((conversation) => conversation.tags ?? []))].sort((a, b) => a.localeCompare(b))
+  const activeTag = tagFilter && tags.includes(tagFilter) ? tagFilter : null
+  const shelf = search
+    ? visibleConversations
+    : visibleConversations.filter(
+        (conversation) => Boolean(conversation.archived) === archivedView && (!activeTag || conversation.tags?.includes(activeTag)),
+      )
+  const filteredConversations = shelf.filter((conversation) =>
     conversation.title.toLowerCase().includes(search.toLowerCase()),
   )
   const pinnedConversations = filteredConversations.filter((conversation) => pinnedIds.includes(conversation.id))
@@ -283,6 +316,10 @@ export default function Sidebar(props: SidebarProps) {
                   <span>{t('sidebar.moveToProject')}</span>
                   <ChevronRight size={13} />
                 </button>
+                <button type="button" role="menuitem" onClick={() => { props.onArchiveConversation(conversation.id, !conversation.archived); closeMenu() }}>
+                  {conversation.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+                  <span>{conversation.archived ? t('archive.restore') : t('archive.archive')}</span>
+                </button>
                 <button type="button" role="menuitem" onClick={() => { props.onTogglePinned(conversation.id); closeMenu() }}>
                   {isPinned ? <Bookmark size={14} fill="currentColor" /> : <Pin size={14} />}
                   <span>{isPinned ? t('sidebar.unpin') : t('sidebar.pin')}</span>
@@ -346,6 +383,8 @@ export default function Sidebar(props: SidebarProps) {
               { id: 'projects', label: t('sidebar.projects'), icon: Folder },
               { id: 'agents', label: t('sidebar.agents'), icon: Bot },
               { id: 'prompts', label: t('prompts.title'), icon: ScrollText },
+              { id: 'skills', label: t('skills.title'), icon: GraduationCap },
+              { id: 'connectors', label: t('connectors.title'), icon: Plug },
             ] as const
           ).map(({ id, label, icon: Icon }) => (
             <button
@@ -401,10 +440,18 @@ export default function Sidebar(props: SidebarProps) {
               onSaved={props.onAgentSaved}
               onDeleted={props.onAgentDeleted}
             />
+          ) : sidebarPanel === 'conversation' && props.conversationPanel ? (
+            props.conversationPanel
+          ) : sidebarPanel === 'connectors' ? (
+            <Suspense fallback={null}>
+              <ConnectorsPanel key={props.returnedServerId ?? 'list'} isAdmin={props.isAdmin} notice={props.connectionNotice} returnedServerId={props.returnedServerId} onError={props.onError} />
+            </Suspense>
+          ) : sidebarPanel === 'skills' ? (
+            <SkillLibrary canWrite={props.canWrite} />
           ) : sidebarPanel === 'prompts' ? (
             <PromptLibrary prompts={props.prompts} canWrite={props.canWrite} onChange={props.onPromptsChange} onUse={props.onUsePrompt} />
           ) : sidebarPanel === 'settings' ? (
-            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onConversationsImported={props.onConversationsImported} connectionNotice={props.connectionNotice} />
+            <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onPreferencesSave={props.onPreferencesSave} onConversationsImported={props.onConversationsImported} />
           ) : (
             <>
               <button className="new-chat-button" onClick={props.onNewChat} disabled={creating}>
@@ -553,7 +600,18 @@ export default function Sidebar(props: SidebarProps) {
                 </div>
               ) : sidebarPanel === 'chats' || sidebarPanel === 'pinned' ? (
                 <>
-                  {sidebarPanel === 'chats' && !search && (
+                  {sidebarPanel === 'chats' && !search && tags.length > 0 && !archivedView && (
+                    <div className="sidebar-tags" role="group" aria-label={t('tags.filter')}>
+                      {tags.map((tag) => (
+                        <button key={tag} type="button" className="sidebar-tag" aria-pressed={activeTag === tag} onClick={() => setTagFilter(activeTag === tag ? null : tag)}>
+                          <Tag size={11} />
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {sidebarPanel === 'chats' && !search && !archivedView && !activeTag && (
                     <section className="sidebar-group">
                       <div className="sidebar-section-label">{t('sidebar.pinned')}</div>
                       {pinnedConversations.map((conversation) =>
@@ -566,7 +624,7 @@ export default function Sidebar(props: SidebarProps) {
                   )}
 
                   <div className="sidebar-section-label">
-                    {sidebarPanel === 'pinned' ? t('sidebar.allPinned') : t('sidebar.history')}
+                    {sidebarPanel === 'pinned' ? t('sidebar.allPinned') : archivedView ? t('archive.title') : activeTag ?? t('sidebar.history')}
                   </div>
 
                   <div className="conversation-list">
@@ -585,6 +643,13 @@ export default function Sidebar(props: SidebarProps) {
                             ? t('sidebar.noResult')
                             : t('sidebar.noConversation')}
                       </p>
+                    )}
+
+                    {sidebarPanel === 'chats' && !search && archivedCount > 0 && (
+                      <button type="button" className="sidebar-archived-toggle" aria-pressed={archivedView} onClick={() => setShowArchived(!archivedView)}>
+                        {archivedView ? <ArrowLeft size={14} /> : <Archive size={14} />}
+                        <span>{archivedView ? t('archive.back') : t('archive.show', { count: archivedCount })}</span>
+                      </button>
                     )}
 
                     {contentHits.length > 0 && (

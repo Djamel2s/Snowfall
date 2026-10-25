@@ -23,7 +23,7 @@ export type OAuthServerConfig = {
 export type OAuthTokens = { accessToken: string; refreshToken?: string | undefined; expiresAt?: string | undefined };
 
 export class OAuthError extends Error {
-  constructor(readonly code: "discovery_failed" | "invalid_metadata" | "token_failed" | "invalid_token" | "invalid_state") {
+  constructor(readonly code: "discovery_failed" | "invalid_metadata" | "token_failed" | "invalid_token" | "invalid_state" | "registration_required" | "registration_failed") {
     super(`OAUTH_${code.toUpperCase()}`);
   }
 }
@@ -65,10 +65,41 @@ async function getJson(url: URL, deps: Deps, init: RequestInit = {}) {
 }
 
 /**
- * Trouve le serveur d'autorisation d'un serveur MCP. clientId (et secret
- * éventuel) : enregistrés par l'administrateur auprès du fournisseur.
+ * Enregistrement dynamique du client (RFC 7591), quand le fournisseur le permet :
+ * client public (PKCE, sans secret), une seule adresse de retour, la nôtre.
  */
-export async function discoverOAuth(mcpUrl: string, client: { clientId: string; clientSecret?: string | undefined; scope?: string | undefined }, deps: Deps = {}): Promise<OAuthServerConfig> {
+async function registerClient(endpoint: unknown, input: { redirectUri: string; scope?: string | undefined }, deps: Deps) {
+  const url = await checked(endpoint, deps).catch(() => {
+    throw new OAuthError("registration_failed");
+  });
+  const { status, body } = await getJson(url, deps, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Snowfall",
+      redirect_uris: [input.redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      ...(input.scope ? { scope: input.scope } : {}),
+    }),
+  });
+  const clientId = body?.client_id;
+  if ((status !== 200 && status !== 201) || typeof clientId !== "string" || !clientId || clientId.length > 500) throw new OAuthError("registration_failed");
+  const secret = body?.client_secret;
+  return { clientId, ...(typeof secret === "string" && secret && secret.length <= 4_000 ? { clientSecret: secret } : {}) };
+}
+
+/**
+ * Trouve le serveur d'autorisation d'un serveur MCP. clientId (et secret
+ * éventuel) : enregistrés par l'administrateur auprès du fournisseur ; absents,
+ * le client est enregistré automatiquement si le fournisseur le permet.
+ */
+export async function discoverOAuth(
+  mcpUrl: string,
+  client: { clientId?: string | undefined; clientSecret?: string | undefined; scope?: string | undefined },
+  deps: Deps & { redirectUri?: string | undefined } = {},
+): Promise<OAuthServerConfig> {
   const resource = await checked(mcpUrl, deps);
   const path = resource.pathname.replace(/\/$/, "");
   // RFC 9728 : d'abord au chemin de la ressource, puis à la racine.
@@ -98,12 +129,22 @@ export async function discoverOAuth(mcpUrl: string, client: { clientId: string; 
   if (typeof server.issuer !== "string" || server.issuer.replace(/\/$/, "") !== issuer.href.replace(/\/$/, "")) throw new OAuthError("invalid_metadata");
   const methods = server.code_challenge_methods_supported;
   if (Array.isArray(methods) && !methods.includes("S256")) throw new OAuthError("invalid_metadata");
+  const authorizationEndpoint = (await checked(server.authorization_endpoint, deps)).href;
+  const tokenEndpoint = (await checked(server.token_endpoint, deps)).href;
+  let registered: { clientId: string; clientSecret?: string } | null = null;
+  if (!client.clientId) {
+    // Sans client fourni : enregistrement dynamique, sinon l'administrateur doit en créer un.
+    if (!server.registration_endpoint || !deps.redirectUri) throw new OAuthError("registration_required");
+    registered = await registerClient(server.registration_endpoint, { redirectUri: deps.redirectUri, scope: client.scope }, deps);
+  }
+  const clientId = registered?.clientId ?? client.clientId!;
+  const clientSecret = registered ? registered.clientSecret : client.clientSecret;
   return {
     issuer: issuer.href,
-    authorizationEndpoint: (await checked(server.authorization_endpoint, deps)).href,
-    tokenEndpoint: (await checked(server.token_endpoint, deps)).href,
-    clientId: client.clientId,
-    ...(client.clientSecret ? { clientSecret: client.clientSecret } : {}),
+    authorizationEndpoint,
+    tokenEndpoint,
+    clientId,
+    ...(clientSecret ? { clientSecret } : {}),
     ...(client.scope ? { scope: client.scope } : {}),
   };
 }

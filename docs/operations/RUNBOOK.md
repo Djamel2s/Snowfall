@@ -257,8 +257,10 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Ouvrir le domaine de chaque serveur dans `infra/egress/mcp-domains.txt`
   (second verrou, en plus de l'approbation par l'administrateur), puis
   redémarrer le proxy.
-- Dans Snowfall : Réglages → Organisation → Outils et intégrations → Serveurs MCP :
-  ajouter, examiner (description et paramètres), approuver outil par outil.
+- Dans Snowfall : barre latérale › Connecteurs (l'outil « Connecteurs » doit être
+  activé dans Réglages → Organisation → Outils et intégrations) : ajouter, choisir
+  les outils (description et paramètres visibles en mode « Personnalisé »).
+  Voir §31.
 - Un outil modifié par le serveur est bloqué (`mcp.tool_changed`) jusqu'à une
   nouvelle approbation.
 
@@ -331,11 +333,12 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   compte de chacun » (identifiant client, secret facultatif). Le domaine du
   serveur MCP ET celui du serveur d'autorisation doivent être ouverts dans
   `infra/egress/mcp-domains.txt`. L'administrateur se connecte avec son compte
-  pour examiner les outils.
+  pour lire et choisir les outils (le serveur est encore « à terminer »).
 - Révoquer un utilisateur : sa connexion disparaît avec son départ ; il peut
-  aussi se déconnecter dans Mon compte → Connexions.
-- OpenAPI : « API OpenAPI », adresse de base de l'API, jeton facultatif, fichier
-  de spécification (JSON, OpenAPI 3). Domaine à ouvrir dans `mcp-domains.txt`.
+  aussi se déconnecter depuis la fiche du connecteur.
+- OpenAPI : Catalogue › « Connecteur personnalisé » › « API décrite par une
+  spécification » : adresse de base, clé facultative, fichier JSON (OpenAPI 3).
+  Domaine à ouvrir dans `mcp-domains.txt`.
 
 ## 26. Voix et images locales
 
@@ -366,6 +369,74 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   base » désactive la tête entraînée (les autres instances suivent sous 60 s).
   Une nouvelle révision du modèle Laya rend les têtes existantes inutilisables :
   le routage repasse à l'heuristique ; réentraîner.
+
+## 31. Connecteurs et import de compétences
+
+- Barre latérale › Connecteurs. Membres : les connecteurs prêts ; une fiche par
+  connecteur avec « Se connecter à … » / « Déconnecter … ». Administrateurs :
+  onglets « Ajoutés » et « Catalogue » ; la fiche montre les étapes (Ajouté →
+  Connexion si OAuth → Outils → Prêt) et une seule action à la fois :
+  - OAuth : « Ajouter et se connecter » enchaîne l'ajout et la connexion ; au
+    retour, la fiche s'ouvre sur le choix des outils ;
+  - choix des outils : « Lecture seule (recommandé) » (outils que l'éditeur
+    annonce en lecture), « Lecture et écriture », ou « Personnalisé » (outil par
+    outil, droit lecture/écriture, détail des paramètres). L'annonce « lecture »
+    de l'éditeur est un conseil : vérifier en mode personnalisé en cas de doute ;
+  - ensuite : « Modifier les outils », interrupteur « Activé pour
+    l'organisation », « Supprimer » (deux clics).
+- Puce « À terminer » : outils pas encore choisis ; « À connecter » : connexion
+  OAuth manquante pour l'utilisateur courant.
+- « Le service ne répond pas » (`http_error`, `timeout`, `network`,
+  `protocol_error`) : adresse fausse ou domaine absent de `mcp-domains.txt`.
+- Ajout depuis le catalogue : si l'éditeur ne permet pas l'enregistrement
+  automatique (`oauth_registration_required`), créer une application OAuth chez
+  lui avec pour adresse de retour celle de Snowfall (`…/mcp/callback`), puis
+  saisir son identifiant. Google Workspace : programme de préversion et
+  application « AI-powered agent » dans Google Cloud. Microsoft 365 : identifiant
+  du tenant Entra, Agent 365.
+- Une adresse marquée « à vérifier » vient d'un annuaire : la lecture des outils
+  confirme qu'elle répond avant toute activation.
+- Compétences › Importer (.zip) : format Anthropic ; scripts non importés.
+- Dépendances : zod 4.6.6 et ip-address 10.7.4 appliqués. Restent (règle des
+  14 jours) : fastify 5.12.6 et mermaid 12.2.0 (corrige sa copie de katex)
+  installables le 27 octobre ; fast-uri 3.1.9 / 4.2.3 le 2 novembre (vient de
+  fastify : se met à jour avec lui ou par `overrides`). Ne pas lancer
+  `npm audit fix --force` (versions trop récentes, majeures possibles).
+
+## 30. Compétences des agents
+
+- Migrations : `skills`, `skills_enforcement` (`npm run db:migrate`, droits
+  réappliqués), puis redémarrer l'API.
+- Barre latérale › Compétences : créer, ajouter des fichiers, partager ; studio
+  de l'agent › Compétences : les confier (10 au plus).
+- Une compétence confidentielle impose un modèle local à l'agent ; elle n'est
+  jamais proposée à un modèle externe.
+- Suivi : `skill.create|update|delete|file_add|file_remove` (version,
+  confidentialité ; jamais de contenu), étapes `use_skill` / `read_skill_file`
+  dans les traces. Après une modification de compétence partagée, relire
+  l'historique des versions si un agent change de comportement.
+- Après ajout ou changement d'outils : relancer l'éval des agents
+  (`npm run agent:eval`).
+
+## 29. Parité LibreChat (phase 1)
+
+- Migrations à appliquer (`npm run db:migrate`, qui réapplique aussi les droits
+  du rôle applicatif) : `message_author`, `preferences_theme_instructions`,
+  `conversation_settings`, `continue_answer`, `sharing`, `sharing_enforcement`,
+  `sharing_policies`. Puis redémarrer l'API.
+- Changement de comportement : un **nouvel agent est privé** (son auteur et les
+  administrateurs) ; le partager depuis son studio (« Accès »). Les agents
+  existants et les prompts déjà partagés restent visibles de toute
+  l'organisation (autorisation créée par la migration) ; la colonne
+  `prompts.shared` disparaît.
+- Groupes : Organisation › Membres et accès › Groupes (administrateurs).
+- Un membre retiré perd ses partages ; réinvité, il repart de zéro.
+- Thème clair : généré depuis les feuilles de style. Après une modification de
+  CSS : `npm run theme -w @snowfall/web` (sinon `npm test` échoue) ; retouches à
+  la main dans `apps/web/src/theme-light-fixes.css` uniquement.
+- Suivi : `access.update` (forme du partage), `group.*`, `conversation.fork`,
+  `attachment.copy`, `message.continue`, `conversation.compare_denied` — jamais
+  de contenu, de nom ni de destinataire.
 
 ## 28 quater. Pseudonymisation
 

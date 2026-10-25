@@ -11,10 +11,17 @@ export type Agent = AgentProfile & ModelSelection & {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Autorisation de l'utilisateur courant (partage) ; absente : aucune (auteur, administrateur, ou ancien magasin). */
+  access?: "view" | "edit";
+  /** Compétences confiées à l'agent (identifiants). */
+  skills: string[];
 };
 
 /** tools absent : lecture seule (defaultAgentTools) ; mcpServers absent : aucun. */
-export type AgentInput = Omit<AgentProfile, "tools" | "mcpServers" | "parameters" | "delegates"> & Partial<Pick<AgentProfile, "tools" | "mcpServers" | "parameters" | "delegates">> & ModelSelection;
+export type AgentInput = Omit<AgentProfile, "tools" | "mcpServers" | "parameters" | "delegates"> & Partial<Pick<AgentProfile, "tools" | "mcpServers" | "parameters" | "delegates">> & ModelSelection & {
+  /** Compétences confiées (absent : inchangées). */
+  skills?: string[];
+};
 
 export interface AgentStore {
   list(tenant: TenantContext): Promise<Agent[]>;
@@ -32,16 +39,20 @@ type AgentRow = {
   created_by: string | null;
   createdAt: string;
   updatedAt: string;
+  access: "view" | "edit" | null;
+  skills: string[];
 };
 
+// access : droit accordé à l'utilisateur courant (la RLS filtre déjà les invisibles).
 const COLUMNS = `id, provider, model, profile_enc, created_by,
-  created_at AS "createdAt", updated_at AS "updatedAt"`;
+  created_at AS "createdAt", updated_at AS "updatedAt", snowfall_access('agent', id) AS access,
+  ARRAY(SELECT x.skill_id::text FROM agent_skills x WHERE x.agent_id = agents.id ORDER BY x.skill_id) AS skills`;
 
 export function profileAad(organizationId: string, agentId: string) {
   return `agent-profile:${organizationId}:${agentId}`;
 }
 
-/** Agents partagés par l'organisation, sous RLS ; profil chiffré par organisation. */
+/** Agents de l'organisation, visibles selon leurs autorisations (RLS) ; profil chiffré par organisation. */
 export class PostgresAgentStore implements AgentStore {
   constructor(
     private readonly pool: Pool,
@@ -72,6 +83,8 @@ export class PostgresAgentStore implements AgentStore {
       createdBy: row.created_by,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+      ...(row.access ? { access: row.access } : {}),
+      skills: row.skills ?? [],
     };
   }
 
@@ -91,6 +104,18 @@ export class PostgresAgentStore implements AgentStore {
       JSON.stringify(profile),
       profileAad(tenant.organizationId, id),
     );
+  }
+
+  /** Compétences confiées : n'ajoute que les nouvelles, retire les enlevées (la RLS vérifie qu'on voit la compétence ajoutée). */
+  private async setSkills(client: PoolClient, tenant: TenantContext, agentId: string, skills: string[] | undefined) {
+    if (!skills) return;
+    const current = (await client.query<{ skillId: string }>(`SELECT skill_id::text AS "skillId" FROM agent_skills WHERE agent_id = $1`, [agentId])).rows.map((row) => row.skillId);
+    const wanted = [...new Set(skills)];
+    const removed = current.filter((id) => !wanted.includes(id));
+    if (removed.length) await client.query("DELETE FROM agent_skills WHERE agent_id = $1 AND skill_id = ANY($2::uuid[])", [agentId, removed]);
+    for (const skillId of wanted.filter((id) => !current.includes(id))) {
+      await client.query("INSERT INTO agent_skills (agent_id, skill_id, organization_id) VALUES ($1, $2, $3)", [agentId, skillId, tenant.organizationId]);
+    }
   }
 
   list(tenant: TenantContext) {
@@ -135,6 +160,10 @@ export class PostgresAgentStore implements AgentStore {
           await this.seal(client, tenant, id, input),
         ],
       );
+      if (input.skills?.length) {
+        await this.setSkills(client, tenant, id, input.skills);
+        return this.toAgent(client, tenant, (await client.query<AgentRow>(`SELECT ${COLUMNS} FROM agents WHERE id = $1`, [id])).rows[0]!);
+      }
       return this.toAgent(client, tenant, result.rows[0]!);
     });
   }
@@ -149,12 +178,17 @@ export class PostgresAgentStore implements AgentStore {
         [id, tenant.organizationId, input.provider, input.model, await this.seal(client, tenant, id, input)],
       );
       const row = result.rows[0];
-      return row ? this.toAgent(client, tenant, row) : null;
+      if (!row) return null;
+      if (!input.skills) return this.toAgent(client, tenant, row);
+      await this.setSkills(client, tenant, id, input.skills);
+      return this.toAgent(client, tenant, (await client.query<AgentRow>(`SELECT ${COLUMNS} FROM agents WHERE id = $1`, [id])).rows[0]!);
     });
   }
 
   delete(tenant: TenantContext, id: string) {
     return withTenant(this.pool, tenant, async (client) => {
+      // Ses autorisations partent avec lui (pas de clé étrangère : ressource polymorphe).
+      await client.query("DELETE FROM resource_grants WHERE organization_id = $1 AND resource_type = 'agent' AND resource_id = $2", [tenant.organizationId, id]);
       const result = await client.query(
         "DELETE FROM agents WHERE id = $1 AND organization_id = $2",
         [id, tenant.organizationId],

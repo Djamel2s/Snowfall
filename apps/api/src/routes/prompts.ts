@@ -9,12 +9,11 @@ const inputSchema = z
   .object({
     name: z.string().trim().min(1).max(60),
     content: z.string().trim().min(1).max(8_000),
-    shared: z.boolean().default(false),
   })
   .strict()
   .refine((input) => promptVariables(input.content).length <= 10);
 
-/** Bibliothèque de prompts : audit sans contenu (ni nom, ni texte). */
+/** Bibliothèque de prompts : audit sans contenu (ni nom, ni texte). Partage : routes/sharing.ts. */
 export function registerPromptRoutes(api: FastifyInstance, kit: RouteKit, store: PromptStore) {
   api.get("/prompts", async (request, reply) => {
     kit.privateResponse(reply);
@@ -28,7 +27,7 @@ export function registerPromptRoutes(api: FastifyInstance, kit: RouteKit, store:
     const body = inputSchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "Invalid request" });
     const prompt = await store.create(user, body.data);
-    await kit.record(request, user, { eventType: "prompt.create", targetType: "prompt", targetId: prompt.id, details: { shared: prompt.shared } });
+    await kit.record(request, user, { eventType: "prompt.create", targetType: "prompt", targetId: prompt.id });
     return reply.code(201).send({ prompt });
   });
 
@@ -41,7 +40,7 @@ export function registerPromptRoutes(api: FastifyInstance, kit: RouteKit, store:
     if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
     const prompt = await store.update(user, params.data.id, body.data);
     if (!prompt) return reply.code(404).send({ error: "Not found" });
-    await kit.record(request, user, { eventType: "prompt.update", targetType: "prompt", targetId: prompt.id, details: { shared: prompt.shared } });
+    await kit.record(request, user, { eventType: "prompt.update", targetType: "prompt", targetId: prompt.id, ...(prompt.mine ? {} : { details: { editor: true } }) });
     return { prompt };
   });
 

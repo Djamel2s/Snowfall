@@ -67,6 +67,7 @@ import { getPool } from "./db/pool.js";
 import { findSchemaDrift } from "./db/schema-check.js";
 import {
   PostgresConversationStore,
+  settingsOf,
   type ConversationStore,
   type ConversationSummary,
   type MessageSource,
@@ -93,7 +94,7 @@ import {
   type UsageTotals,
 } from "./workspace/settings.js";
 import { createRouteKit } from "./routes/kit.js";
-import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { instructionsRejection, registerWorkspaceRoutes } from "./routes/workspace.js";
 import { parseImport } from "./conversations/import.js";
 import { MemoryPromptStore, PostgresPromptStore, type PromptStore } from "./prompts/store.js";
 import { InMemoryUserMemoryStore, PostgresUserMemoryStore, type UserMemoryStore } from "./memory/store.js";
@@ -118,6 +119,13 @@ import { PostgresQualityStore, type QualityStore } from "./quality/store.js";
 import type { QualityModels } from "./quality/improve.js";
 import { registerQualityRoutes } from "./routes/quality.js";
 import { registerPromptRoutes } from "./routes/prompts.js";
+import { conversationSettingsSchema, registerPresetRoutes } from "./routes/presets.js";
+import { MemoryPresetStore, PostgresPresetStore, type PresetStore } from "./presets/store.js";
+import { registerSharingRoutes } from "./routes/sharing.js";
+import { MemorySharingStore, PostgresSharingStore, type SharingStore } from "./sharing/store.js";
+import { registerSkillRoutes } from "./routes/skills.js";
+import { skillTools } from "./agent/skill-tools.js";
+import { MAX_AGENT_SKILLS, MemorySkillStore, PostgresSkillStore, type SkillStore } from "./skills/store.js";
 import { MemoryShareStore, PostgresShareStore, SHARE_DURATIONS, type ShareStore } from "./shares/store.js";
 import { meterOf, MemoryToolUsageStore, type OrganizationSettings, type ToolUsageStore } from "./workspace/settings.js";
 import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
@@ -245,6 +253,12 @@ export type AppDependencies = {
   shares?: ShareStore;
   /** Bibliothèque de prompts. Absent : en mémoire. */
   prompts?: PromptStore;
+  /** Préréglages de conversation. Absent : en mémoire. */
+  presets?: PresetStore;
+  /** Droits fins (partage d'agents et de prompts, groupes). Absent : en mémoire. */
+  sharing?: SharingStore;
+  /** Compétences des agents. Absent : en mémoire. */
+  skills?: SkillStore;
   /** Mémoire des utilisateurs (utilisée seulement s'ils l'ont activée). */
   memories?: UserMemoryStore;
   /** OCR local des documents numérisés (absent : non lus). */
@@ -294,6 +308,10 @@ const RUN_TIMING = {
 };
 
 /** Entrée du modèle au lancement d'un run (le résumé de compaction part dans le prompt système). */
+/** Consigne de « Continuer » : reprendre au caractère près, sans redite ni préambule. */
+export const CONTINUE_INSTRUCTION =
+  "Ta réponse précédente a été interrompue. Continue-la exactement là où elle s'arrête : ne répète rien de ce qui est déjà écrit, n'ajoute ni introduction ni commentaire, commence directement par la suite du texte.";
+
 type RunInput = { history: ChatTurn[]; message: string; images: ModelImage[]; summary?: string | undefined };
 
 /** Ajouté à une réponse coupée par la durée maximale. */
@@ -354,6 +372,9 @@ export function createAppServer(deps: AppDependencies) {
   const toolUsage = deps.toolUsage ?? new MemoryToolUsageStore();
   const shares = deps.shares ?? new MemoryShareStore();
   const prompts = deps.prompts ?? new MemoryPromptStore();
+  const presets = deps.presets ?? new MemoryPresetStore();
+  const sharing = deps.sharing ?? new MemorySharingStore();
+  const skillStore = deps.skills ?? new MemorySkillStore();
   const memories = deps.memories ?? new InMemoryUserMemoryStore();
   /** Identifiant de cette instance (bail des runs qu'elle exécute). */
   const instance = `api-${randomUUID()}`;
@@ -435,6 +456,12 @@ export function createAppServer(deps: AppDependencies) {
   }).strict().refine((body) => !(body.agentId && body.model) && !(body.temporary && body.projectId));
 
   // agentId / model : qui répond. Les deux à null = modèle par défaut.
+  // Étiquettes : courtes, sans caractère de contrôle, sans doublon (casse ignorée).
+  const tagsSchema = z
+    .array(z.string().trim().min(1).max(30).regex(/^[^\p{Cc}\p{Cf}]+$/u))
+    .max(10)
+    .transform((list) => [...new Map(list.map((tag) => [tag.toLocaleLowerCase("fr"), tag])).values()]);
+
   const updateConversationSchema = z.object({
     title: z.string().trim().min(1).max(120).optional(),
     projectId: z.uuid().nullable().optional(),
@@ -442,6 +469,10 @@ export function createAppServer(deps: AppDependencies) {
     model: modelSelectionSchema.nullable().optional(),
     // Bases de connaissances consultées (agent, projet), modifiables à tout moment.
     knowledge: z.object({ agent: z.boolean().optional(), project: z.boolean().optional() }).strict().optional(),
+    // Réglages de la conversation : remplacent les précédents ({} : ceux de l'agent).
+    settings: conversationSettingsSchema.optional(),
+    archived: z.boolean().optional(),
+    tags: tagsSchema.optional(),
   }).strict()
     .refine((body) => Object.values(body).some((value) => value !== undefined))
     .refine((body) => !(body.agentId && body.model));
@@ -449,6 +480,8 @@ export function createAppServer(deps: AppDependencies) {
   const agentInputSchema = agentProfileSchema.extend({
     provider: z.enum(providerIds),
     model: z.string().min(1).max(120),
+    // Compétences confiées (absent : inchangées).
+    skills: z.array(z.uuid()).max(MAX_AGENT_SKILLS).optional(),
   });
 
   const messageSchema = z.object({
@@ -459,8 +492,14 @@ export function createAppServer(deps: AppDependencies) {
   }).strict().refine((body) => body.content.length > 0 || body.attachmentIds.length > 0);
 
   // Agent partagé dans l'organisation : modifiable par son auteur ou un admin.
+  /** Supprimer ou partager un agent : son auteur ou un administrateur. */
   function canManageAgent(user: AuthenticatedUser, agent: Agent) {
     return agent.createdBy === user.userId || kit.isAdmin(user);
+  }
+
+  /** Modifier un agent : en plus, un éditeur autorisé (partage en modification). */
+  function canEditAgent(user: AuthenticatedUser, agent: Agent) {
+    return kit.canWrite(user) && (canManageAgent(user, agent) || agent.access === "edit");
   }
 
   async function conversationNotFound(
@@ -498,6 +537,15 @@ export function createAppServer(deps: AppDependencies) {
     }
     const model = (await models.catalog()).find((provider) => provider.id === "local" && provider.available)?.models[0];
     return model ? { provider: "local", model: model.id } : null;
+  }
+
+  /** Auteur d'une réponse, gardé avec elle : l'agent ou le modèle peut changer ensuite. */
+  function authorOf(request: { agentId: string | null; selection?: ModelSelection | undefined; provider: string; details?: Record<string, unknown> }) {
+    // Comparaison : la version est signée par le modèle comparé (même avec un agent).
+    if (request.agentId && !(request.details?.compared === true && request.selection)) return `agent:${request.agentId}`;
+    // Sans choix : le modèle par défaut de la plateforme, nommé (il peut changer plus tard).
+    const selection = request.selection ?? models.defaultSelection?.();
+    return selection ? `model:${selection.provider}:${selection.model}` : `model:${request.provider}`;
   }
 
   /** Pseudonymiser cet appel : l'organisation l'a demandé ET le modèle est externe. */
@@ -763,8 +811,33 @@ export function createAppServer(deps: AppDependencies) {
       const body = updateConversationSchema.safeParse(request.body);
       if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
 
-      const { title, projectId, agentId, model, knowledge: knowledgeToggles } = body.data;
+      const { title, projectId, agentId, model, knowledge: knowledgeToggles, settings, archived, tags } = body.data;
+      // Les instructions de conversation partent vers le modèle : mêmes contrôles que celles du profil.
+      const rejected = settings?.instructions ? instructionsRejection(settings.instructions) : null;
+      if (rejected) return reply.code(400).send({ error: "Invalid request", reason: `instructions_${rejected}` });
+      if (archived || tags?.length) {
+        // Une conversation temporaire n'est ni archivée ni étiquetée (elle disparaît en 24 h).
+        const current = await conversationStore.get(user, params.data.id);
+        if (!current) return conversationNotFound(request, reply, user, params.data.id);
+        if (current.temporary) return reply.code(400).send({ error: "Invalid request" });
+      }
       const reselect = agentId !== undefined || model !== undefined;
+      if (reselect) {
+        const current = await conversationStore.get(user, params.data.id);
+        if (!current) return conversationNotFound(request, reply, user, params.data.id);
+        // Une réponse en cours garde son modèle jusqu'au bout.
+        if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
+        // Conversation locale à vie (donnée sensible, base confidentielle) : le nouvel
+        // agent ou modèle doit être local, sinon l'historique partirait à l'extérieur.
+        if (current.sensitive) {
+          const next = agentId ? await agents?.get(user, agentId) : null;
+          const provider = models.providerFor(next ? { provider: next.provider, model: next.model } : (model ?? undefined));
+          if (provider !== "local" && provider !== "echo") {
+            await kit.record(request, user, { eventType: "conversation.reselect_denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "local_only" } });
+            return reply.code(409).send({ error: "Local model required", reason: "local_only" });
+          }
+        }
+      }
       if (model && !(await isModelPermitted(user, model))) {
         return reply.code(400).send({ error: "Invalid request" });
       }
@@ -785,6 +858,9 @@ export function createAppServer(deps: AppDependencies) {
                 },
               }
             : {}),
+          ...(settings ? { settings: settingsOf(settings) } : {}),
+          ...(archived !== undefined ? { archived } : {}),
+          ...(tags !== undefined ? { tags } : {}),
         });
         if (!conversation) return conversationNotFound(request, reply, user, params.data.id);
 
@@ -795,6 +871,10 @@ export function createAppServer(deps: AppDependencies) {
           details: {
             renamed: title !== undefined,
             moved: projectId !== undefined,
+            // Jamais le contenu (instructions, étiquettes) : seulement ce qui a changé.
+            ...(settings ? { settings: Object.keys(settingsOf(settings)).sort().join(",") || "default" } : {}),
+            ...(archived !== undefined ? { archived } : {}),
+            ...(tags !== undefined ? { tags: tags.length } : {}),
             ...(knowledgeToggles
               ? { agentKnowledge: conversation.knowledge.agent, projectKnowledge: conversation.knowledge.project }
               : {}),
@@ -811,10 +891,43 @@ export function createAppServer(deps: AppDependencies) {
         if (error instanceof Error && ["PROJECT_NOT_FOUND", "AGENT_NOT_FOUND"].includes(error.message)) {
           return reply.code(400).send({ error: "Invalid request" });
         }
-        // Une conversation commencée garde son agent ou son modèle.
-        if (error instanceof Error && error.message === "CONVERSATION_STARTED") {
-          return reply.code(409).send({ error: "Conversation already started" });
-        }
+        throw error;
+      }
+    });
+
+    // Bifurquer : une nouvelle conversation reprend celle-ci jusqu'à un message.
+    const checkForkLimit = api.createRateLimit({
+      max: 20,
+      timeWindow: "1 minute",
+      keyGenerator: (request) => `conversation-fork:${kit.principal(request).userId}`,
+    });
+
+    api.post("/conversations/:id/fork", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+      const limit = await checkForkLimit(request);
+      if (!limit.isAllowed && limit.isExceeded) return reply.code(429).send({ error: "Too many requests" });
+
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      const body = z.object({ messageId: z.uuid() }).strict().safeParse(request.body);
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+
+      try {
+        // Conversation d'un autre : tracée comme tentative d'accès croisé ; message absent : simple 404.
+        if (!(await conversationStore.get(user, params.data.id))) return conversationNotFound(request, reply, user, params.data.id);
+        const conversation = await conversationStore.fork(user, params.data.id, body.data.messageId);
+        if (!conversation) return reply.code(404).send({ error: "Not found" });
+        await kit.record(request, user, {
+          eventType: "conversation.fork",
+          targetType: "conversation",
+          targetId: conversation.id,
+          details: { from: params.data.id, ...(conversation.sensitive ? { sensitive: true } : {}) },
+        });
+        return reply.code(201).send({ conversation });
+      } catch (error) {
+        if (error instanceof Error && error.message === "TEMPORARY") return reply.code(400).send({ error: "Invalid request" });
+        if (error instanceof Error && error.message === "MEMBERSHIP_REQUIRED") return reply.code(403).send({ error: "Forbidden" });
         throw error;
       }
     });
@@ -862,6 +975,9 @@ export function createAppServer(deps: AppDependencies) {
     if (deps.workshop) registerDecisionRoutes(api, kit, { store: deps.workshop, trainer: deps.trainer, changed: (organizationId) => routingHeads.delete(organizationId) });
     if (deps.mcp) registerMcpRoutes(api, kit, { ...deps.mcp, redirectUri: deps.mcp.redirectUri ?? `${appOrigin}/mcp/callback` });
     registerPromptRoutes(api, kit, prompts);
+    registerPresetRoutes(api, kit, presets);
+    registerSharingRoutes(api, kit, { sharing, agents, prompts, skills: skillStore, canManageAgent });
+    registerSkillRoutes(api, kit, skillStore, deps.scanner);
     registerMemoryRoutes(api, kit, memories);
     registerAudioRoutes(api, kit, deps.speech ?? new OpenAiCompatibleSpeech(undefined, undefined));
 
@@ -1137,6 +1253,9 @@ export function createAppServer(deps: AppDependencies) {
           id: conversation.id,
           title: conversation.title,
           createdAt: conversation.createdAt,
+          ...(conversation.settings ? { settings: conversation.settings } : {}),
+          ...(conversation.archived ? { archived: true } : {}),
+          ...(conversation.tags ? { tags: conversation.tags } : {}),
           messages: messages.map((message) => ({
             role: message.role,
             content: message.content,
@@ -1281,6 +1400,8 @@ export function createAppServer(deps: AppDependencies) {
       return {
         prompts: mine.map(({ name, content, shared, updatedAt }) => ({ name, content, shared, updatedAt })),
         memories: (await memories.list(user)).map(({ content, createdAt }) => ({ content, createdAt })),
+        presets: (await presets.list(user)).map(({ name, settings, createdAt }) => ({ name, settings, createdAt })),
+        skills: (await skillStore.list(user)).filter((skill) => skill.mine).map(({ name, description, instructions, confidential, version, files, updatedAt }) => ({ name, description, instructions, confidential, version, files: files.map((file) => file.name), updatedAt })),
       };
     }
 
@@ -1295,6 +1416,18 @@ export function createAppServer(deps: AppDependencies) {
      * écritures. Écrire dans la base de l'agent suppose de pouvoir modifier
      * l'agent : un simple utilisateur de l'agent ne peut pas l'enrichir.
      */
+    /**
+     * Compétences de l'agent : catalogue (nom, description) dans l'outil use_skill.
+     * Une compétence confidentielle n'est jamais proposée à un modèle externe.
+     */
+    async function skillsFor(user: AuthenticatedUser, agent: Agent | null, selection: ModelSelection | undefined) {
+      if (!agent?.skills?.length || !models.supportsTools?.(selection)) return [];
+      const provider = models.providerFor(selection);
+      const local = provider === "local" || provider === "echo";
+      const catalog = (await skillStore.forAgent(user, agent.id)).filter((skill) => local || !skill.confidential);
+      return skillTools({ store: skillStore, tenant: user, agentId: agent.id, catalog });
+    }
+
     function agentTools(
       request: FastifyRequest,
       user: AuthenticatedUser,
@@ -1490,6 +1623,7 @@ export function createAppServer(deps: AppDependencies) {
         images: { count: 0 },
       });
       tools.push(...(await mcpTools(request, user, specialist, selection, permitted, confidential, context.signal)));
+      tools.push(...(await skillsFor(user, specialist, selection)));
       tools.push(...(await teamTools({ ...team, agent: specialist, selection, provider, permitted, confidential, threadId, depth: team.depth + 1 })));
       const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
       const guarded = guardTools(tools, { tainted: false }, (tool, verdict) => {
@@ -1617,9 +1751,11 @@ export function createAppServer(deps: AppDependencies) {
       run: RunRecord,
       answer: string,
       sources: MessageSource[],
-      outcome: { usage?: TokenUsage | undefined; model: string; partial: boolean; steps: number },
+      outcome: { usage?: TokenUsage | undefined; model: string; partial: boolean; steps: number; truncated?: boolean },
     ) {
       const { request: input } = run;
+      // Arrêtée ou coupée par la longueur maximale : la réponse pourra être continuée.
+      const incomplete = outcome.partial || outcome.truncated === true;
       const payload =
         input.kind === "message"
           ? await conversationStore
@@ -1628,11 +1764,18 @@ export function createAppServer(deps: AppDependencies) {
                 ...(input.editMessageId ? { replaceFromMessageId: input.editMessageId } : {}),
                 ...(sources.length ? { sources } : {}),
                 runId: run.id,
+                author: authorOf(input),
+                incomplete,
               })
               .then((exchange) => (exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null))
-          : await conversationStore
-              .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined, run.id)
-              .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null));
+          : input.kind === "continue"
+            ? // La suite s'ajoute au même message ; ses sources restent celles du début.
+              await conversationStore
+                .extendAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, incomplete)
+                .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null))
+            : await conversationStore
+                .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined, run.id, authorOf(input), incomplete)
+                .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null));
       if (!payload) return null;
 
       // Le fournisseur ne compte pas toujours (arrêt, echo) : estimation prudente.
@@ -1645,7 +1788,7 @@ export function createAppServer(deps: AppDependencies) {
         request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
       });
       await kit.record(request, user, {
-        eventType: input.kind === "message" ? "message.create" : "message.regenerate",
+        eventType: { message: "message.create", regenerate: "message.regenerate", continue: "message.continue" }[input.kind],
         targetType: "conversation",
         targetId: run.conversationId,
         details: {
@@ -1657,6 +1800,7 @@ export function createAppServer(deps: AppDependencies) {
           // Part de l'entrée servie par le cache du fournisseur (efficacité du cache).
           cachedInputTokens: counted.cachedInputTokens ?? 0,
           partial: outcome.partial,
+          truncated: outcome.truncated === true,
           steps: outcome.steps,
         },
       });
@@ -1768,7 +1912,11 @@ export function createAppServer(deps: AppDependencies) {
         const selection = run.request.selection;
         // Base confidentielle ou donnée sensible : aucun contenu dans les traces, aucune
         // recherche web, aucun spécialiste externe, pas de mémoire.
-        const confidential = conversation.sensitive === true || (await activeBases(user, conversation, agent)).some((base) => base.confidential);
+        const confidentialBase = (await activeBases(user, conversation, agent)).some((base) => base.confidential);
+        const confidential = conversation.sensitive === true || confidentialBase;
+        // Passages confidentiels dans l'historique : la conversation reste locale à vie,
+        // même si l'on change ensuite d'agent ou de modèle.
+        if (confidentialBase && !conversation.sensitive) await conversationStore.markSensitive(user, conversation.id);
         // Trace de ce passage du run ; une base confidentielle n'y laisse jamais de contenu.
         runTrace = tracer.startRun({
           runId: run.id,
@@ -1813,6 +1961,7 @@ export function createAppServer(deps: AppDependencies) {
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
+        tools.push(...(await skillsFor(user, agent, selection)));
         // Équipe d'agents : délégation de tâches (écritures validées par l'utilisateur).
         tools.push(
           ...(await teamTools({
@@ -1833,6 +1982,13 @@ export function createAppServer(deps: AppDependencies) {
         // confidentielle (rien n'en sort, rien n'y entre).
         const memoryOn = !conversation.temporary && !confidential && deps.preferences ? (await deps.preferences.get(user)).memory : false;
         const remembered = memoryOn ? (await memories.list(user)).map((memory) => memory.content) : [];
+        // Instructions de l'utilisateur : celles du profil, puis celles de la conversation.
+        const profile = [deps.preferences ? (await deps.preferences.get(user)).instructions : "", conversation.settings?.instructions ?? ""]
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .join("\n\n");
+        // Réglages : ceux de la conversation priment sur ceux de l'agent.
+        const generation = generationOf({ ...agent?.parameters, ...conversation.settings });
         if (memoryOn && kit.canWrite(user) && models.supportsTools?.(selection)) {
           tools.push(
             memoryTool({
@@ -1868,9 +2024,11 @@ export function createAppServer(deps: AppDependencies) {
             instructions: agent?.instructions,
             summary: input.summary,
             ...(remembered.length ? { memories: remembered } : {}),
+            // Instructions personnalisées (qui je suis, comment me répondre).
+            ...(profile ? { profile } : {}),
             ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: deps.agentMaxTokens } : {}),
-            // Réglages de l'agent (créativité, longueur), plafonnés par chaque fournisseur.
-            ...(agent && Object.keys(generationOf(agent.parameters)).length ? { generation: generationOf(agent.parameters) } : {}),
+            // Réglages (créativité, longueur), plafonnés par chaque fournisseur.
+            ...(Object.keys(generation).length ? { generation } : {}),
             ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}),
           },
           {
@@ -1924,6 +2082,7 @@ export function createAppServer(deps: AppDependencies) {
           model: result.model,
           partial: false,
           steps: result.steps ?? 0,
+          truncated: result.truncated === true,
         });
         // Fichiers produits par le code : rattachés à la réponse enregistrée.
         const fileIds = generatedFileIds(result.turns ?? []);
@@ -2523,7 +2682,11 @@ export function createAppServer(deps: AppDependencies) {
       if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
 
       const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
-      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      // Comparer : la même question, posée à un autre modèle (même agent, mêmes consignes).
+      const body = z.object({ model: modelSelectionSchema.optional() }).strict().safeParse(request.body ?? {});
+      if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+      const compared = body.data.model;
+      if (compared && !(await isModelPermitted(user, compared))) return reply.code(400).send({ error: "Invalid request" });
 
       const loaded = await loadConversation(request, reply, user, params.data.id);
       if (!loaded) return reply;
@@ -2535,10 +2698,23 @@ export function createAppServer(deps: AppDependencies) {
       if (last?.role !== "assistant" || question?.role !== "user") {
         return reply.code(400).send({ error: "Invalid request" });
       }
+      // Comparaison demandée avec un modèle externe sur une conversation locale à vie :
+      // refusée plutôt que remplacée en silence par le modèle local.
+      const external = (selection: ModelSelection) => !["local", "echo"].includes(models.providerFor(selection));
+      const denyCompare = async () => {
+        await kit.record(request, user, { eventType: "conversation.compare_denied", outcome: "denied", targetType: "conversation", targetId: params.data.id, details: { reason: "local_only" } });
+        return reply.code(409).send({ error: "Local model required", reason: "local_only" });
+      };
+      if (compared && loaded.conversation.sensitive && external(compared)) return denyCompare();
+      if (compared) loaded.selection = compared;
       const guarded = await sensitiveGuard(request, reply, user, loaded, [question.content]);
       if (!guarded) return reply;
+      // Donnée sensible détectée à l'instant : même règle.
+      if (compared && guarded.selection !== compared) return denyCompare();
       loaded.selection = guarded.selection;
       const confidentialBases = guarded.sensitive || (await activeBases(user, loaded.conversation, agent)).some((base) => base.confidential);
+      // Base confidentielle (agent ou projet) : même règle, refusée avant de lancer la réponse.
+      if (compared && confidentialBases && external(compared)) return denyCompare();
       const { selection } = await routedSelection(user, agent, loaded.selection, question.content, question.attachments?.length ?? 0, confidentialBases);
       loaded.selection = selection;
 
@@ -2579,7 +2755,66 @@ export function createAppServer(deps: AppDependencies) {
           provider: admitted.provider,
           role: user.role,
           ...(plan.mode === "inline" ? { sources: citationsOf(plan.passages) } : {}),
-          details: { attachments: attachmentIds.length, passages: knowledgeDetail(plan) },
+          details: { attachments: attachmentIds.length, passages: knowledgeDetail(plan), ...(compared ? { compared: true } : {}) },
+        },
+      });
+    });
+
+    /**
+     * Continuer une réponse inachevée (longueur maximale, arrêt) : le modèle reprend
+     * là où le texte s'arrête ; la suite s'ajoute au même message. Mêmes contrôles
+     * qu'une régénération (quota, donnée sensible, modèle local à vie).
+     */
+    api.post("/conversations/:id/continue", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+
+      if (!(await messageLimit(request, reply))) return reply;
+      if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+
+      const params = z.object({ id: conversationIdSchema }).safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+
+      const loaded = await loadConversation(request, reply, user, params.data.id);
+      if (!loaded) return reply;
+      const { history, agent } = loaded;
+
+      // Seule la dernière réponse, et seulement si elle est inachevée.
+      const last = history.at(-1);
+      const question = history.at(-2);
+      if (last?.role !== "assistant" || !last.incomplete || question?.role !== "user") {
+        return reply.code(400).send({ error: "Invalid request" });
+      }
+      const guarded = await sensitiveGuard(request, reply, user, loaded, [question.content]);
+      if (!guarded) return reply;
+      loaded.selection = guarded.selection;
+
+      if (await runs.active(user, params.data.id)) return reply.code(409).send({ error: "Run in progress" });
+      const admitted = await admitGeneration(request, reply, user, loaded.selection);
+      if (!admitted) return reply;
+
+      // Pas de nouvelle recherche : le début de la réponse a déjà ses sources.
+      const plan: KnowledgePlan = { mode: "none" };
+      const { history: context, summary } = planContext(history, await summaries.get(user, params.data.id));
+      const files = await modelFiles(user, params.data.id, context, []);
+
+      return startRun({
+        request,
+        reply,
+        user,
+        conversationId: params.data.id,
+        input: { ...buildModelInput(context, { content: CONTINUE_INSTRUCTION, attachmentIds: [] }, files), summary },
+        plan,
+        run: {
+          kind: "continue",
+          content: question.content,
+          attachmentIds: [],
+          previousAssistantId: last.id,
+          agentId: agent?.id ?? null,
+          selection: loaded.selection,
+          provider: admitted.provider,
+          role: user.role,
+          details: { continued: true },
         },
       });
     });
@@ -2655,17 +2890,31 @@ export function createAppServer(deps: AppDependencies) {
       // Spécialistes consultables : agents de l'organisation, jamais lui-même (vérifié aussi à l'exécution).
       const existingId = (request.params as { id?: string } | undefined)?.id;
       const known = tools.includes("delegate") ? new Set((await store.list(user)).map((item) => item.id)) : new Set<string>();
+      // Compétences : celles que l'utilisateur voit, ou déjà confiées à l'agent.
+      // Sans liste envoyée, celles déjà confiées comptent (changer de modèle ne les contourne pas).
+      const attached = existingId ? new Map((await skillStore.forAgent(user, existingId)).map((skill) => [skill.id, skill.confidential])) : new Map<string, boolean>();
+      let skills: string[] | undefined;
+      let confidentialSkill = [...attached.values()].some(Boolean);
+      if (parsed.data.skills) {
+        const visible = new Map((await skillStore.list(user)).map((skill) => [skill.id, skill.confidential]));
+        skills = parsed.data.skills.filter((id) => visible.has(id) || attached.has(id));
+        confidentialSkill = skills.some((id) => visible.get(id) || attached.get(id));
+      }
+      const { skills: _requested, ...profile } = parsed.data;
       return {
-        ...parsed.data,
+        ...profile,
         tools,
         mcpServers: parsed.data.mcpServers.filter((id) => approved.has(id)),
         delegates: parsed.data.delegates.filter((id) => known.has(id) && id !== existingId),
+        ...(skills ? { skills } : {}),
+        confidentialSkill,
       };
     }
 
     const view = (user: AuthenticatedUser, agent: Agent) => ({
       ...agent,
-      canEdit: canManageAgent(user, agent),
+      canEdit: canEditAgent(user, agent),
+      canShare: canManageAgent(user, agent),
     });
 
     const auditAgent = (request: FastifyRequest, user: AuthenticatedUser, eventType: string, agent: Pick<Agent, "id"> & Partial<Agent>) =>
@@ -2696,8 +2945,11 @@ export function createAppServer(deps: AppDependencies) {
       kit.privateResponse(reply);
       if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
 
-      const input = await parseAgentInput(request, user);
-      if (!input) return reply.code(400).send({ error: "Invalid request" });
+      const parsedInput = await parseAgentInput(request, user);
+      if (!parsedInput) return reply.code(400).send({ error: "Invalid request" });
+      const { confidentialSkill, ...input } = parsedInput;
+      // Compétence confidentielle : l'agent reste sur un modèle local.
+      if (confidentialSkill && input.provider !== "local") return reply.code(409).send({ error: "Local model required", reason: "agent_requires_local" });
 
       const agent = await store.create(user, input);
       await deps.quality?.addVersion(user, agent.id, { instructions: agent.instructions, source: "edit" });
@@ -2714,10 +2966,12 @@ export function createAppServer(deps: AppDependencies) {
 
       const existing = await store.get(user, params.data.id);
       if (!existing) return reply.code(404).send({ error: "Not found" });
-      if (!canManageAgent(user, existing)) return kit.denyWrite(request, reply, user);
+      if (!canEditAgent(user, existing)) return kit.denyWrite(request, reply, user);
 
-      const input = await parseAgentInput(request, user);
-      if (!input) return reply.code(400).send({ error: "Invalid request" });
+      const parsedInput = await parseAgentInput(request, user);
+      if (!parsedInput) return reply.code(400).send({ error: "Invalid request" });
+      const { confidentialSkill, ...input } = parsedInput;
+      if (confidentialSkill && input.provider !== "local") return reply.code(409).send({ error: "Local model required", reason: "agent_requires_local" });
 
       // Base confidentielle : l'agent ne peut pas passer à un modèle hors plateforme.
       if (input.provider !== "local" && deps.knowledge) {
@@ -2750,7 +3004,7 @@ export function createAppServer(deps: AppDependencies) {
       return reply.code(204).send();
     });
 
-    if (deps.quality) registerQualityRoutes(api, kit, { store: deps.quality, agents: store, canManage: canManageAgent, models: qualityModels });
+    if (deps.quality) registerQualityRoutes(api, kit, { store: deps.quality, agents: store, canManage: canEditAgent, models: qualityModels });
   }
 
   function registerLoginRoutes(api: FastifyInstance, login: LoginFlow) {
@@ -3063,6 +3317,9 @@ export function createProductionServer() {
     generatedFiles: new PostgresGeneratedFileStore(pool, keyring),
     shares: new PostgresShareStore(pool, keyring),
     prompts: new PostgresPromptStore(pool, keyring),
+    presets: new PostgresPresetStore(pool, keyring),
+    sharing: new PostgresSharingStore(pool, keyring),
+    skills: new PostgresSkillStore(pool, keyring),
     ...(ocr ? { ocr } : {}),
     memories: new PostgresUserMemoryStore(pool, keyring),
     agentRatings: new PostgresAgentRatingStore(pool),
@@ -3091,7 +3348,7 @@ export function createProductionServer() {
     ...(scanner ? { scanner } : {}),
     metrics,
     members: new PostgresMemberStore(pool),
-    preferences: new PostgresPreferencesStore(pool),
+    preferences: new PostgresPreferencesStore(pool, keyring),
     projects: new PostgresProjectStore(pool, keyring),
     attachments: new PostgresAttachmentStore(pool, keyring),
     appOrigin: config.appOrigin,

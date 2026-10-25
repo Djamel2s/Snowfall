@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
 import { PostgresConversationStore } from "../conversations/store.js";
+import { PostgresSharingStore } from "../sharing/store.js";
 import { PostgresAgentRatingStore } from "./ratings.js";
 import { PostgresAgentStore } from "./store.js";
 
@@ -16,6 +17,7 @@ describe("Taux de 👍 par agent : PostgreSQL (agrégat, seuil, isolation)", { s
   let owner: Pool;
   let conversations: PostgresConversationStore;
   let agents: PostgresAgentStore;
+  let keyring: OrganizationKeyring;
   let ratings: PostgresAgentRatingStore;
   const [org, other] = [randomUUID(), randomUUID()];
   const users = Array.from({ length: 6 }, () => randomUUID());
@@ -25,7 +27,7 @@ describe("Taux de 👍 par agent : PostgreSQL (agrégat, seuil, isolation)", { s
   before(async () => {
     pool = new Pool({ connectionString: appUrl });
     owner = new Pool({ connectionString: ownerUrl });
-    const keyring = new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32)));
+    keyring = new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32)));
     conversations = new PostgresConversationStore(pool, keyring);
     agents = new PostgresAgentStore(pool, keyring);
     ratings = new PostgresAgentRatingStore(pool);
@@ -52,6 +54,8 @@ describe("Taux de 👍 par agent : PostgreSQL (agrégat, seuil, isolation)", { s
 
   it("absent sous 5 personnes ; ensuite seul l'agrégat de l'organisation, jamais un commentaire", async () => {
     const agent = await agents.create(tenant(users[0]!), { name: "Juriste", avatar: { kind: "alien", color: "mint", eyes: "sleepy", accessory: "none" }, instructions: "", provider: "mistral", model: "mistral-small-latest" });
+    // Un agent naît privé : partagé à l'organisation pour que les collègues l'utilisent.
+    await new PostgresSharingStore(pool, keyring).setGrants(tenant(users[0]!), "agent", agent.id, [{ principal: { type: "organization" }, permission: "view" }]);
     const votes = [];
     for (const [index, userId] of users.slice(0, 4).entries()) votes.push(await rate(userId, agent.id, index === 3 ? "down" : "up"));
     assert.deepEqual(await ratings.ratings(tenant(users[0]!)), {});

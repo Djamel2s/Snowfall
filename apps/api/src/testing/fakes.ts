@@ -106,7 +106,6 @@ export function createFakeConversationStore(): ConversationStore & {
       const conversation = conversations.get(id)!;
       if (changes.selection) {
         if (changes.selection.agentId && changes.selection.model) throw new Error("INVALID_SELECTION");
-        if (messages.get(id)?.length) throw new Error("CONVERSATION_STARTED");
         conversation.agentId = changes.selection.agentId;
         conversation.model = changes.selection.model;
       }
@@ -114,6 +113,18 @@ export function createFakeConversationStore(): ConversationStore & {
       if (changes.title !== undefined) conversation.title = changes.title;
       if (changes.projectId && conversation.temporary) throw new Error("PROJECT_NOT_FOUND");
       if (changes.projectId !== undefined) conversation.projectId = changes.projectId;
+      if (changes.settings) {
+        if (Object.keys(changes.settings).length) conversation.settings = { ...changes.settings };
+        else delete conversation.settings;
+      }
+      if (changes.archived !== undefined) {
+        if (changes.archived) conversation.archived = true;
+        else delete conversation.archived;
+      }
+      if (changes.tags !== undefined) {
+        if (changes.tags.length) conversation.tags = [...changes.tags];
+        else delete conversation.tags;
+      }
       return summary(conversation);
     },
 
@@ -129,6 +140,29 @@ export function createFakeConversationStore(): ConversationStore & {
     },
 
     getMessages: async (owner, id) => (owns(owner, id) ? view(id) : null),
+
+    fork: async (owner, id, messageId) => {
+      if (!owns(owner, id)) return null;
+      const source = conversations.get(id)!;
+      if (source.temporary) throw new Error("TEMPORARY");
+      const path = view(id);
+      const end = path.findIndex((item) => item.id === messageId);
+      if (end === -1) return null;
+      const at = now();
+      const { owner: _owner, expiresAt: _expires, archived: _archived, tags: _tags, ...rest } = source;
+      const copy: FakeConversation = { ...structuredClone(rest), owner, id: crypto.randomUUID(), createdAt: at, updatedAt: at };
+      conversations.set(copy.id, copy);
+      let parentId: string | null = null;
+      const list: (StoredMessage & { parentId: string | null })[] = [];
+      for (const { branch: _branch, feedback: _feedback, attachments: _files, ...item } of path.slice(0, end + 1)) {
+        const entry: StoredMessage & { parentId: string | null } = { ...structuredClone(item), id: crypto.randomUUID(), parentId };
+        list.push(entry);
+        parentId = entry.id;
+      }
+      messages.set(copy.id, list);
+      leaves.set(copy.id, parentId);
+      return summary(copy);
+    },
 
     importConversation: async (owner, title, imported) => {
       const at = now();
@@ -184,6 +218,8 @@ export function createFakeConversationStore(): ConversationStore & {
       if (attached.length) userMessage.attachments = attached.map((file) => ({ ...file, messageId: userMessage.id }));
       const assistantMessage: StoredMessage & { parentId: string | null } = message("assistant", assistantContent, userMessage.id);
       if (options.sources?.length) assistantMessage.sources = options.sources;
+      if (options.author) assistantMessage.author = options.author;
+      if (options.incomplete) assistantMessage.incomplete = true;
       list.push(userMessage, assistantMessage);
       leaves.set(id, assistantMessage.id);
       if (options.runId) runs.set(assistantMessage.id, options.runId);
@@ -193,18 +229,32 @@ export function createFakeConversationStore(): ConversationStore & {
       return { userMessage: user, assistantMessage: assistant };
     },
 
-    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources, runId) => {
+    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources, runId, author, incomplete) => {
       if (!owns(owner, id)) return null;
       const list = messages.get(id)!;
       const previous = list.find((item) => item.id === previousAssistantId && item.role === "assistant");
       if (leaf(id) !== previousAssistantId || !previous) return null;
       const replacement: StoredMessage & { parentId: string | null } = message("assistant", content, previous.parentId);
       if (sources?.length) replacement.sources = sources;
+      if (author) replacement.author = author;
+      if (incomplete) replacement.incomplete = true;
       list.push(replacement);
       leaves.set(id, replacement.id);
       if (runId) runs.set(replacement.id, runId);
       const { parentId: _p, ...stored } = replacement;
       return stored;
+    },
+
+    extendAssistant: async (owner, id, messageId, addition, incomplete) => {
+      if (!owns(owner, id) || leaf(id) !== messageId) return null;
+      const target = messages.get(id)!.find((item) => item.id === messageId && item.role === "assistant");
+      if (!target) return null;
+      target.content += addition;
+      if (incomplete) target.incomplete = true;
+      else delete target.incomplete;
+      conversations.get(id)!.updatedAt = now();
+      const { parentId: _p, ...stored } = target;
+      return { ...stored };
     },
   };
 }

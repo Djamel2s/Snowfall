@@ -187,6 +187,7 @@ export function maskRequest(request: ChatRequest, pseudonymizer: Pseudonymizer):
     instructions: [NOTICE, request.instructions ? mask(request.instructions) : ""].filter(Boolean).join("\n\n"),
     ...(request.summary ? { summary: mask(request.summary) } : {}),
     ...(request.memories ? { memories: request.memories.map(mask) } : {}),
+    ...(request.profile ? { profile: mask(request.profile) } : {}),
     history: request.history.map((turn) => maskTurn(turn, pseudonymizer)),
     message: mask(request.message),
     ...(request.turns ? { turns: request.turns.map((turn) => maskTurn(turn, pseudonymizer)) } : {}),

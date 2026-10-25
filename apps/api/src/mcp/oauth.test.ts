@@ -53,3 +53,46 @@ describe("OAuth MCP : règles de sécurité", () => {
     assert.ok(Date.parse(tokens.expiresAt!) > Date.now());
   });
 });
+
+describe("OAuth MCP : enregistrement dynamique du client (RFC 7591)", () => {
+  const discovery = (server: Record<string, unknown>) => ({
+    "https://mcp.example/.well-known/oauth-protected-resource/mcp": { authorization_servers: ["https://auth.example"] },
+    "https://auth.example/.well-known/oauth-authorization-server": { issuer: "https://auth.example", authorization_endpoint: "https://auth.example/a", token_endpoint: "https://auth.example/t", code_challenge_methods_supported: ["S256"], ...server },
+  });
+
+  it("sans client fourni : client public enregistré, une seule adresse de retour (la nôtre)", async () => {
+    let sent: Record<string, unknown> | null = null;
+    const routes = discovery({ registration_endpoint: "https://auth.example/register" });
+    const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === "https://auth.example/register") {
+        sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ client_id: "dyn-123" }), { status: 201 });
+      }
+      const body = (routes as Record<string, unknown>)[url];
+      return new Response(JSON.stringify(body ?? {}), { status: body ? 200 : 404 });
+    }) as typeof fetch;
+    const config = await discoverOAuth("https://mcp.example/mcp", { scope: "read" }, { fetcher, redirectUri: "https://app.example/mcp/callback" });
+    assert.equal(config.clientId, "dyn-123");
+    assert.equal(config.clientSecret, undefined);
+    assert.deepEqual(sent!.redirect_uris, ["https://app.example/mcp/callback"]);
+    assert.equal(sent!.token_endpoint_auth_method, "none");
+  });
+
+  it("sans enregistrement possible : il faut créer une application chez l'éditeur ; adresse d'enregistrement douteuse refusée", async () => {
+    await assert.rejects(
+      discoverOAuth("https://mcp.example/mcp", {}, { fetcher: network(discovery({})), redirectUri: "https://app.example/mcp/callback" }),
+      (error: unknown) => error instanceof OAuthError && error.code === "registration_required",
+    );
+    await assert.rejects(
+      discoverOAuth("https://mcp.example/mcp", {}, { fetcher: network(discovery({ registration_endpoint: "http://auth.example/register" })), redirectUri: "https://app.example/mcp/callback" }),
+      (error: unknown) => error instanceof OAuthError && error.code === "registration_failed",
+    );
+    // Réponse sans identifiant : refusée.
+    const empty = network({ ...discovery({ registration_endpoint: "https://auth.example/register" }), "https://auth.example/register": {} });
+    await assert.rejects(discoverOAuth("https://mcp.example/mcp", {}, { fetcher: empty, redirectUri: "https://app.example/mcp/callback" }), OAuthError);
+    // Client fourni par l'administrateur : pas d'enregistrement.
+    const given = await discoverOAuth("https://mcp.example/mcp", { clientId: "admin-app" }, { fetcher: network(discovery({ registration_endpoint: "https://auth.example/register" })) });
+    assert.equal(given.clientId, "admin-app");
+  });
+});

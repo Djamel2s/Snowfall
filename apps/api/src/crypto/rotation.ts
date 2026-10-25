@@ -4,7 +4,7 @@ import { runAad } from "../agent/runs.js";
 import { profileAad } from "../agents/store.js";
 import { attachmentAad } from "../attachments/store.js";
 import { summaryAad } from "../conversations/compaction.js";
-import { feedbackAad, messageAad, messageSourcesAad, titleAad } from "../conversations/store.js";
+import { conversationFieldAad, feedbackAad, messageAad, messageSourcesAad, titleAad } from "../conversations/store.js";
 import type { TenantContext } from "../db/tenant.js";
 import { exampleAad, headAad } from "../decision/workshop.js";
 import { generatedFileAad } from "../files/generated.js";
@@ -13,10 +13,14 @@ import { tokenAad, verifierAad } from "../mcp/connections.js";
 import { mcpServerAad, type Field as McpField } from "../mcp/store.js";
 import { memoryAad } from "../memory/store.js";
 import { projectNameAad } from "../projects/store.js";
+import { presetAad } from "../presets/store.js";
 import { promptAad } from "../prompts/store.js";
 import { caseAad, versionAad } from "../quality/store.js";
 import { scheduleAad } from "../schedules/store.js";
 import { shareAad } from "../shares/store.js";
+import { groupAad } from "../sharing/store.js";
+import { skillAad, skillFileAad, skillVersionAad } from "../skills/store.js";
+import { instructionsAad } from "../workspace/preferences.js";
 import { keyVersionOf, type OrganizationKeyring } from "./keyring.js";
 
 // Inventaire de TOUTES les colonnes chiffrées par la clé d'organisation, avec
@@ -45,6 +49,7 @@ const s = (value: string | number | null | undefined) => String(value ?? "");
 export const ENCRYPTED_TABLES: EncryptedTable[] = [
   // ---- Organisation ------------------------------------------------------------
   { table: "agents", scope: "organization", keys: ["id"], fields: [{ column: "profile_enc", aad: (row, t) => profileAad(t.organizationId, s(row.id)) }] },
+  { table: "member_groups", scope: "organization", keys: ["id"], fields: [{ column: "name", aad: (row, t) => groupAad(t.organizationId, s(row.id)) }] },
   { table: "agent_versions", scope: "organization", keys: ["id"], fields: [{ column: "instructions_enc", aad: (row, t) => versionAad(t.organizationId, s(row.id)) }] },
   {
     table: "agent_eval_cases",
@@ -76,7 +81,22 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     ],
   },
   // ---- Données de chaque membre ---------------------------------------------------
-  { table: "conversations", scope: "user", keys: ["id"], fields: [{ column: "title", aad: (row, t) => titleAad(t, s(row.id)) }] },
+  {
+    table: "conversations",
+    scope: "user",
+    keys: ["id"],
+    fields: [
+      { column: "title", aad: (row, t) => titleAad(t, s(row.id)) },
+      { column: "instructions", aad: (row, t) => conversationFieldAad(t, s(row.id), "instructions") },
+      { column: "tags", aad: (row, t) => conversationFieldAad(t, s(row.id), "tags") },
+    ],
+  },
+  {
+    table: "conversation_presets",
+    scope: "user",
+    keys: ["id"],
+    fields: (["name", "instructions"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => presetAad(t, s(row.id), field) })),
+  },
   {
     table: "messages",
     scope: "user",
@@ -132,7 +152,26 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     keys: ["id"],
     fields: (["name", "content"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => promptAad(t, s(row.id), field) })),
   },
+  {
+    table: "skills",
+    scope: "user",
+    keys: ["id"],
+    fields: (["name", "description", "instructions"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => skillAad(t.organizationId, s(row.id), field) })),
+  },
+  {
+    table: "skill_files",
+    scope: "user",
+    keys: ["id"],
+    fields: (["name", "content"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => skillFileAad(t.organizationId, s(row.id), field) })),
+  },
+  {
+    table: "skill_versions",
+    scope: "user",
+    keys: ["id"],
+    fields: (["description", "instructions"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => skillVersionAad(t.organizationId, s(row.id), field) })),
+  },
   { table: "user_memories", scope: "user", keys: ["id"], fields: [{ column: "content", aad: (row, t) => memoryAad(t, s(row.id)) }] },
+  { table: "user_preferences", scope: "user", keys: ["user_id"], fields: [{ column: "instructions_enc", aad: (_row, t) => instructionsAad(t) }] },
   {
     table: "mcp_user_tokens",
     scope: "user",

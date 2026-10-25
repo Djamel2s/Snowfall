@@ -28,7 +28,8 @@ const privileges: Record<string, string[]> = {
   organization_keys: ["SELECT", "INSERT"],
   agents: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   conversations: ["SELECT", "INSERT", "UPDATE", "DELETE"],
-  messages: ["SELECT", "INSERT", "DELETE"],
+  // Mise à jour limitée à « Continuer » : texte (chiffré) et drapeau « inachevée ».
+  messages: ["SELECT", "INSERT", "DELETE", "UPDATE (content, incomplete)"],
   sessions: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   audit_events: ["INSERT"],
   organization_settings: ["SELECT", "INSERT", "UPDATE"],
@@ -36,7 +37,17 @@ const privileges: Record<string, string[]> = {
   tool_usage: ["SELECT", "INSERT", "UPDATE"],
   message_feedback: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   conversation_shares: ["SELECT", "INSERT", "DELETE"],
-  prompts: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  // Mise à jour : contenu seulement (un éditeur autorisé ne change jamais l'auteur).
+  prompts: ["SELECT", "INSERT", "UPDATE (name, content, updated_at)", "DELETE"],
+  member_groups: ["SELECT", "INSERT", "UPDATE (name)", "DELETE"],
+  member_group_members: ["SELECT", "INSERT", "DELETE"],
+  resource_grants: ["SELECT", "INSERT", "DELETE"],
+  // Compétences : l'auteur n'est jamais modifiable ; fichiers et versions en ajout (rechiffrés en place par la rotation).
+  skills: ["SELECT", "INSERT", "UPDATE (name, description, instructions, confidential, version, updated_at)", "DELETE"],
+  skill_files: ["SELECT", "INSERT", "UPDATE (name, content)", "DELETE"],
+  skill_versions: ["SELECT", "INSERT", "UPDATE (description, instructions)"],
+  agent_skills: ["SELECT", "INSERT", "DELETE"],
+  conversation_presets: ["SELECT", "INSERT", "DELETE"],
   user_memories: ["SELECT", "INSERT", "DELETE"],
   projects: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attachments: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -78,6 +89,9 @@ const functions = [
   "snowfall_expired_temporary()",
   "snowfall_agent_ratings()",
   "snowfall_claim_schedules(interval, integer)",
+  // Contrôles de droits appelés par la RLS (SECURITY INVOKER : la RLS s'applique dedans).
+  "snowfall_is_admin()",
+  "snowfall_access(text, uuid)",
 ];
 
 async function main() {

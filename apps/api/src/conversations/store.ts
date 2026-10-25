@@ -24,6 +24,25 @@ export type MessageSource = {
 /** Bases de connaissances consultées par la conversation. */
 export type KnowledgeToggles = { agent: boolean; project: boolean };
 
+/** Réglages propres à une conversation : priment sur ceux de l'agent. */
+export const creativities = ["precise", "balanced", "creative"] as const;
+export const lengths = ["concise", "complete"] as const;
+export type ConversationSettings = {
+  creativity?: (typeof creativities)[number];
+  length?: (typeof lengths)[number];
+  /** Consignes pour cette conversation seulement (chiffrées). */
+  instructions?: string;
+};
+
+/** Réglages sans champ vide (une instruction vide = pas d'instruction). */
+export function settingsOf(input: { [K in keyof ConversationSettings]?: ConversationSettings[K] | undefined }): ConversationSettings {
+  return {
+    ...(input.creativity ? { creativity: input.creativity } : {}),
+    ...(input.length ? { length: input.length } : {}),
+    ...(input.instructions?.trim() ? { instructions: input.instructions.trim() } : {}),
+  };
+}
+
 /** Qui répond : un agent, un modèle choisi, ou (les deux à null) le modèle par défaut. */
 export type ConversationSelection = { agentId: string | null; model: ModelSelection | null };
 
@@ -46,6 +65,12 @@ export type ConversationSummary = {
   temporary?: true;
   /** Présent (true) dès qu'une donnée sensible y a été détectée : modèle local à jamais. */
   sensitive?: true;
+  /** Présent seulement si au moins un réglage est posé. */
+  settings?: ConversationSettings;
+  /** Présent (true) pour une conversation archivée. */
+  archived?: true;
+  /** Présent seulement s'il y a des étiquettes. */
+  tags?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -67,6 +92,10 @@ export type StoredMessage = {
   branch?: BranchInfo;
   /** Retour de l'utilisateur sur une réponse. */
   feedback?: MessageFeedback;
+  /** Auteur d'une réponse : « agent:<id> » ou « model:<fournisseur>:<modèle> ». */
+  author?: string;
+  /** Réponse inachevée (coupée par la longueur maximale, ou arrêtée) : peut être continuée. */
+  incomplete?: true;
 };
 
 export type MessageFeedback = { rating: "up" | "down"; comment?: string };
@@ -90,6 +119,10 @@ export type ExchangeOptions = {
   sources?: MessageSource[];
   /** Run qui a produit la réponse (retour 👍👎 → trace). */
   runId?: string;
+  /** Auteur de la réponse (agent ou modèle de ce tour). */
+  author?: string;
+  /** Réponse inachevée. */
+  incomplete?: boolean;
 };
 
 export interface ConversationStore {
@@ -107,7 +140,7 @@ export interface ConversationStore {
   expiredTemporary?(): Promise<ExpiredConversation[]>;
   /** Donnée sensible détectée : la conversation reste sur un modèle local (définitif). */
   markSensitive(owner: ConversationOwner, conversationId: string): Promise<void>;
-  /** Changer l'agent ou le modèle n'est possible que tant que la conversation est vide. */
+  /** Agent ou modèle : changeable à tout moment (le contrôle « local à vie » est fait par la route). */
   update(
     owner: ConversationOwner,
     conversationId: string,
@@ -116,6 +149,10 @@ export interface ConversationStore {
       projectId?: string | null;
       selection?: ConversationSelection;
       knowledge?: Partial<KnowledgeToggles>;
+      /** Remplace tous les réglages (objet vide : réglages de l'agent). */
+      settings?: ConversationSettings;
+      archived?: boolean;
+      tags?: string[];
     },
   ): Promise<ConversationSummary | null>;
   search(owner: ConversationOwner, query: string): Promise<SearchHit[]>;
@@ -143,6 +180,13 @@ export interface ConversationStore {
   ): Promise<{ runId: string | null } | null>;
   /** Conversation importée (autre service) : messages chaînés dans l'ordre, une seule branche. */
   importConversation(owner: ConversationOwner, title: string, messages: { role: MessageRole; content: string }[]): Promise<ConversationSummary>;
+  /**
+   * Bifurquer : nouvelle conversation reprenant la branche affichée jusqu'à ce
+   * message (inclus), avec le même agent ou modèle, projet et réglages. Une
+   * conversation sensible le reste. null : conversation ou message introuvable
+   * (hors de la branche affichée). Les pièces jointes restent dans l'originale.
+   */
+  fork(owner: ConversationOwner, conversationId: string, messageId: string): Promise<ConversationSummary | null>;
   /** Affiche une autre version d'un tour : la branche suit sa suite la plus récente. */
   selectBranch(owner: ConversationOwner, conversationId: string, messageId: string): Promise<boolean>;
   /** Régénération : nouvelle version de la dernière réponse (sœur), si elle n'a pas changé entre-temps. */
@@ -153,6 +197,19 @@ export interface ConversationStore {
     content: string,
     sources?: MessageSource[],
     runId?: string,
+    author?: string,
+    incomplete?: boolean,
+  ): Promise<StoredMessage | null>;
+  /**
+   * Continuer : la suite s'ajoute à la dernière réponse (même message), si elle
+   * est toujours la fin de la branche affichée.
+   */
+  extendAssistant(
+    owner: ConversationOwner,
+    conversationId: string,
+    messageId: string,
+    addition: string,
+    incomplete: boolean,
   ): Promise<StoredMessage | null>;
 }
 
@@ -163,6 +220,10 @@ export function feedbackAad(owner: ConversationOwner, messageId: string) {
 // L'AAD lie chaque chiffré à son propriétaire et à sa ligne.
 export function titleAad(owner: ConversationOwner, conversationId: string) {
   return `conversation-title:${owner.organizationId}:${owner.userId}:${conversationId}`;
+}
+
+export function conversationFieldAad(owner: ConversationOwner, conversationId: string, field: "instructions" | "tags") {
+  return `conversation-${field}:${owner.organizationId}:${owner.userId}:${conversationId}`;
 }
 
 export function messageAad(
@@ -189,6 +250,11 @@ type ConversationRow = {
   projectId: string | null;
   temporary: boolean;
   sensitive: boolean;
+  creativity: ConversationSettings["creativity"] | null;
+  length: ConversationSettings["length"] | null;
+  instructions: string | null;
+  archived: boolean;
+  tags: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -196,7 +262,8 @@ type ConversationRow = {
 const SUMMARY_COLUMNS = `id, title, agent_id AS "agentId", project_id AS "projectId",
   model_provider AS "modelProvider", model_id AS "modelId",
   use_agent_knowledge AS "useAgentKnowledge", use_project_knowledge AS "useProjectKnowledge",
-  temporary, sensitive, created_at AS "createdAt", updated_at AS "updatedAt"`;
+  temporary, sensitive, creativity, length, instructions, archived, tags,
+  created_at AS "createdAt", updated_at AS "updatedAt"`;
 
 const modelOf = (row: ConversationRow): ModelSelection | null =>
   row.modelProvider && row.modelId ? { provider: row.modelProvider, model: row.modelId } : null;
@@ -212,6 +279,8 @@ type MessageRow = {
   content: string;
   sources?: string | null;
   createdAt: string;
+  author?: string | null;
+  incomplete?: boolean;
 };
 
 const SEARCH_MAX_RESULTS = 30;
@@ -252,6 +321,7 @@ export class PostgresConversationStore implements ConversationStore {
       projectId: row.projectId,
       ...(row.temporary ? { temporary: true as const } : {}),
       ...(row.sensitive ? { sensitive: true as const } : {}),
+      ...(await this.decryptFiling(client, owner, row)),
       title: row.title === null
         ? DEFAULT_CONVERSATION_TITLE
         : await this.keyring.decrypt(
@@ -265,15 +335,36 @@ export class PostgresConversationStore implements ConversationStore {
     };
   }
 
+  /** Réglages, archive et étiquettes : seuls les champs posés apparaissent. */
+  private async decryptFiling(client: PoolClient, owner: ConversationOwner, row: ConversationRow) {
+    const settings: ConversationSettings = {
+      ...(row.creativity ? { creativity: row.creativity } : {}),
+      ...(row.length ? { length: row.length } : {}),
+      ...(row.instructions
+        ? { instructions: await this.keyring.decrypt(client, owner.organizationId, row.instructions, conversationFieldAad(owner, row.id, "instructions")) }
+        : {}),
+    };
+    const tags = row.tags
+      ? (JSON.parse(await this.keyring.decrypt(client, owner.organizationId, row.tags, conversationFieldAad(owner, row.id, "tags"))) as string[])
+      : [];
+    return {
+      ...(Object.keys(settings).length ? { settings } : {}),
+      ...(row.archived ? { archived: true as const } : {}),
+      ...(tags.length ? { tags } : {}),
+    };
+  }
+
   private async decryptMessage(
     client: PoolClient,
     owner: ConversationOwner,
     conversationId: string,
     row: MessageRow,
   ): Promise<StoredMessage> {
-    const { sources, ...rest } = row;
+    const { sources, author, incomplete, ...rest } = row;
     const message: StoredMessage = {
       ...rest,
+      ...(author ? { author } : {}),
+      ...(incomplete ? { incomplete: true as const } : {}),
       content: await this.keyring.decrypt(
         client,
         owner.organizationId,
@@ -412,6 +503,9 @@ export class PostgresConversationStore implements ConversationStore {
       projectId?: string | null;
       selection?: ConversationSelection;
       knowledge?: Partial<KnowledgeToggles>;
+      settings?: ConversationSettings;
+      archived?: boolean;
+      tags?: string[];
     },
   ) {
     const { selection } = changes;
@@ -427,11 +521,6 @@ export class PostgresConversationStore implements ConversationStore {
           [conversationId, owner.userId, owner.organizationId],
         );
         if (!current.rowCount) return null;
-        const started = await client.query(
-          "SELECT 1 FROM messages WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3 LIMIT 1",
-          [conversationId, owner.userId, owner.organizationId],
-        );
-        if (started.rowCount) throw new Error("CONVERSATION_STARTED");
         if (selection.agentId) {
           const agent = await client.query("SELECT 1 FROM agents WHERE id = $1", [selection.agentId]);
           if (!agent.rowCount) throw new Error("AGENT_NOT_FOUND");
@@ -478,6 +567,29 @@ export class PostgresConversationStore implements ConversationStore {
       if (changes.knowledge?.project !== undefined) {
         values.push(changes.knowledge.project);
         sets.push(`use_project_knowledge = $${values.length}`);
+      }
+      if (changes.settings) {
+        const { creativity, length, instructions } = changes.settings;
+        values.push(
+          creativity ?? null,
+          length ?? null,
+          instructions
+            ? await this.keyring.encrypt(client, owner.organizationId, instructions, conversationFieldAad(owner, conversationId, "instructions"))
+            : null,
+        );
+        sets.push(`creativity = $${values.length - 2}`, `length = $${values.length - 1}`, `instructions = $${values.length}`);
+      }
+      if (changes.archived !== undefined) {
+        values.push(changes.archived);
+        sets.push(`archived = $${values.length}`);
+      }
+      if (changes.tags !== undefined) {
+        values.push(
+          changes.tags.length
+            ? await this.keyring.encrypt(client, owner.organizationId, JSON.stringify(changes.tags), conversationFieldAad(owner, conversationId, "tags"))
+            : null,
+        );
+        sets.push(`tags = $${values.length}`);
       }
       if (sets.length === 0) return null;
 
@@ -554,7 +666,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!exists.rowCount) return null;
 
       const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
-        `SELECT id, role, content, sources, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
+        `SELECT id, role, content, sources, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
          FROM messages
          WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
          ORDER BY created_at ASC, id ASC`,
@@ -627,6 +739,8 @@ export class PostgresConversationStore implements ConversationStore {
     sources: MessageSource[] | undefined,
     parentId: string | null,
     runId?: string,
+    author?: string,
+    incomplete = false,
   ) {
     const id = randomUUID();
     const encrypted = await this.keyring.encrypt(
@@ -640,13 +754,15 @@ export class PostgresConversationStore implements ConversationStore {
       : null;
     const result = await client.query<{ id: string; role: MessageRole; createdAt: string }>(
       `INSERT INTO messages
-         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, run_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, run_id, author, incomplete, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, clock_timestamp())
        RETURNING id, role, created_at AS "createdAt"`,
-      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId, runId ?? null],
+      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId, runId ?? null, author ?? null, incomplete],
     );
     const message: StoredMessage = { ...result.rows[0]!, content };
     if (sources?.length) message.sources = sources;
+    if (author) message.author = author;
+    if (incomplete) message.incomplete = true;
     return message;
   }
 
@@ -683,7 +799,7 @@ export class PostgresConversationStore implements ConversationStore {
       }
 
       const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent, undefined, parentId);
-      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id, options.runId);
+      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id, options.runId, options.author, options.incomplete);
 
       if (options.attachmentIds?.length) {
         const linked = await client.query<AttachmentMeta & { name: string }>(
@@ -737,6 +853,80 @@ export class PostgresConversationStore implements ConversationStore {
     );
     const nodes = await this.nodes(client, owner, conversationId);
     return activePath(nodes, conversation.rows[0]?.leaf ?? null).path.at(-1) ?? null;
+  }
+
+  async fork(owner: ConversationOwner, conversationId: string, messageId: string) {
+    return withTenant(this.pool, owner, async (client) => {
+      const source = (
+        await client.query<ConversationRow & { leaf: string | null }>(
+          `SELECT ${SUMMARY_COLUMNS}, current_leaf_id AS leaf FROM conversations
+           WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
+          [conversationId, owner.userId, owner.organizationId],
+        )
+      ).rows[0];
+      if (!source) return null;
+      // Une conversation temporaire disparaît en 24 h : elle ne se recopie pas.
+      if (source.temporary) throw new Error("TEMPORARY");
+
+      const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
+        `SELECT id, role, content, sources, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
+         FROM messages
+         WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
+         ORDER BY created_at ASC, id ASC`,
+        [conversationId, owner.userId, owner.organizationId],
+      );
+      const { path } = activePath(all.rows.map((row) => ({ id: row.id, parentId: row.parentId, createdAt: row.sortKey })), source.leaf);
+      const end = path.indexOf(messageId);
+      if (end === -1) return null;
+      const rows = new Map(all.rows.map((row) => [row.id, row]));
+      const copied: StoredMessage[] = [];
+      for (const id of path.slice(0, end + 1)) {
+        const { parentId: _parent, sortKey: _key, ...row } = rows.get(id)!;
+        copied.push(await this.decryptMessage(client, owner, conversationId, row));
+      }
+      const original = await this.decryptTitle(client, owner, source);
+
+      // Nouvelle conversation : tout est rechiffré sous ses propres identifiants (AAD).
+      const id = randomUUID();
+      const seal = (text: string, aad: string) => this.keyring.encrypt(client, owner.organizationId, text, aad);
+      const inserted = await client.query<ConversationRow>(
+        `INSERT INTO conversations
+           (id, user_id, organization_id, title, agent_id, project_id, model_provider, model_id,
+            use_agent_knowledge, use_project_knowledge, sensitive, creativity, length, instructions)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+         WHERE EXISTS (SELECT 1 FROM organization_members WHERE user_id = $2 AND organization_id = $3)
+         RETURNING ${SUMMARY_COLUMNS}`,
+        [
+          id,
+          owner.userId,
+          owner.organizationId,
+          await seal(original.title, titleAad(owner, id)),
+          source.agentId,
+          source.projectId,
+          source.modelProvider,
+          source.modelId,
+          source.useAgentKnowledge,
+          source.useProjectKnowledge,
+          source.sensitive,
+          source.creativity,
+          source.length,
+          original.settings?.instructions ? await seal(original.settings.instructions, conversationFieldAad(owner, id, "instructions")) : null,
+        ],
+      );
+      if (!inserted.rowCount) throw new Error("MEMBERSHIP_REQUIRED");
+
+      let parentId: string | null = null;
+      for (const message of copied) {
+        parentId = (await this.insertMessage(client, owner, id, message.role, message.content, message.sources, parentId, undefined, message.author, message.incomplete === true)).id;
+      }
+      const row = (
+        await client.query<ConversationRow>(
+          `UPDATE conversations SET current_leaf_id = $4 WHERE id = $1 AND user_id = $2 AND organization_id = $3 RETURNING ${SUMMARY_COLUMNS}`,
+          [id, owner.userId, owner.organizationId, parentId],
+        )
+      ).rows[0]!;
+      return this.decryptTitle(client, owner, row);
+    });
   }
 
   async importConversation(owner: ConversationOwner, title: string, messages: { role: MessageRole; content: string }[]) {
@@ -809,6 +999,8 @@ export class PostgresConversationStore implements ConversationStore {
     content: string,
     sources?: MessageSource[],
     runId?: string,
+    author?: string,
+    incomplete?: boolean,
   ) {
     return withTenant(this.pool, owner, async (client) => {
       const conversation = await client.query(
@@ -829,12 +1021,56 @@ export class PostgresConversationStore implements ConversationStore {
       if (!previous.rowCount) return null;
 
       // Nouvelle version, sœur de l'ancienne : celle-ci reste consultable.
-      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId, runId);
+      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId, runId, author, incomplete);
       await client.query(
         `UPDATE conversations SET current_leaf_id = $4, updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
         [conversationId, owner.userId, owner.organizationId, message.id],
       );
+      return message;
+    });
+  }
+
+  async extendAssistant(owner: ConversationOwner, conversationId: string, messageId: string, addition: string, incomplete: boolean) {
+    return withTenant(this.pool, owner, async (client) => {
+      const conversation = await client.query(
+        `SELECT 1 FROM conversations
+         WHERE id = $1 AND user_id = $2 AND organization_id = $3
+         FOR UPDATE`,
+        [conversationId, owner.userId, owner.organizationId],
+      );
+      if (!conversation.rowCount) return null;
+      // La conversation a bougé entre-temps (autre réponse, autre branche) : rien n'est ajouté.
+      if ((await this.currentLeaf(client, owner, conversationId)) !== messageId) return null;
+      const row = (
+        await client.query<MessageRow>(
+          `SELECT id, role, content, sources, author, incomplete, created_at AS "createdAt" FROM messages
+           WHERE id = $1 AND role = 'assistant' AND conversation_id = $2 AND user_id = $3 AND organization_id = $4`,
+          [messageId, conversationId, owner.userId, owner.organizationId],
+        )
+      ).rows[0];
+      if (!row) return null;
+      const message = await this.decryptMessage(client, owner, conversationId, row);
+      message.content += addition;
+      await client.query(
+        `UPDATE messages SET content = $5, incomplete = $6
+         WHERE id = $1 AND conversation_id = $2 AND user_id = $3 AND organization_id = $4`,
+        [
+          messageId,
+          conversationId,
+          owner.userId,
+          owner.organizationId,
+          await this.keyring.encrypt(client, owner.organizationId, message.content, messageAad(owner, conversationId, messageId, "assistant")),
+          incomplete,
+        ],
+      );
+      await client.query("UPDATE conversations SET updated_at = now() WHERE id = $1 AND user_id = $2 AND organization_id = $3", [
+        conversationId,
+        owner.userId,
+        owner.organizationId,
+      ]);
+      if (incomplete) message.incomplete = true;
+      else delete message.incomplete;
       return message;
     });
   }

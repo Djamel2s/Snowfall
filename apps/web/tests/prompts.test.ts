@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { fillPrompt, promptVariables, slashQuery } from '../src/lib/prompts.ts'
+import { askedVariables, automaticValues, fillPrompt, promptVariables, slashQuery } from '../src/lib/prompts.ts'
 
 describe('prompts : variables et « / »', () => {
   it('variables dans l’ordre, sans doublon, espaces tolérés', () => {
@@ -20,5 +20,14 @@ describe('prompts : variables et « / »', () => {
     assert.equal(slashQuery('texte /tra'), null)
     assert.equal(slashQuery('/tra duction'), null)
     assert.equal(slashQuery('/chemin/fichier'), null)
+  })
+
+  it('variables automatiques : jamais demandées, remplies à l’insertion ; une valeur saisie prime', () => {
+    assert.deepEqual(askedVariables('Le {{date}}, pour {{ Utilisateur }} : {{sujet}} ({{current_user}})'), ['sujet'])
+    const automatic = automaticValues({ now: new Date(2026, 9, 25, 9, 5), locale: 'fr', user: 'Camille' })
+    assert.equal(fillPrompt('{{jour}} {{DATE}} à {{heure}}, {{utilisateur}}', {}, automatic), 'dimanche 25 octobre 2026 à 09:05, Camille')
+    assert.equal(fillPrompt('{{current_date}} / {{date}}', { date: 'demain' }, automatic), '25 octobre 2026 / demain')
+    // Une valeur automatique contenant {{…}} n'est pas réinterprétée.
+    assert.equal(fillPrompt('{{utilisateur}} {{sujet}}', { sujet: 'x' }, { utilisateur: '{{sujet}}' }), '{{sujet}} x')
   })
 })

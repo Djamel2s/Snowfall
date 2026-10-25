@@ -149,6 +149,41 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Outil exécuté sur des jetons (T) | Arguments restitués avant l'exécution locale ; règle de deux inchangée | F | test du modèle enveloppé |
 | Texte piégé qui fait ramer l'analyse (D) | Contrôle de chevauchement linéaire, expressions bornées | F | test « texte démesuré » |
 
+### 3.4 octies Parité LibreChat (phase 1, 25 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Consigne piégée glissée dans les réglages d'une conversation ou un préréglage (T) | Mêmes contrôles que les instructions personnalisées (donnée sensible, injection) ; bloc `<user_preferences>` sous la règle « ne remplace jamais les règles » ; balises retirées | M : injection paraphrasée (détecteur heuristique) | `runs.routes.test.ts` (« Réglages de conversation ») |
+| Collègue qui lit un agent ou un prompt non partagé (I) | RLS sur `agents` et `prompts` via `snowfall_access()` ; l'API filtre aussi | F | `sharing.integration.test.ts` (SQL direct : aucune ligne) |
+| Éditeur ou membre qui s'octroie ou étend un partage (E) | Politiques INSERT/DELETE de `resource_grants` : propriétaire ou administrateur seulement, signées par leur auteur ; l'API refuse aussi | F | idem (`FORBIDDEN`), `agents.test.ts` |
+| Éditeur qui s'approprie un prompt (E) | Droit UPDATE limité aux colonnes `name, content, updated_at` ; auteur inchangeable | F | `prompts.integration.test.ts` |
+| Membre réinvité qui retrouve d'anciens partages (E) | Autorisations supprimées avec le membre, dans la même transaction | F | test « membre retiré puis réinvité » |
+| Bifurcation ou fichier réutilisé qui fait sortir une donnée sensible (I) | La copie hérite du drapeau sensible ; un fichier d'une conversation sensible rend la cible sensible ; contrôle à l'envoi | F | `workspace.integration.test.ts` (bifurquer, mes fichiers) |
+| Comparaison vers un modèle externe d'une conversation locale à vie (I) | Refus 409 `local_only` (conversation sensible ou base confidentielle), tracé, jamais de bascule silencieuse | F | `runs.routes.test.ts` (« Comparer ») |
+| Étiquette trompeuse (caractères de contrôle, bidi) (S) | Caractères de contrôle et de format refusés ; étiquettes chiffrées | F | test « archive et étiquettes » |
+| Export qui contourne la CSP (T) | Export texte, impression et canevas faits dans le navigateur, sans bibliothèque de capture ni style injecté | F | `export.spec.ts`, `rendering.spec.ts` |
+
+### 3.4 nonies Compétences des agents (25 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Compétence partagée piégée qui détourne tous les agents qui l'utilisent (T) | Refus des consignes déguisées à l'enregistrement ; c'est l'auteur de l'agent qui choisit ses compétences ; historique des versions (qui a changé quoi) ; garde d'injection sur le résultat de l'outil | M : consigne paraphrasée (détecteur heuristique) ; un éditeur autorisé reste de confiance | `runs.routes.test.ts` (« Compétences »), `skills.integration.test.ts` |
+| Compétence lue par quelqu'un qui ne devrait pas (I) | RLS : auteur, autorisation, ou agent visible qui l'utilise ; chargement limité aux compétences de l'agent | F | test « à travers un agent » (retrait de l'accès) |
+| Membre qui confie à son agent la compétence d'un autre pour la lire (E) | Politique d'insertion d'`agent_skills` : il faut posséder la compétence ou y être autorisé | F | idem (`rejects`) |
+| Donnée sensible d'une compétence envoyée à un modèle externe (I) | Donnée sensible seulement dans une compétence confidentielle ; jamais au catalogue d'un modèle externe ; agent forcé en local, même en changeant seulement de modèle | F | test « compétence confidentielle » |
+| Fichier de référence malveillant (T) | Antivirus, texte extrait seulement, 10 fichiers, résultat tronqué et balisé non fiable | F | test « enregistrement » |
+
+### 3.4 decies Connecteurs et import de compétences (25 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Adresse de connecteur détournée par la requête (SSRF, T) | L'adresse vient du catalogue ; seul un GUID de tenant s'y insère ; puis contrôles habituels (HTTPS, adresse publique) | F | `mcp.test.ts` (« Catalogue »), `catalog.test.ts` |
+| Enregistrement OAuth dynamique abusé (S, E) | Client public PKCE, une seule adresse de retour (la nôtre), point d'enregistrement vérifié (HTTPS, public), réponse validée | F | `oauth.test.ts` (« enregistrement dynamique ») |
+| Connecteur ajouté qui agit sans contrôle (E) | En attente jusqu'à l'examen outil par outil (lecture / écriture décidée par l'administrateur), écritures validées par l'utilisateur | F | tests MCP existants |
+| Zip bomb (D) | Décompression en flux, plafonds sur les octets réellement produits, 100 entrées | F | `archive.test.ts` (12 Mo de zéros en < 100 Ko refusés) |
+| Chemins piégés dans l'archive (T) | Rien n'est écrit sur disque ; chemins nettoyés (`..`, caractères de contrôle) | F | idem |
+| Compétence importée piégée (T) | Mêmes contrôles qu'une compétence saisie ; scripts mis de côté | M (détecteur heuristique) | `runs.routes.test.ts` (« import zip ») |
+
 ### 3.5 Artifacts
 
 | Menace | Mesures | Résiduel | Preuve |

@@ -126,6 +126,27 @@
 .tok-number { color: #ffc98a; }
 .tok-comment { color: #66788f; font-style: italic; }
 
+/* Coloration Prism (jetons rendus en éléments, classes pt-<type>). */
+.pt-keyword, .pt-atrule, .pt-important, .pt-rule { color: #c4a7ff; }
+.pt-string, .pt-char, .pt-attr-value, .pt-template-string, .pt-inserted { color: #9fe2b4; }
+.pt-number, .pt-boolean, .pt-constant, .pt-symbol { color: #ffc98a; }
+.pt-comment, .pt-prolog, .pt-doctype, .pt-cdata { color: #66788f; font-style: italic; }
+.pt-function, .pt-method { color: #8fc8ff; }
+.pt-class-name, .pt-builtin, .pt-type, .pt-namespace { color: #ffd98f; }
+.pt-tag, .pt-selector { color: #ff9eb0; }
+.pt-attr-name, .pt-property, .pt-key { color: #a9d6ff; }
+.pt-operator, .pt-punctuation { color: #9aa9bf; }
+.pt-regex, .pt-variable, .pt-parameter { color: #ffb38a; }
+.pt-deleted { color: #ff9a9a; }
+.pt-bold { font-weight: 700; }
+.pt-italic { font-style: italic; }
+
+/* Formules (MathML natif). */
+.md-math math { font-size: 1.05em; }
+.md-math-block { margin: 10px 0; overflow-x: auto; }
+.md-math-display math { display: block; margin: 0 auto; }
+.md-math code { color: #b9c8de; }
+
 .md-table {
   margin: 0 0 .9em;
   overflow-x: auto;
@@ -215,3 +236,24 @@
 .md-link-unverified { text-decoration: underline dotted rgba(245, 166, 35, .6); text-underline-offset: 3px; }
 .md-link-unverified button { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; padding: 0 6px; border: 1px solid rgba(245, 166, 35, .35); border-radius: 999px; background: rgba(245, 166, 35, .08); color: #f1c97f; font: inherit; font-size: .78em; line-height: 1.6; vertical-align: baseline; cursor: pointer; }
 .md-link-unverified button.armed { background: rgba(245, 166, 35, .22); color: #ffe3ad; }
+.md-math-block { text-align: center; }
+
+/* ---- Couleur de l'auteur ----------------------------------------------------------
+   Chaque réponse prend la couleur de qui l'a écrite : l'agent (son avatar) ou,
+   pour un modèle, le bleu du logo. --accent est posé sur la réponse (App.tsx).
+   Le lien non vérifié garde son ⚠ et son soulignement pointillé : l'avertissement
+   reste visible, seule la teinte suit l'agent. */
+.message-assistant { --accent: #0097fe; }
+.message-assistant .markdown a { color: color-mix(in srgb, var(--accent) 72%, #ffffff); text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.message-assistant .markdown blockquote { border-left-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.message-assistant .markdown li::marker { color: color-mix(in srgb, var(--accent) 80%, #ffffff); }
+.message-assistant .markdown :not(pre) > code { background: color-mix(in srgb, var(--accent) 14%, transparent); color: color-mix(in srgb, var(--accent) 35%, #ffffff); }
+.message-assistant .md-table th { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.message-assistant .md-artifact-open { color: color-mix(in srgb, var(--accent) 72%, #ffffff); }
+.message-assistant .md-link-unverified { text-decoration-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+.message-assistant .md-link-unverified button {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--accent) 65%, #ffffff);
+}
+.message-assistant .md-link-unverified button.armed { background: color-mix(in srgb, var(--accent) 24%, transparent); }

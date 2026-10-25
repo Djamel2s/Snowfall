@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
+import { MemorySharingStore } from "../sharing/store.js";
 import { MemoryPromptStore, promptVariables } from "../prompts/store.js";
 import type { ModelRegistry } from "../llm/registry.js";
 import { createAppServer, type AppDependencies } from "../server.js";
@@ -78,6 +79,15 @@ function fakeAttachments(files: Map<string, AttachmentMeta>, content: Map<string
       return file ? { name: file.name, mediaType: file.mediaType, bytes: Buffer.from("contenu") } : null;
     },
     delete: async (_tenant, id) => files.delete(id),
+    library: async () => [...files.values()].filter((file) => file.messageId).map((file) => ({ ...file, conversationId: "c" })),
+    copy: async (_tenant, id) => {
+      const file = files.get(id);
+      if (!file) return null;
+      const copy = { ...file, id: crypto.randomUUID(), messageId: null };
+      files.set(copy.id, copy);
+      return { attachment: copy, sensitive: false };
+    },
+    remove: async (_tenant, id) => files.delete(id),
   };
 }
 
@@ -375,28 +385,66 @@ describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer
     assert.ok(events.some((event) => event.eventType === "privacy.export"));
   });
 
-  it("prompts : privés ou partagés, modifiables par l'auteur seul, variables comptées", async (t) => {
-    const prompts = new MemoryPromptStore();
-    const author = setup({ prompts });
-    const colleague = setup({ prompts, user: { userId: "collegue", organizationId: member.organizationId, role: "member" } });
+  it("prompts : privés ; partagés à une personne, un groupe ou l'organisation ; lecture ou modification", async (t) => {
+    const colleagueId = "33333333-3333-4333-8333-333333333334";
+    const sharing = new MemorySharingStore([{ userId: member.userId, email: "a@t.local" }, { userId: colleagueId, email: "b@t.local" }]);
+    const prompts = new MemoryPromptStore((tenant, id) => sharing.accessFor(tenant, "prompt", id));
+    const author = setup({ prompts, sharing });
+    const colleague = setup({ prompts, sharing, user: { userId: colleagueId, organizationId: member.organizationId, role: "member" } });
     t.after(() => Promise.all([author.app.close(), colleague.app.close()]));
+    const put = (app: typeof author.app, url: string, payload: unknown) => app.inject({ ...post(url, payload), method: "PUT" });
 
     const privateOne = (await author.app.inject(post("/prompts", { name: "Brouillon", content: "Mon texte" }))).json().prompt;
-    const sharedOne = (await author.app.inject(post("/prompts", { name: "Compte rendu", content: "Résume {{réunion}} pour {{équipe}}.", shared: true }))).json().prompt;
-    assert.equal(privateOne.shared, false);
-    // Le collègue voit seulement le prompt partagé, sans pouvoir le modifier.
-    const seen = (await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts;
-    assert.deepEqual(seen.map((prompt: { name: string; mine: boolean }) => [prompt.name, prompt.mine]), [["Compte rendu", false]]);
-    const put = (app: typeof author.app, id: string, payload: unknown) => app.inject({ ...post(`/prompts/${id}`, payload), method: "PUT" });
-    assert.equal((await put(colleague.app, sharedOne.id, { name: "Piraté", content: "x", shared: true })).statusCode, 404);
-    assert.equal((await colleague.app.inject({ method: "DELETE", url: `/prompts/${sharedOne.id}`, headers: { origin: ORIGIN } })).statusCode, 404);
-    assert.equal((await put(author.app, sharedOne.id, { name: "Compte rendu", content: "Résume {{réunion}}.", shared: false })).statusCode, 200);
+    const sharedOne = (await author.app.inject(post("/prompts", { name: "Compte rendu", content: "Résume {{réunion}} pour {{équipe}}." }))).json().prompt;
+    assert.equal(privateOne.canEdit, true);
+    assert.equal((await author.app.inject(post("/prompts", { name: "x", content: "y", shared: true }))).statusCode, 400);
     assert.deepEqual((await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts, []);
-    // Trop de variables : refusé. Audit sans le contenu.
+
+    // Lecture pour toute l'organisation : visible, pas modifiable.
+    assert.equal((await put(author.app, `/prompts/${sharedOne.id}/access`, { grants: [{ principal: { type: "organization" }, permission: "view" }] })).statusCode, 200);
+    const seen = (await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts;
+    assert.deepEqual(seen.map((prompt: { name: string; mine: boolean; canEdit: boolean }) => [prompt.name, prompt.mine, prompt.canEdit]), [["Compte rendu", false, false]]);
+    assert.equal((await put(colleague.app, `/prompts/${sharedOne.id}`, { name: "Piraté", content: "x" })).statusCode, 404);
+    // Le collègue ne partage pas ce qui n'est pas à lui ; ne voit pas qui y a accès.
+    assert.equal((await put(colleague.app, `/prompts/${sharedOne.id}/access`, { grants: [] })).statusCode, 403);
+    assert.equal((await colleague.app.inject({ method: "GET", url: `/prompts/${sharedOne.id}/access` })).statusCode, 403);
+    assert.equal((await colleague.app.inject({ method: "GET", url: `/prompts/${privateOne.id}/access` })).statusCode, 404);
+
+    // Modification pour une personne : elle édite, sans supprimer.
+    await put(author.app, `/prompts/${sharedOne.id}/access`, { grants: [{ principal: { type: "user", id: colleagueId }, permission: "edit" }] });
+    assert.equal((await put(colleague.app, `/prompts/${sharedOne.id}`, { name: "Compte rendu", content: "Résume {{réunion}}." })).statusCode, 200);
+    assert.equal((await colleague.app.inject({ method: "DELETE", url: `/prompts/${sharedOne.id}`, headers: { origin: ORIGIN } })).statusCode, 404);
+    // Destinataire inconnu, ou trop d'autorisations : refusé.
+    assert.equal((await put(author.app, `/prompts/${sharedOne.id}/access`, { grants: [{ principal: { type: "user", id: "44444444-4444-4444-8444-444444444444" }, permission: "view" }] })).json().reason, "unknown_principal");
+    assert.equal((await put(author.app, `/prompts/${sharedOne.id}/access`, { grants: [{ principal: { type: "organization", id: colleagueId }, permission: "view" }] })).statusCode, 400);
+
+    // Retrait : plus rien. Audit sans contenu ni destinataire.
+    await put(author.app, `/prompts/${sharedOne.id}/access`, { grants: [] });
+    assert.deepEqual((await colleague.app.inject({ method: "GET", url: "/prompts" })).json().prompts, []);
+    const audit = author.events.filter((event) => event.eventType === "access.update");
+    assert.ok(audit.length >= 3);
+    assert.ok(!JSON.stringify(author.events).includes(colleagueId) && !JSON.stringify(author.events).includes("Résume"));
+
     const many = Array.from({ length: 11 }, (_, index) => `{{v${index}}}`).join(" ");
     assert.equal((await author.app.inject(post("/prompts", { name: "Trop", content: many }))).statusCode, 400);
-    assert.ok(!JSON.stringify(author.events).includes("Résume"));
     assert.deepEqual(promptVariables("Bonjour {{ prénom }}, voir {{dossier}} et {{prénom}}."), ["prénom", "dossier"]);
+  });
+
+  it("groupes : réservés aux administrateurs ; annuaire lisible par tous", async (t) => {
+    const sharing = new MemorySharingStore([{ userId: member.userId, email: "a@t.local" }]);
+    const plain = setup({ sharing });
+    const admin = setup({ sharing, user: { ...member, role: "admin" } });
+    t.after(() => Promise.all([plain.app.close(), admin.app.close()]));
+    assert.equal((await plain.app.inject(post("/groups", { name: "Juridique" }))).statusCode, 403);
+    assert.equal((await plain.app.inject({ method: "GET", url: "/groups" })).statusCode, 403);
+    const group = (await admin.app.inject(post("/groups", { name: "Juridique" }))).json().group;
+    const updated = await admin.app.inject({ ...post(`/groups/${group.id}`, { memberIds: [member.userId] }), method: "PUT" });
+    assert.deepEqual(updated.json().group.memberIds, [member.userId]);
+    const directory = (await plain.app.inject({ method: "GET", url: "/sharing/directory" })).json();
+    assert.deepEqual(directory.groups, [{ id: group.id, name: "Juridique", memberCount: 1 }]);
+    assert.deepEqual(directory.members, [{ userId: member.userId, email: "a@t.local" }]);
+    assert.equal((await admin.app.inject({ method: "DELETE", url: `/groups/${group.id}`, headers: { origin: ORIGIN } })).statusCode, 204);
+    assert.ok(!JSON.stringify(admin.events).includes("Juridique"));
   });
 
   it("régénérer garde l'ancienne réponse comme autre version", async (t) => {
@@ -764,5 +812,40 @@ describe("Connexion : langue et provisionnement", () => {
     assert.deepEqual(organizationAliases(["acme", "Évil", "beta-2"]), ["acme", "beta-2"]);
     assert.deepEqual(organizationAliases({ acme: { id: "1" } }), ["acme"]);
     assert.deepEqual(organizationAliases(undefined), []);
+  });
+});
+
+describe("Mes fichiers : liste, réutilisation, suppression", () => {
+  const sent: AttachmentMeta = { id: "33333333-3333-4333-8333-333333333333", name: "paie.pdf", kind: "document", mediaType: "application/pdf", size: 10, messageId: "44444444-4444-4444-8444-444444444444", createdAt: "" };
+  const target = "55555555-5555-4555-8555-555555555555";
+
+  it("liste les fichiers envoyés ; copie et suppression auditées, sans nom de fichier", async () => {
+    const files = new Map([[sent.id, sent]]);
+    const { app, events } = setup({ attachments: fakeAttachments(files, new Map()) });
+    const listed = await app.inject({ method: "GET", url: "/me/files" });
+    assert.deepEqual(listed.json().files.map((file: { id: string }) => file.id), [sent.id]);
+    assert.equal(listed.headers["cache-control"], "no-store");
+
+    const copied = await app.inject(post(`/conversations/${target}/attachments/copy`, { attachmentId: sent.id }));
+    assert.equal(copied.statusCode, 201);
+    assert.equal(copied.json().attachment.messageId, null);
+    assert.equal((await app.inject(post(`/conversations/${target}/attachments/copy`, { attachmentId: "x" }))).statusCode, 400);
+    assert.equal((await app.inject(post(`/conversations/${target}/attachments/copy`, { attachmentId: sent.id, extra: 1 }))).statusCode, 400);
+
+    const removed = await app.inject({ method: "DELETE", url: `/me/files/${sent.id}`, headers: { origin: ORIGIN } });
+    assert.equal(removed.statusCode, 204);
+    assert.equal((await app.inject({ method: "DELETE", url: `/me/files/${sent.id}`, headers: { origin: ORIGIN } })).statusCode, 404);
+    const logged = events.filter((event) => event.eventType === "attachment.copy" || event.eventType === "attachment.delete");
+    assert.equal(logged.length, 2);
+    assert.ok(!JSON.stringify(logged).includes("paie.pdf"));
+  });
+
+  it("un lecteur consulte mais ne copie ni ne supprime", async () => {
+    const files = new Map([[sent.id, sent]]);
+    const { app } = setup({ attachments: fakeAttachments(files, new Map()), user: { ...member, role: "reader" } });
+    assert.equal((await app.inject({ method: "GET", url: "/me/files" })).statusCode, 200);
+    assert.equal((await app.inject(post(`/conversations/${target}/attachments/copy`, { attachmentId: sent.id }))).statusCode, 403);
+    assert.equal((await app.inject({ method: "DELETE", url: `/me/files/${sent.id}`, headers: { origin: ORIGIN } })).statusCode, 403);
+    assert.equal(files.size, 1);
   });
 });

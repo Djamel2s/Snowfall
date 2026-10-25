@@ -89,9 +89,12 @@ export class PostgresMemberStore implements MemberStore {
   }
 
   async remove(tenant: TenantContext, userId: string) {
-    await withTenant(this.pool, tenant, (client) =>
-      client.query("SELECT snowfall_remove_member($1)", [userId]),
-    ).catch(translate);
+    await withTenant(this.pool, tenant, async (client) => {
+      await client.query("SELECT snowfall_remove_member($1)", [userId]);
+      // Ses autorisations partent avec lui : réinvité plus tard, il ne retrouve rien
+      // de ce qu'on lui avait partagé (même transaction, contexte administrateur).
+      await client.query("DELETE FROM resource_grants WHERE organization_id = $1 AND principal_type = 'user' AND principal_id = $2", [tenant.organizationId, userId]);
+    }).catch(translate);
   }
 
   invitations(tenant: TenantContext) {

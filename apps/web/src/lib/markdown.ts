@@ -9,6 +9,8 @@ export type Inline =
   | { type: 'code'; text: string }
   | { type: 'link'; href: string; children: Inline[] }
   | { type: 'br' }
+  /** Formule LaTeX, rendue en MathML (jamais en HTML brut). */
+  | { type: 'math'; tex: string; display: boolean }
 
 export type Align = 'left' | 'center' | 'right' | null
 
@@ -20,6 +22,7 @@ export type Block =
   | { type: 'quote'; children: Block[] }
   | { type: 'table'; align: Align[]; head: Inline[][]; rows: Inline[][][] }
   | { type: 'hr' }
+  | { type: 'math'; tex: string }
 
 /** Seuls les liens web et mail sont cliquables (pas de javascript:, data:, file:…). */
 export function safeHref(raw: string): string | null {
@@ -35,6 +38,8 @@ export function safeHref(raw: string): string | null {
 // ---- Inline -------------------------------------------------------------
 
 const PUNCTUATION = /[!-/:-@[-`{-~]/
+/** Longueur maximale d'une formule (au-delà : texte). */
+const MAX_TEX = 2_000
 const WORD = /[\p{L}\p{N}]/u
 const AUTOLINK = /^https?:\/\/[^\s<>"]*[^\s<>".,:;!?'")\]]/
 // Une seule parenthèse imbriquée tolérée (URL Wikipédia) ; classes disjointes
@@ -62,6 +67,29 @@ export function parseInline(source: string): Inline[] {
     const char = source[i]!
     const rest = source.slice(i)
     const previous = i > 0 ? source[i - 1]! : ' '
+
+    // Formules : \( … \) et \[ … \] (avant l'échappement, qui les prendrait pour du texte).
+    if (char === '\\' && (source[i + 1] === '(' || source[i + 1] === '[')) {
+      const close = source[i + 1] === '(' ? '\\)' : '\\]'
+      const end = source.slice(0, i + MAX_TEX).indexOf(close, i + 2)
+      if (end !== -1 && end > i + 2) {
+        flush()
+        out.push({ type: 'math', tex: source.slice(i + 2, end).trim(), display: close === '\\]' })
+        i = end + 2
+        continue
+      }
+    }
+
+    // $$ … $$ et $ … $ (règles de Pandoc : « 5 $ et 10 $ » reste du texte).
+    if (char === '$') {
+      const math = inlineDollar(source, i)
+      if (math) {
+        flush()
+        out.push({ type: 'math', tex: math.tex, display: math.display })
+        i = math.end
+        continue
+      }
+    }
 
     if (char === '\\' && i + 1 < source.length && PUNCTUATION.test(source[i + 1]!)) {
       text += source[i + 1]
@@ -138,6 +166,29 @@ export function parseInline(source: string): Inline[] {
   return out
 }
 
+/**
+ * $…$ : le premier $ suivi d'autre chose qu'un espace, le second précédé d'autre
+ * chose qu'un espace et non suivi d'un chiffre ; jamais sur plusieurs lignes.
+ */
+function inlineDollar(source: string, at: number): { tex: string; display: boolean; end: number } | null {
+  // Fenêtre bornée : un texte piégé (des milliers de « $ ») reste linéaire.
+  const scope = source.slice(0, at + MAX_TEX)
+  if (scope.startsWith('$$', at)) {
+    const end = scope.indexOf('$$', at + 2)
+    return end > at + 2 ? { tex: source.slice(at + 2, end).trim(), display: true, end: end + 2 } : null
+  }
+  const first = source[at + 1]
+  if (!first || /\s|\$/.test(first)) return null
+  const lineEnd = scope.indexOf('\n', at)
+  const limit = lineEnd === -1 ? scope.length : lineEnd
+  for (let end = scope.indexOf('$', at + 1); end !== -1 && end < limit; end = scope.indexOf('$', end + 1)) {
+    if (source[end - 1] === '\\') continue
+    if (/\s/.test(source[end - 1]!) || /\d/.test(source[end + 1] ?? '')) continue
+    return { tex: source.slice(at + 1, end), display: false, end: end + 1 }
+  }
+  return null
+}
+
 function findClosing(source: string, mark: string, from: number) {
   let at = source.indexOf(mark, from)
   while (at !== -1) {
@@ -165,8 +216,10 @@ const LIST_ITEM = /^( *)([-*+]|\d{1,9}[.)])\s+(.*)$/
 // Doit contenir un "|" pour ne pas confondre avec un séparateur horizontal "---".
 const TABLE_SEPARATOR = /^(?=[^|]*\|)\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 
+const MATH_OPEN = /^ {0,3}(\$\$|\\\[)\s*$/
+
 function startsBlock(line: string) {
-  return FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || LIST_ITEM.test(line)
+  return FENCE.test(line) || HEADING.test(line) || HR.test(line) || QUOTE.test(line) || LIST_ITEM.test(line) || MATH_OPEN.test(line)
 }
 
 function splitRow(line: string) {
@@ -203,6 +256,18 @@ function parseBlocks(lines: string[]): Block[] {
       while (i < lines.length && !lines[i]!.trim().startsWith(marker)) body.push(lines[i++]!)
       i++
       blocks.push({ type: 'code', lang: fence[2]!.toLowerCase(), text: body.join('\n') })
+      continue
+    }
+
+    // Formule en bloc : $$ ou \[ seuls sur leur ligne, jusqu'à $$ ou \].
+    const math = MATH_OPEN.exec(line)
+    if (math) {
+      const close = math[1] === '$$' ? '$$' : '\\]'
+      const body: string[] = []
+      i++
+      while (i < lines.length && lines[i]!.trim() !== close) body.push(lines[i++]!)
+      i++
+      blocks.push({ type: 'math', tex: body.join('\n').trim() })
       continue
     }
 

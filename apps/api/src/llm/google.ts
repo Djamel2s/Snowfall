@@ -148,7 +148,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
             signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
             body: JSON.stringify({
               // Début de requête stable (prompt système, puis historique) : le cache implicite de Gemini s'applique.
-              systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary, chat.memories) }] },
+              systemInstruction: { parts: [{ text: buildSystemPrompt(chat.instructions, chat.summary, chat.memories, chat.profile) }] },
               contents: toGeminiContents(conversationTurns(chat)),
               ...(chat.tools?.length ? { tools: toGeminiTools(chat.tools) } : {}),
               generationConfig: {
@@ -195,6 +195,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
           }
         }
         if (candidate?.finishReason && BLOCKED.has(candidate.finishReason)) throw new ModelRefusalError();
+        if (candidate?.finishReason === "MAX_TOKENS") yield { type: "truncated" };
         if (chunk.usageMetadata) usage = chunk.usageMetadata;
       }
 

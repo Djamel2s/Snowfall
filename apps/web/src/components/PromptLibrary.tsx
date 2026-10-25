@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react'
-import { Check, CornerDownLeft, Pencil, Plus, ScrollText, Trash2, Users, X } from 'lucide-react'
+import { Check, CornerDownLeft, Pencil, Plus, ScrollText, Share2, Trash2, Users, X } from 'lucide-react'
+import SharePanel from './SharePanel'
 import { api, type Prompt } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { promptVariables } from '../lib/prompts'
 
-type Draft = { id?: string; name: string; content: string; shared: boolean }
+type Draft = { id?: string; name: string; content: string }
 
 type Props = {
   prompts: Prompt[]
@@ -23,13 +24,15 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
   const [draft, setDraft] = useState<Draft | null>(null)
   const [armed, setArmed] = useState<string | null>(null)
   const [error, setError] = useState('')
+  // Partage ouvert sous ce prompt (un seul à la fois).
+  const [sharing, setSharing] = useState<string | null>(null)
 
   async function save(event: FormEvent) {
     event.preventDefault()
     if (!draft || !draft.name.trim() || !draft.content.trim()) return
     setError('')
     try {
-      const input = { name: draft.name.trim(), content: draft.content.trim(), shared: draft.shared }
+      const input = { name: draft.name.trim(), content: draft.content.trim() }
       const saved = draft.id ? await api.updatePrompt(draft.id, input) : await api.createPrompt(input)
       onChange(draft.id ? prompts.map((item) => (item.id === saved.id ? saved : item)) : [saved, ...prompts])
       setDraft(null)
@@ -53,7 +56,7 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
       <div className="sidebar-section-label projects-heading">
         <span>{t('prompts.title').toUpperCase()}</span>
         {canWrite && !draft && (
-          <button className="projects-add-button" type="button" aria-label={t('prompts.new')} title={t('prompts.new')} onClick={() => setDraft({ name: '', content: '', shared: false })}>
+          <button className="projects-add-button" type="button" aria-label={t('prompts.new')} title={t('prompts.new')} onClick={() => setDraft({ name: '', content: '' })}>
             <Plus size={15} />
           </button>
         )}
@@ -67,10 +70,6 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
           <p className="settings-hint">
             {promptVariables(draft.content).length ? t('prompts.variables', { list: promptVariables(draft.content).join(', ') }) : t('prompts.variablesHint')}
           </p>
-          <label className="settings-row settings-switch">
-            <span>{t('prompts.shareWithOrg')}</span>
-            <input type="checkbox" role="switch" checked={draft.shared} onChange={(event) => setDraft({ ...draft, shared: event.target.checked })} />
-          </label>
           <div className="prompt-form-actions">
             <button type="button" className="chat-actions-item" onClick={() => setDraft(null)}>
               <X size={14} />
@@ -103,11 +102,17 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
                 </span>
                 <CornerDownLeft size={13} />
               </button>
-              {prompt.mine && canWrite && (
+              {prompt.canEdit && canWrite && (
                 <div className="prompt-item-actions">
-                  <button type="button" aria-label={t('prompts.editNamed', { name: prompt.name })} title={t('common.edit')} onClick={() => setDraft({ id: prompt.id, name: prompt.name, content: prompt.content, shared: prompt.shared })}>
+                  <button type="button" aria-label={t('prompts.editNamed', { name: prompt.name })} title={t('common.edit')} onClick={() => setDraft({ id: prompt.id, name: prompt.name, content: prompt.content })}>
                     <Pencil size={12} />
                   </button>
+                  {prompt.mine && (
+                    <button type="button" aria-label={t('share.openNamed', { name: prompt.name })} title={t('share.access')} aria-expanded={sharing === prompt.id} onClick={() => setSharing(sharing === prompt.id ? null : prompt.id)}>
+                      <Share2 size={12} />
+                    </button>
+                  )}
+                  {prompt.mine && (
                   <button
                     type="button"
                     className={armed === prompt.id ? 'armed' : ''}
@@ -118,8 +123,10 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
                   >
                     <Trash2 size={12} />
                   </button>
+                  )}
                 </div>
               )}
+              {sharing === prompt.id && <SharePanel resource={{ type: 'prompt', id: prompt.id, name: prompt.name }} onError={setError} />}
             </li>
           ))}
         </ul>

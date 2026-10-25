@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Ban, Check, FileSearch, Globe, ImagePlus, LoaderCircle, PenLine, Plug, Search, ShieldCheck, SquareTerminal, TriangleAlert, Users, Wrench, X } from 'lucide-react'
+import { Ban, Check, FileSearch, Globe, GraduationCap, ImagePlus, LoaderCircle, PenLine, Plug, Search, ShieldCheck, SquareTerminal, TriangleAlert, Users, Wrench, X } from 'lucide-react'
 import type { AgentStep, ToolApproval } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
@@ -32,7 +32,9 @@ export default function AgentSteps({ steps, onDecide }: Props) {
                         ? Users
                         : step.name === 'generate_image'
                           ? ImagePlus
-                          : Wrench
+                          : step.name === 'use_skill' || step.name === 'read_skill_file'
+                            ? GraduationCap
+                            : Wrench
         const label =
           step.name === 'search_knowledge'
             ? t('agent.searchKnowledge')
@@ -50,7 +52,11 @@ export default function AgentSteps({ steps, onDecide }: Props) {
                         ? t('agent.delegate')
                         : step.name === 'generate_image'
                           ? t('agent.generateImage')
-                          : t('agent.tool', { name: step.name })
+                          : step.name === 'use_skill'
+                            ? t('agent.useSkill')
+                            : step.name === 'read_skill_file'
+                              ? t('agent.readSkillFile')
+                              : t('agent.tool', { name: step.name })
         const waiting = step.status === 'running' && step.approval
         return (
           <li key={step.id} className={`agent-step agent-step-${step.status}${step.parent ? ' agent-step-nested' : ''}`} style={step.parent ? { marginLeft: `${Math.min(3, step.parent.split('/').length) * 14}px` } : undefined}>

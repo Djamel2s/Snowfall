@@ -120,6 +120,49 @@ export function registerAttachmentRoutes(api: FastifyInstance, kit: RouteKit, st
     return reply.send(file.bytes);
   });
 
+  // « Mes fichiers » : ceux déjà envoyés, pour les retrouver et les réutiliser.
+  api.get("/me/files", async (request, reply) => {
+    kit.privateResponse(reply);
+    return { files: await store.library(kit.principal(request)) };
+  });
+
+  api.post("/conversations/:id/attachments/copy", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    const limit = await checkUploadLimit(request);
+    if (!limit.isAllowed && limit.isExceeded) return reply.code(429).send({ error: "Too many requests" });
+    if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+
+    const params = conversationParams.safeParse(request.params);
+    const body = z.object({ attachmentId: z.uuid() }).strict().safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+    try {
+      const copied = await store.copy(user, body.data.attachmentId, params.data.id);
+      if (!copied) return reply.code(404).send({ error: "Not found" });
+      await kit.record(request, user, {
+        eventType: "attachment.copy",
+        targetType: "attachment",
+        targetId: copied.attachment.id,
+        details: { from: body.data.attachmentId, conversation: params.data.id, ...(copied.sensitive ? { sensitive: true } : {}) },
+      });
+      return reply.code(201).send({ attachment: copied.attachment, ...(copied.sensitive ? { sensitive: true } : {}) });
+    } catch (error) {
+      if (error instanceof Error && error.message === "TOO_MANY_ATTACHMENTS") return reply.code(409).send({ error: "Too many attachments" });
+      throw error;
+    }
+  });
+
+  api.delete("/me/files/:id", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);
+    const params = attachmentParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+    if (!(await store.remove(user, params.data.id))) return reply.code(404).send({ error: "Not found" });
+    await kit.record(request, user, { eventType: "attachment.delete", targetType: "attachment", targetId: params.data.id, details: { library: true } });
+    return reply.code(204).send();
+  });
+
   api.delete("/attachments/:id", async (request, reply) => {
     const user = kit.principal(request);
     kit.privateResponse(reply);

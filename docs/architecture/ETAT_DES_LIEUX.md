@@ -5,6 +5,9 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **25 octobre — phase de parité LibreChat (points 1 à 14) faite** : tableau de
+  la section 5 à jour, fiche de cours 22, contrôles dans SECURITY_BASELINE.
+
 - **Phases 3, 4 et 5 faites** : confort (branches, partage, export, prompts,
   mémoire, temporaire, OCR), sécurité avancée (détection d'injections, règle de
   deux, marquage des contenus externes, liens vérifiés, OAuth MCP par
@@ -110,10 +113,22 @@ humaine, anti-exfiltration des adresses).
    bout en bout dans un navigateur.
 6. **Aucun test d'intrusion externe** à ce jour.
 
-## 5. Parité LibreChat (au 17 octobre — depuis : sous-agents, images, voix, OpenAPI faits)
+## 5. Parité LibreChat (mise à jour du 25 octobre : phase 1, points 1 à 14 faits)
 
 | Fonction | État | Priorité |
 |---|---|---|
+| Changer de modèle ou d'agent en cours de conversation (auteur gardé par réponse) | ✅ | — |
+| Coloration syntaxique, formules (LaTeX), sous la CSP stricte | ✅ | — |
+| Thème clair et « système » | ✅ (généré depuis le thème sombre, vérifié par `npm test`) | — |
+| Réglages par conversation, préréglages, instructions personnalisées | ✅ | — |
+| Continuer une réponse coupée, bifurquer depuis un message | ✅ | — |
+| Archivage, étiquettes, « Mes fichiers » (réutiliser un fichier) | ✅ | — |
+| Export texte, PDF (impression), image | ✅ (image : rendu texte) | — |
+| Comparer deux modèles côte à côte | ✅ (comme une nouvelle version) | — |
+| Droits fins agents et prompts (personne, groupe, organisation ; lecture ou modification) | ✅ (RLS) | — |
+| Variables de prompt, dont automatiques (date, utilisateur) | ✅ | — |
+| Compétences (skills) des agents, chargées à la demande, import .zip | ✅ (sans scripts pour l'instant) | — |
+| Catalogue de connecteurs (50+, logos, ajout en un clic, OAuth automatique) | ✅ | — |
 | Multi-fournisseurs, choix du modèle, agents, base de connaissances, pièces jointes | ✅ | — |
 | Modifier, régénérer, arrêter, rechercher, projets | ✅ | — |
 | Recherche web, interpréteur de code, artifacts, MCP | ✅ (MCP non essayé en vrai) | — |
@@ -121,16 +136,15 @@ humaine, anti-exfiltration des adresses).
 | **Branches de conversation** (modifier crée une branche au lieu d'écraser) | ✅ | — |
 | **Partage** interne en lecture | ✅ | — |
 | **Retour 👍👎** sur les réponses | ✅ (+ taux par agent) | — |
-| **Export / import** (Markdown, JSON ; import ChatGPT/LibreChat) | ✅ (pas d'export PDF) | — |
+| **Export / import** (Markdown, JSON, texte, PDF, image ; import ChatGPT/LibreChat) | ✅ | — |
 | **Bibliothèque de prompts** et commandes « / » | ✅ | — |
 | **Presets** et **paramètres du modèle** (température, longueur, effort) | ✅ (réglages par agent : créativité, longueur) | — |
 | **Mémoire** (désactivée par défaut, visible, effaçable) | ✅ | — |
 | **Conversation temporaire** | ✅ | — |
 | **OCR** (PDF scannés, images) | ✅ (local, profil « ocr ») | — |
-| **Catalogue d'agents** (duplication, droits fins) | ✅ (droits fins : plus tard) | — |
-| Favoris et étiquettes, archivage | ❌ | P3 |
-| Comparaison de modèles, images, voix, actions OpenAPI, API d'agents | ❌ | P3 |
-| Sous-agents / chaînes d'agents | ❌ | P3 |
+| **Catalogue d'agents** (duplication, droits fins) | ✅ | — |
+| Images, voix, actions OpenAPI, sous-agents | ✅ (voir sections 0 et 8) | — |
+| API d'agents pour des applications tierces | ❌ | P3 |
 
 ## 6. Expérience utilisateur
 

@@ -51,8 +51,11 @@ test('carte sur mobile : ouverte depuis le menu, agent sélectionné au toucher'
   await expect(map.locator('.graph-node-agent')).toHaveCount(3)
   // Toucher : le nœud bouge encore (simulation) ; on vise sa position du moment.
   const node = map.getByRole('button', { name: 'Support RH' })
-  await node.locator('.graph-node-core').tap({ force: true })
-  await expect(map.locator('.agent-graph-card')).toContainText('Support RH')
+  // Un humain retouche si le nœud a glissé sous son doigt : on fait pareil.
+  await expect(async () => {
+    await node.locator('.graph-node-core').tap({ force: true })
+    await expect(map.locator('.agent-graph-card')).toContainText('Support RH', { timeout: 1_000 })
+  }).toPass({ timeout: 15_000 })
   await expect(node).toHaveAttribute('aria-pressed', 'true')
 })
 

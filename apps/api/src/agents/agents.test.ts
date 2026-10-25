@@ -35,14 +35,14 @@ function fakeAgents(): AgentStore {
     get: async (_tenant, id) => agents.get(id) ?? null,
     create: async (tenant, input: AgentInput) => {
       const now = new Date().toISOString();
-      const agent = { ...input, tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], delegates: input.delegates ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
+      const agent = { ...input, skills: input.skills ?? [], tools: input.tools ?? defaultAgentTools, mcpServers: input.mcpServers ?? [], delegates: input.delegates ?? [], parameters: input.parameters ?? {}, id: crypto.randomUUID(), createdBy: tenant.userId, createdAt: now, updatedAt: now };
       agents.set(agent.id, agent);
       return agent;
     },
     update: async (_tenant, id, input) => {
       const existing = agents.get(id);
       if (!existing) return null;
-      const agent = { ...existing, ...input, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers, parameters: input.parameters ?? existing.parameters };
+      const agent = { ...existing, ...input, skills: input.skills ?? existing.skills, tools: input.tools ?? existing.tools, mcpServers: input.mcpServers ?? existing.mcpServers, parameters: input.parameters ?? existing.parameters };
       agents.set(id, agent);
       return agent;
     },
@@ -268,7 +268,7 @@ describe("Agents", () => {
     }
   });
 
-  it("change d'agent ou de modèle tant que la conversation est vide, plus ensuite", async (t) => {
+  it("change d'agent ou de modèle avant comme après le premier message", async (t) => {
     const calls: { selection?: ModelSelection; instructions?: string }[] = [];
     const { app, events } = setup({ calls });
     t.after(() => app.close());
@@ -292,8 +292,10 @@ describe("Agents", () => {
     await app.inject(post(`/conversations/${conversation.id}/messages`, { content: "Bonjour" }));
     assert.deepEqual(calls[0], { selection: model });
 
-    const locked = await app.inject(patch({ agentId: agent.id }));
-    assert.equal(locked.statusCode, 409);
+    // Conversation commencée : le changement reste possible (la réponse suivante utilise l'agent).
+    const switched = await app.inject(patch({ agentId: agent.id }));
+    assert.equal(switched.statusCode, 200);
+    assert.equal(switched.json().conversation.agentId, agent.id);
     // Renommer reste possible.
     assert.equal((await app.inject(patch({ title: "Renommée" }))).statusCode, 200);
   });
@@ -346,5 +348,37 @@ describe("isSafeImageDataUrl", () => {
     assert.ok(!isSafeImageDataUrl(encode("png", [0xff, 0xd8, 0xff, 0xe0])));
     assert.ok(!isSafeImageDataUrl(encode("gif", [0x47, 0x49, 0x46, 0x38])));
     assert.ok(!isSafeImageDataUrl("javascript:alert(1)"));
+  });
+});
+
+describe("Agents : droits fins", () => {
+  it("éditeur autorisé : modifie ; ne supprime ni ne partage. Lecteur autorisé : utilise seulement", async () => {
+    const store = fakeAgents();
+    const { app, as } = setup({ agents: store });
+    const created = (await app.inject(post("/agents", validAgent))).json().agent as { id: string };
+    const colleague: AuthenticatedUser = { userId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", organizationId: alice.organizationId, role: "member" };
+    const put = (url: string, payload: unknown) => app.inject({ ...post(url, payload), method: "PUT" });
+
+    // Droit « modification » (posé par la base, ici simulé par le magasin).
+    const editable = await store.get(alice, created.id);
+    await store.update(alice, created.id, { ...editable!, access: "edit" } as never);
+    as(colleague);
+    const listed = (await app.inject({ method: "GET", url: "/agents" })).json().agents[0];
+    assert.deepEqual([listed.canEdit, listed.canShare], [true, false]);
+    assert.equal((await put(`/agents/${created.id}`, { ...validAgent, name: "Juriste v2" })).statusCode, 200);
+    assert.equal((await app.inject({ method: "DELETE", url: `/agents/${created.id}`, headers: { origin: ORIGIN } })).statusCode, 403);
+    assert.equal((await put(`/agents/${created.id}/access`, { grants: [] })).statusCode, 403);
+
+    // Droit « lecture » : ni modification, ni partage.
+    await store.update(alice, created.id, { ...(await store.get(alice, created.id))!, access: "view" } as never);
+    assert.equal((await put(`/agents/${created.id}`, { ...validAgent, name: "Piraté" })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: `/agents/${created.id}/access` })).statusCode, 403);
+
+    // L'auteur partage ; un lecteur de l'organisation (rôle) ne modifie jamais, même autorisé.
+    as(alice);
+    assert.equal((await put(`/agents/${created.id}/access`, { grants: [{ principal: { type: "organization" }, permission: "edit" }] })).statusCode, 200);
+    as({ ...colleague, role: "reader" });
+    await store.update(alice, created.id, { ...(await store.get(alice, created.id))!, access: "edit" } as never);
+    assert.equal((await put(`/agents/${created.id}`, { ...validAgent, name: "Lecteur" })).statusCode, 403);
   });
 });

@@ -10,7 +10,7 @@ import type { ModelSelection, ProviderId } from "../llm/types.js";
 // lancée : elle continue si l'onglet se ferme, se met en pause pour une
 // validation, et reprend après un redémarrage (voir server.ts, executeRun).
 
-export type RunKind = "message" | "regenerate";
+export type RunKind = "message" | "regenerate" | "continue";
 export type RunStatus = "running" | "waiting";
 
 /** Tout ce qu'il faut pour reprendre la réponse et l'enregistrer, même ailleurs. */

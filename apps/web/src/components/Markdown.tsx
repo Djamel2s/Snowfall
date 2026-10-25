@@ -2,6 +2,8 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, Network, Shapes, TriangleAlert } from 'lucide-react'
 import { artifactKind, artifactTitle, useOpenArtifact, type ArtifactKind } from '../lib/artifacts'
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
+import { highlight } from '../lib/highlight'
+import MathFormula from './MathFormula'
 import { useI18n } from '../lib/i18n'
 import { hostOf, isTrustedLink, useLinkTrust } from '../lib/link-trust'
 import '../markdown.css'
@@ -16,6 +18,8 @@ function renderInline(nodes: Inline[]): ReactNode[] {
         return node.text
       case 'br':
         return <br key={index} />
+      case 'math':
+        return <MathFormula key={index} tex={node.tex} display={node.display} />
       case 'code':
         return <code key={index}>{node.text}</code>
       case 'strong':
@@ -112,7 +116,9 @@ function ArtifactCard({ lang, text, kind, showCode }: { lang: string; text: stri
 function CodeBlock({ lang, text, plain = false, showCode = false }: { lang: string; text: string; plain?: boolean; showCode?: boolean }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
-  const tokens = useMemo(() => tokenizeCode(text, lang), [text, lang])
+  // Grammaire Prism si le langage est connu, sinon coloration générique.
+  const highlighted = useMemo(() => highlight(text, lang), [text, lang])
+  const tokens = useMemo(() => (highlighted ? null : tokenizeCode(text, lang)), [highlighted, text, lang])
   // Page HTML, SVG ou diagramme : affichable dans le cadre isolé des artifacts.
   const openArtifact = useOpenArtifact()
   const kind = artifactKind(lang, text)
@@ -150,9 +156,13 @@ function CodeBlock({ lang, text, plain = false, showCode = false }: { lang: stri
       </div>
       <pre>
         <code>
-          {tokens.map((token, index) =>
-            token.kind === 'plain' ? token.text : <span key={index} className={`tok-${token.kind}`}>{token.text}</span>,
-          )}
+          {highlighted
+            ? highlighted.map((token, index) =>
+                token.types.length ? <span key={index} className={token.types.map((type) => `pt-${type}`).join(' ')}>{token.text}</span> : token.text,
+              )
+            : tokens!.map((token, index) =>
+                token.kind === 'plain' ? token.text : <span key={index} className={`tok-${token.kind}`}>{token.text}</span>,
+              )}
         </code>
       </pre>
     </div>
@@ -172,6 +182,12 @@ function renderBlocks(blocks: Block[], showCode = false): ReactNode[] {
         return <CodeBlock key={index} lang={block.lang} text={block.text} showCode={showCode} />
       case 'hr':
         return <hr key={index} />
+      case 'math':
+        return (
+          <div key={index} className="md-math-block">
+            <MathFormula tex={block.tex} display />
+          </div>
+        )
       case 'quote':
         return <blockquote key={index}>{renderBlocks(block.children, showCode)}</blockquote>
       case 'list': {

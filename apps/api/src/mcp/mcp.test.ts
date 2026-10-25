@@ -388,3 +388,45 @@ describe("MCP : trous confirmés par la relecture", () => {
     assert.ok((result.content.match(/<\/?\s*mcp_result\b[^>]{0,200}>/gi) ?? []).length <= 1);
   });
 });
+
+describe("Catalogue de connecteurs : ajout par un administrateur", () => {
+  it("adresse prise dans le catalogue (jamais dans la requête) ; tenant et jeton exigés ; membre refusé ; audit", async (t) => {
+    const user = { current: admin };
+    const events: AuditEvent[] = [];
+    const app = createAppServer({
+      appOrigin: ORIGIN,
+      logger: false,
+      authenticate: async () => user.current,
+      conversationStore: createFakeConversationStore(),
+      audit: { record: async (_request, event) => void events.push(event) },
+      mcp: { store: new MemoryMcpServerStore() },
+    });
+    t.after(() => app.close());
+    const add = (id: string, payload: Record<string, unknown> = {}) => app.inject({ method: "POST", url: `/organization/mcp-catalog/${id}`, headers: { origin: ORIGIN }, payload });
+
+    const catalog = (await app.inject({ method: "GET", url: "/mcp-catalog" })).json().connectors as { id: string }[];
+    assert.ok(catalog.some((item) => item.id === "notion"));
+    assert.equal((await add("inconnu")).statusCode, 404);
+    assert.equal((await add("zapier", { url: "https://evil.example/mcp", token: "k" })).statusCode, 400, "pas d'adresse dans la requête");
+    assert.equal((await add("zapier")).json().reason, "token_required");
+    assert.equal((await add("sharepoint-onedrive", { tenant: "pas-un-guid" })).json().reason, "tenant_required");
+
+    const created = await add("zapier", { token: "cle-zapier" });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().server.url, "https://mcp.zapier.com/api/mcp/mcp");
+    assert.equal(created.json().server.catalogId, "zapier");
+    assert.equal(created.json().server.status, "pending");
+    assert.ok(events.some((event) => event.eventType === "mcp.server_create" && event.details?.catalog === "zapier"));
+    assert.ok(!JSON.stringify(events).includes("cle-zapier"));
+    // Déjà ajouté (même adresse) : refusé, pas de doublon.
+    const again = await add("zapier", { token: "autre" });
+    assert.equal(again.statusCode, 409);
+    assert.equal(again.json().reason, "already_added");
+
+    // Mode OAuth sans service de connexions : refusé proprement.
+    assert.equal((await add("notion")).json().reason, "oauth_unavailable");
+    user.current = member;
+    assert.equal((await add("zapier", { token: "k" })).statusCode, 403);
+    assert.equal((await app.inject({ method: "GET", url: "/mcp-catalog" })).statusCode, 200, "le catalogue reste lisible");
+  });
+});

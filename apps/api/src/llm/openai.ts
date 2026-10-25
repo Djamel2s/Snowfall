@@ -83,7 +83,7 @@ export function createOpenAiCompatibleModel(
           ...(request.generation?.temperature !== undefined && !REASONING_MODEL.test(model) ? { temperature: request.generation.temperature } : {}),
           // Prompt système puis historique, à l'identique d'un tour à l'autre : le cache
           // automatique d'OpenAI relit ce début de requête (moins cher, plus rapide).
-          messages: [{ role: "system", content: buildSystemPrompt(request.instructions, request.summary, request.memories) }, ...toOpenAiMessages(conversationTurns(request))],
+          messages: [{ role: "system", content: buildSystemPrompt(request.instructions, request.summary, request.memories, request.profile) }, ...toOpenAiMessages(conversationTurns(request))],
           ...(request.tools?.length ? { tools: toOpenAiTools(request.tools) } : {}),
         },
         signal ? { signal } : {},
@@ -93,6 +93,7 @@ export function createOpenAiCompatibleModel(
       const pending = new Map<number, { id: string; name: string; arguments: string }>();
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
+        if (chunk.choices[0]?.finish_reason === "length") yield { type: "truncated" };
         // Serveurs locaux (vLLM, Ollama, LM Studio) : réflexion dans un champ non standard.
         const reasoning = (delta as { reasoning_content?: unknown; reasoning?: unknown } | undefined)?.reasoning_content ?? (delta as { reasoning?: unknown } | undefined)?.reasoning;
         if (typeof reasoning === "string" && reasoning) yield { type: "reasoning", text: reasoning };

@@ -54,6 +54,8 @@ export type ChatChunk =
   | { type: "tool_call"; call: ToolCall }
   /** Données à rattacher au tour de l'assistant (voir ChatTurn.providerData). */
   | { type: "provider_data"; data: Record<string, unknown> }
+  /** Réponse coupée par la longueur maximale (elle peut être continuée). */
+  | { type: "truncated" }
   | ({ type: "usage" } & TokenUsage);
 
 export type ChatRequest = {
@@ -67,6 +69,8 @@ export type ChatRequest = {
   summary?: string | undefined;
   /** Mémoire de l'utilisateur (s'il l'a activée) : faits courts, donnés comme contexte. */
   memories?: string[] | undefined;
+  /** Instructions personnalisées de l'utilisateur (qui il est, comment lui répondre). */
+  profile?: string | undefined;
   /** Transcription complète (boucle d'agent) : remplace history + message. */
   turns?: ChatTurn[] | undefined;
   /** Outils proposés au modèle pour ce tour. */
@@ -126,6 +130,8 @@ export type ChatResult = {
   pending?: PendingApproval[];
   /** Transcription complète (résultats d'outils compris), pour les sources. */
   turns?: ChatTurn[];
+  /** Dernière étape coupée par la longueur maximale. */
+  truncated?: true;
 };
 
 /** Événement d'outil diffusé à l'interface pendant l'exécution. */
@@ -164,6 +170,8 @@ export type ChatRunner = (
     /** Résumé des échanges anciens (compaction). */
     summary?: string | undefined;
     memories?: string[] | undefined;
+    /** Instructions personnalisées de l'utilisateur. */
+    profile?: string | undefined;
     /** Outils disponibles : active la boucle d'agent. */
     tools?: AgentTool[] | undefined;
     /** Nombre maximal d'aller-retour modèle ↔ outils. */
@@ -238,11 +246,14 @@ const AgentState = Annotation.Root({
   instructions: Annotation<string | undefined>,
   summary: Annotation<string | undefined>,
   memories: Annotation<string[] | undefined>,
+  profile: Annotation<string | undefined>,
   /** Texte visible produit par le modèle, toutes étapes confondues. */
   response: Annotation<string>,
   usage: Annotation<TokenUsage | undefined>,
   /** Aller-retour modèle → outils déjà demandés. */
   steps: Annotation<number>,
+  /** Dernière réponse coupée par la longueur maximale. */
+  truncated: Annotation<boolean | undefined>,
   /** Exposition héritée de la réponse qui a lancé ce sous-agent. */
   seed: Annotation<Exposure | undefined>,
 });
@@ -284,6 +295,7 @@ export function buildAgentGraph(
       let text = "";
       let usage: TokenUsage | undefined;
       let providerData: Record<string, unknown> | undefined;
+      let truncated = false;
       const calls: ToolCall[] = [];
       // Plus d'outils au-delà des étapes OU du budget de tokens : le modèle conclut.
       const spent = (state.usage?.inputTokens ?? 0) + (state.usage?.outputTokens ?? 0);
@@ -296,6 +308,7 @@ export function buildAgentGraph(
         instructions: state.instructions,
         summary: state.summary,
         ...(state.memories?.length ? { memories: state.memories } : {}),
+        ...(state.profile ? { profile: state.profile } : {}),
         ...(offerTools ? { tools: specs } : {}),
         ...(options.generation ? { generation: options.generation } : {}),
       };
@@ -311,6 +324,8 @@ export function buildAgentGraph(
             calls.push(chunk.call);
           } else if (chunk.type === "provider_data") {
             providerData = { ...providerData, ...chunk.data };
+          } else if (chunk.type === "truncated") {
+            truncated = true;
           } else {
             const { type: _type, ...counted } = chunk;
             usage = counted;
@@ -343,6 +358,8 @@ export function buildAgentGraph(
         response,
         usage: sum(state.usage, usage),
         steps: calls.length ? state.steps + 1 : state.steps,
+        // Seule compte la dernière étape (celle qui conclut, sans appel d'outil).
+        truncated: truncated && !calls.length,
       };
     })
     .addNode("tool", async (input: { call: ToolCall; exposure?: Exposure }, config) => {
@@ -417,7 +434,7 @@ export function createChatRunner(base: ChatModel = echoModel): ChatRunner {
         ? new Command({ resume: durable.resume })
         : durable?.continue
           ? null
-          : { turns, instructions: input.instructions, summary: input.summary, memories: input.memories, response: "", usage: undefined, steps: 0, seed: input.exposure },
+          : { turns, instructions: input.instructions, summary: input.summary, memories: input.memories, profile: input.profile, response: "", usage: undefined, steps: 0, seed: input.exposure },
       { ...config, streamMode: ["custom", "values"] },
     );
 
@@ -464,6 +481,7 @@ export function createChatRunner(base: ChatModel = echoModel): ChatRunner {
       steps: final!.steps,
       turns: final!.turns,
       ...(final?.usage ? { usage: final.usage } : {}),
+      ...(final?.truncated ? { truncated: true as const } : {}),
     };
   };
 }

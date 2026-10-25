@@ -82,3 +82,4 @@ describe('Markdown : rendu', () => {
     assert.deepEqual(kinds, ['keyword', 'string', 'comment'])
   })
 })
+

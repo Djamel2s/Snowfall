@@ -153,3 +153,11 @@ describe("Limite de débit (429)", () => {
     assert.ok(!isRateLimit(Object.assign(new Error("Bad request"), { status: 400 })));
   });
 });
+
+describe("Google Gemini : réponse coupée", () => {
+  it("longueur maximale atteinte : signalée (la réponse pourra être continuée)", async () => {
+    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "Début" }] }, finishReason: "MAX_TOKENS" }] }));
+    const chunks = await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" }));
+    assert.deepEqual(chunks, [{ type: "token", text: "Début" }, { type: "truncated" }]);
+  });
+});

@@ -21,6 +21,23 @@ export function modelLabel(providers: ProviderCatalog[], selection: ModelSelecti
   return provider?.models.find((model) => model.id === selection.model)?.label ?? selection.model
 }
 
+/**
+ * Auteur d'une réponse déjà écrite (l'agent ou le modèle peut avoir changé
+ * depuis) ; null : inconnu (réponse ancienne), on montre le répondeur actuel.
+ */
+export function authorOf(author: string | undefined, agents: Agent[], providers: ProviderCatalog[]): Responder | null {
+  if (!author) return null
+  if (author.startsWith('agent:')) {
+    const agent = agents.find((item) => item.id === author.slice(6))
+    return agent ? { kind: 'agent', agent } : null
+  }
+  const [, provider, ...rest] = author.split(':')
+  const model = rest.join(':')
+  if (!provider) return null
+  if (!model) return { kind: 'default' }
+  return { kind: 'model', provider: provider as ProviderId, model, label: modelLabel(providers, { provider: provider as ProviderId, model }) }
+}
+
 /** Résout l'agent / le modèle d'une conversation pour l'affichage. */
 export function resolveResponder(
   conversation: { agentId: string | null; model: ModelSelection | null; sensitive?: boolean } | undefined,

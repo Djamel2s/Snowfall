@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { McpError, toolFingerprint, validateMcpUrl, type McpServerSettings } from "../mcp/client.js";
 import type { McpConnectionStore } from "../mcp/connections.js";
@@ -7,6 +7,7 @@ import type { McpServerRecord, McpServerStore } from "../mcp/store.js";
 import { bearerFor } from "../mcp/user-token.js";
 import { approvedSnapshot, clashingNames, connectorClient, exposedName, schemaValidator, validToolName } from "../mcp/tools.js";
 import { OpenApiError, parseOpenApi } from "../mcp/openapi.js";
+import { catalogIdFor, CONNECTOR_CATALOG, connectorUrl } from "../mcp/catalog.js";
 import type { RouteKit } from "./kit.js";
 
 // Serveurs MCP de l'organisation. Seul un administrateur ajoute un serveur,
@@ -36,7 +37,8 @@ const createSchema = z
     // Mode OAuth : chaque utilisateur se connecte avec son compte. Client enregistré par l'admin chez le fournisseur.
     oauth: z
       .object({
-        clientId: z.string().trim().min(1).max(500),
+        // Absent : enregistrement dynamique chez le fournisseur (RFC 7591), s'il le permet.
+        clientId: z.string().trim().min(1).max(500).optional(),
         clientSecret: z.string().trim().min(1).max(4_000).optional(),
         scope: z.string().trim().max(500).regex(/^[\x21\x23-\x5b\x5d-\x7e ]*$/).optional(),
       })
@@ -47,6 +49,15 @@ const createSchema = z
   })
   .strict()
   .refine((body) => !(body.oauth && body.token) && !(body.openapi && body.oauth));
+
+const catalogAddSchema = z
+  .object({
+    tenant: z.string().trim().max(64).optional(),
+    clientId: z.string().trim().min(1).max(500).optional(),
+    clientSecret: z.string().trim().min(1).max(4_000).optional(),
+    token: z.string().trim().min(1).max(4_000).optional(),
+  })
+  .strict();
 
 const callbackSchema = z.object({ state: z.string().regex(/^[A-Za-z0-9_-]{43}$/), code: z.string().min(1).max(2_000) }).strict();
 
@@ -69,6 +80,8 @@ function view(server: McpServerRecord, admin: boolean) {
     status: server.status,
     kind: server.kind,
     auth: server.auth,
+    // Connecteur du catalogue (logo, catégorie) reconnu à son adresse.
+    ...(catalogIdFor(server.url) ? { catalogId: catalogIdFor(server.url) } : {}),
     ...(admin ? { url: server.url, hasToken: server.hasToken, updatedAt: server.updatedAt } : {}),
     tools: server.tools.map((tool) => ({ name: tool.name, title: tool.title ?? null, access: tool.access })),
   };
@@ -110,45 +123,92 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
     return { servers: servers.filter((server) => admin || server.status === "approved").map((server) => view(server, admin)) };
   });
 
-  api.post("/organization/mcp-servers", async (request, reply) => {
-    const user = kit.principal(request);
-    kit.privateResponse(reply);
-    if (!kit.isAdmin(user)) return kit.denyWrite(request, reply, user);
-
-    const body = createSchema.safeParse(request.body);
-    if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+  /** Ajout d'un serveur (saisi à la main ou venu du catalogue) : mêmes contrôles pour les deux. */
+  async function addServer(request: FastifyRequest, reply: FastifyReply, user: ReturnType<RouteKit["principal"]>, input: z.infer<typeof createSchema>, catalogId?: string) {
     let url: URL;
     try {
-      url = validateMcpUrl(body.data.url, deps.allowLocal);
+      url = validateMcpUrl(input.url, deps.allowLocal);
     } catch {
       return reply.code(400).send({ error: "Invalid request", reason: "invalid_url" });
     }
+    if ((await store.list(user)).some((server) => server.url === url.href)) return reply.code(409).send({ error: "Conflict", reason: "already_added" });
     let oauth;
-    if (body.data.oauth) {
+    if (input.oauth) {
       if (!deps.connections || !deps.redirectUri) return reply.code(400).send({ error: "Invalid request", reason: "oauth_unavailable" });
       try {
-        // Points d'accès découverts chez le serveur MCP lui-même, puis vérifiés (HTTPS, adresse publique).
-        oauth = await discoverOAuth(url.href, body.data.oauth, { fetcher: deps.fetcher, checkAddress: deps.checkAddress, allowLocal: deps.allowLocal });
+        // Points d'accès découverts chez le serveur MCP lui-même, puis vérifiés (HTTPS, adresse publique) ;
+        // client enregistré automatiquement si le fournisseur le permet.
+        oauth = await discoverOAuth(url.href, input.oauth, { fetcher: deps.fetcher, checkAddress: deps.checkAddress, allowLocal: deps.allowLocal, redirectUri: deps.redirectUri });
       } catch (error) {
         return reply.code(400).send({ error: "Invalid request", reason: error instanceof OAuthError ? `oauth_${error.code}` : "oauth_discovery_failed" });
       }
     }
-    if (body.data.openapi) {
+    if (input.openapi) {
       try {
         // Lue dès l'ajout : une spécification illisible est refusée tout de suite.
-        parseOpenApi(body.data.openapi.spec);
+        parseOpenApi(input.openapi.spec);
       } catch (error) {
         return reply.code(400).send({ error: "Invalid request", reason: error instanceof OpenApiError ? error.code : "invalid_spec" });
       }
     }
-    const server = await store.create(user, { name: body.data.name, url: url.href, token: body.data.token, oauth, ...(body.data.openapi ? { spec: body.data.openapi.spec } : {}) });
+    const server = await store.create(user, { name: input.name, url: url.href, token: input.token, oauth, ...(input.openapi ? { spec: input.openapi.spec } : {}) });
     await kit.record(request, user, {
       eventType: "mcp.server_create",
       targetType: "mcp_server",
       targetId: server.id,
-      details: { host: url.host, auth: server.auth, kind: server.kind },
+      details: { host: url.host, auth: server.auth, kind: server.kind, ...(catalogId ? { catalog: catalogId } : {}) },
     });
     return reply.code(201).send({ server: view(server, true) });
+  }
+
+  api.post("/organization/mcp-servers", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!kit.isAdmin(user)) return kit.denyWrite(request, reply, user);
+    const body = createSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+    return addServer(request, reply, user, body.data);
+  });
+
+  // Catalogue de connecteurs connus : lisible par tous (ce qui existe), ajouté par un administrateur.
+  api.get("/mcp-catalog", async (_request, reply) => {
+    reply.header("Cache-Control", "private, max-age=3600");
+    return { connectors: CONNECTOR_CATALOG };
+  });
+
+  api.post("/organization/mcp-catalog/:id", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!kit.isAdmin(user)) return kit.denyWrite(request, reply, user);
+    const params = z.object({ id: z.string().regex(/^[a-z0-9-]{1,60}$/) }).safeParse(request.params);
+    const body = catalogAddSchema.safeParse(request.body ?? {});
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+    const connector = CONNECTOR_CATALOG.find((item) => item.id === params.data.id);
+    if (!connector) return reply.code(404).send({ error: "Not found" });
+    // L'adresse vient du catalogue, jamais de la requête (seul le tenant s'y insère, contrôlé).
+    const url = connectorUrl(connector, body.data.tenant);
+    if (!url) return reply.code(400).send({ error: "Invalid request", reason: "tenant_required" });
+    if (connector.auth === "token" && !body.data.token) return reply.code(400).send({ error: "Invalid request", reason: "token_required" });
+    return addServer(
+      request,
+      reply,
+      user,
+      {
+        name: connector.name,
+        url,
+        ...(connector.auth === "token" ? { token: body.data.token } : {}),
+        ...(connector.auth === "oauth"
+          ? {
+              oauth: {
+                ...(body.data.clientId ? { clientId: body.data.clientId } : {}),
+                ...(body.data.clientSecret ? { clientSecret: body.data.clientSecret } : {}),
+                ...(connector.scope ? { scope: connector.scope } : {}),
+              },
+            }
+          : {}),
+      },
+      connector.id,
+    );
   });
 
   // Outils publiés par le serveur, à examiner avant approbation.

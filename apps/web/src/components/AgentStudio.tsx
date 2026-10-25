@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronLeft, Globe, ImagePlus, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2, Users } from 'lucide-react'
+import { Camera, Check, ChevronLeft, Globe, GraduationCap, ImagePlus, Lock, PenLine, Plug, Search, ShieldCheck, Sparkles, SquareTerminal, Trash2, Users } from 'lucide-react'
 import {
   api,
   toolAccess,
@@ -8,6 +8,7 @@ import {
   type Agent,
   type AgentAvatarData,
   type AgentParameters,
+  type Skill,
   type McpServer,
   type AlienAvatar,
   type ProviderCatalog,
@@ -20,6 +21,7 @@ import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
+import SharePanel from './SharePanel'
 import KnowledgePanel from './KnowledgePanel'
 import AgentQuality from './AgentQuality'
 import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
@@ -57,6 +59,9 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
   const [mcpServers, setMcpServers] = useState<McpServer[]>([])
   const [agentMcp, setAgentMcp] = useState<string[]>(agent?.mcpServers ?? [])
   const [agentDelegates, setAgentDelegates] = useState<string[]>(agent?.delegates ?? [])
+  // Compétences : celles que je vois (bibliothèque), et celles déjà confiées.
+  const [agentSkills, setAgentSkills] = useState<string[]>(agent?.skills ?? [])
+  const [skillLibrary, setSkillLibrary] = useState<Skill[]>([])
   const specialists = agents.filter((item) => item.id !== agent?.id)
   // Réglages des réponses (créativité, longueur) ; non réglés : ceux du fournisseur.
   const [parameters, setParameters] = useState<AgentParameters>(agent?.parameters ?? {})
@@ -66,6 +71,17 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
   // Nouvel agent : documents en attente, envoyés juste après la création.
   const [draft, setDraft] = useState<KnowledgeDraft>(emptyKnowledgeDraft)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listSkills()
+      .then((items) => !cancelled && setSkillLibrary(items))
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -142,7 +158,7 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
     setError('')
     try {
       const saved = await api.saveAgent(
-        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], delegates: tools.includes('delegate') ? agentDelegates : [], parameters },
+        { name: name.trim(), avatar, instructions: instructions.trim(), provider, model, tools: tools.filter((id) => organizationTools.includes(id)), mcpServers: tools.includes('mcp') ? agentMcp : [], delegates: tools.includes('delegate') ? agentDelegates : [], parameters, skills: agentSkills },
         agent?.id,
       )
       setSavedInstructions(saved.instructions)
@@ -195,7 +211,7 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         <button type="button" className="studio-icon" aria-label={t('common.back')} title={t('common.back')} onClick={onClose}>
           <ChevronLeft size={17} />
         </button>
-        {agent?.canEdit && (
+        {agent?.canShare && (
           <button
             type="button"
             className={`studio-icon studio-delete ${confirmDelete ? 'armed' : ''}`}
@@ -354,6 +370,38 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         </div>
       )}
 
+      {(skillLibrary.length > 0 || agentSkills.length > 0) && (
+        <>
+          <span className="studio-parameters-label">{t('skills.title')}</span>
+          <div className="studio-tools" role="group" aria-label={t('studio.skills')}>
+            {skillLibrary.map((skill) => (
+              <button
+                key={skill.id}
+                type="button"
+                className="studio-tool"
+                title={skill.description}
+                aria-pressed={agentSkills.includes(skill.id)}
+                disabled={!agentSkills.includes(skill.id) && agentSkills.length >= 10}
+                onClick={() => setAgentSkills(agentSkills.includes(skill.id) ? agentSkills.filter((id) => id !== skill.id) : [...agentSkills, skill.id])}
+              >
+                {skill.confidential ? <Lock size={13} /> : <GraduationCap size={13} />}
+                {skill.name}
+              </button>
+            ))}
+            {/* Confiée par quelqu'un d'autre et non partagée avec moi : je peux seulement la retirer. */}
+            {agentSkills
+              .filter((id) => !skillLibrary.some((skill) => skill.id === id))
+              .map((id) => (
+                <button key={id} type="button" className="studio-tool" aria-pressed onClick={() => setAgentSkills(agentSkills.filter((item) => item !== id))}>
+                  <GraduationCap size={13} />
+                  {t('studio.skillHidden')}
+                </button>
+              ))}
+          </div>
+          <p className="settings-hint">{t('studio.skillsHint')}</p>
+        </>
+      )}
+
       <div className="studio-parameters" role="group" aria-label={t('studio.answers')}>
         <span className="studio-parameters-label">{t('studio.creativity')}</span>
         <div className="settings-segmented" role="radiogroup" aria-label={t('studio.creativity')}>
@@ -415,6 +463,9 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         <Check size={16} />
         {agent ? t('common.save') : t('common.create')}
       </button>
+
+      {/* Partage : avec qui, pour lire ou modifier (auteur ou administrateur). Enregistré à part. */}
+      {agent?.canShare && <SharePanel resource={{ type: 'agent', id: agent.id, name: agent.name }} onError={setError} />}
     </form>
   )
 }

@@ -271,6 +271,7 @@ describe("API HTTP : conversations", () => {
       edited: false,
       passages: 0,
       partial: false,
+      truncated: false,
       steps: 0,
     });
   });

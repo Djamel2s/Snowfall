@@ -38,15 +38,58 @@ export type Message = {
   branch?: MessageBranch
   /** Ton retour sur une réponse. */
   feedback?: MessageFeedback
+  /** Auteur d'une réponse : « agent:<id> » ou « model:<fournisseur>:<modèle> ». */
+  author?: string
+  /** Réponse inachevée (longueur maximale, arrêt) : elle peut être continuée. */
+  incomplete?: boolean
 }
 
 export type MessageFeedback = { rating: 'up' | 'down'; comment?: string }
 
 export type MessageBranch = { index: number; count: number; siblings: string[] }
 
+/** Réglages d'une conversation : priment sur ceux de l'agent (absents : ceux de l'agent). */
+export type ConversationSettings = {
+  creativity?: 'precise' | 'balanced' | 'creative'
+  length?: 'concise' | 'complete'
+  instructions?: string
+}
+
+/** Compétence : savoir-faire que l'agent charge quand la demande correspond à sa description. */
+export type SkillFile = { id: string; name: string; mediaType: string; size: number; createdAt: string }
+export type Skill = {
+  id: string
+  name: string
+  description: string
+  instructions: string
+  confidential: boolean
+  version: number
+  mine: boolean
+  canEdit: boolean
+  shared: boolean
+  files: SkillFile[]
+  updatedAt: string
+}
+export type SkillInput = { name: string; description: string; instructions: string; confidential: boolean }
+
+/** Fichier déjà envoyé (« Mes fichiers »), avec sa conversation d'origine. */
+export type LibraryFile = AttachmentMeta & { conversationId: string }
+
+/** Préréglage : réglages nommés, privés, réappliqués en un clic. */
+export type Preset = { id: string; name: string; settings: ConversationSettings; createdAt: string }
+
 /** Prompt de la bibliothèque : privé, ou partagé avec l'organisation. */
-export type Prompt = { id: string; name: string; content: string; shared: boolean; mine: boolean; updatedAt: string }
-export type PromptInput = { name: string; content: string; shared: boolean }
+/** Prompt de la bibliothèque : le mien, ou partagé avec moi (lecture ou modification). */
+export type Prompt = { id: string; name: string; content: string; mine: boolean; shared: boolean; canEdit: boolean; updatedAt: string }
+export type PromptInput = { name: string; content: string }
+
+/** Autorisation sur un agent ou un prompt : une personne, un groupe, ou toute l'organisation. */
+export type AccessGrant = {
+  principal: { type: 'user'; id: string } | { type: 'group'; id: string } | { type: 'organization' }
+  permission: 'view' | 'edit'
+}
+export type SharingDirectory = { members: { userId: string; email: string }[]; groups: { id: string; name: string; memberCount: number }[] }
+export type MemberGroup = { id: string; name: string; memberIds: string[] }
 
 /** Lien de partage interne (le jeton est le secret du lien). */
 export type ShareLink = { id: string; token: string; expiresAt: string; createdAt: string }
@@ -104,6 +147,9 @@ export type ConversationSummary = {
   temporary?: boolean
   /** Donnée sensible détectée un jour : modèle local, définitivement. */
   sensitive?: boolean
+  settings?: ConversationSettings
+  archived?: boolean
+  tags?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -174,6 +220,8 @@ export type AgentInput = {
   delegates?: string[]
   /** Réglages des réponses ; absents : ceux du fournisseur. */
   parameters?: AgentParameters
+  /** Compétences confiées (chargées à la demande par l'agent). */
+  skills?: string[]
 }
 
 export type AgentParameters = { creativity?: 'precise' | 'balanced' | 'creative'; length?: 'concise' | 'complete' }
@@ -182,6 +230,8 @@ export type Agent = AgentInput & {
   id: string
   createdBy: string | null
   canEdit: boolean
+  /** Supprimer et partager : son auteur ou un administrateur. */
+  canShare?: boolean
   /** Réponses jugées utiles dans l'organisation (présent à partir de 5 avis). */
   rating?: { up: number; total: number }
 }
@@ -194,6 +244,9 @@ export type Preferences = {
   reduceMotion: 'system' | 'on' | 'off'
   /** Mémoire activée (désactivée par défaut). */
   memory: boolean
+  theme: 'system' | 'dark' | 'light'
+  /** « Qui je suis, comment me répondre » : accompagne chaque message. */
+  instructions: string
 }
 
 /** Fait retenu à la demande de l'utilisateur. */
@@ -265,7 +318,29 @@ export type McpServer = {
   kind?: 'mcp' | 'openapi'
   url?: string
   hasToken?: boolean
+  /** Connecteur du catalogue reconnu à son adresse (logo, catégorie). */
+  catalogId?: string
   tools: { name: string; title: string | null; access: 'read' | 'write' }[]
+}
+
+/** Connecteur connu (serveur MCP publié par son éditeur), ajouté en un clic par un administrateur. */
+export type CatalogConnector = {
+  id: string
+  name: string
+  category: string
+  description: string
+  url: string
+  auth: 'oauth' | 'token' | 'none'
+  needsClient?: boolean
+  scope?: string
+  tenant?: boolean
+  preview?: boolean
+  allowlist?: boolean
+  license?: string
+  source: 'vendor' | 'directory'
+  docs?: string
+  icon: string | null
+  color: string
 }
 
 /** Serveur MCP en mode OAuth, et si l'utilisateur y est connecté avec son compte. */
@@ -329,7 +404,9 @@ async function errorMessage(response: Response) {
     case 429:
       return t('error.tooMany')
     default:
-      return t('error.server', { status: response.status })
+      return body.reason && /^[a-z_]{1,60}$/.test(body.reason)
+        ? t('error.serverReason', { status: response.status, reason: body.reason })
+        : t('error.server', { status: response.status })
   }
 }
 
@@ -352,6 +429,61 @@ function qualityError(reason: string): string | null {
       return t('quality.error.unavailable')
     case 'quota':
       return t('error.quota')
+    case 'instructions_sensitive':
+      return t('instructions.error.sensitive')
+    case 'instructions_injection':
+      return t('instructions.error.injection')
+    case 'unknown_principal':
+      return t('share.error.unknown')
+    case 'sharing_limit':
+      return t('share.error.limit')
+    case 'skill_injection':
+      return t('skills.error.injection')
+    case 'skill_sensitive':
+      return t('skills.error.sensitive')
+    case 'skill_file_sensitive':
+      return t('skills.error.fileSensitive')
+    case 'skill_files_limit':
+      return t('skills.error.filesLimit')
+    case 'http_error':
+    case 'timeout':
+    case 'network':
+    case 'protocol_error':
+      return t('connectors.error.unreachable')
+    case 'invalid_state':
+      return t('connectors.error.state')
+    case 'token_failed':
+      return t('connectors.error.token_failed')
+    case 'connect_required':
+      return t('connectors.error.connectRequired')
+    case 'invalid_url':
+      return t('connectors.error.url')
+    case 'already_added':
+      return t('connectors.error.alreadyAdded')
+    case 'oauth_discovery_failed':
+      return t('connectors.error.discovery')
+    case 'oauth_registration_required':
+      return t('connectors.error.registration')
+    case 'oauth_registration_failed':
+      return t('connectors.error.registrationFailed')
+    case 'tenant_required':
+      return t('connectors.error.tenant')
+    case 'token_required':
+      return t('connectors.error.token')
+    case 'skill_zip_invalid':
+    case 'skill_zip_invalid_zip':
+      return t('skills.error.zip')
+    case 'skill_zip_too_large':
+    case 'skill_zip_too_many_entries':
+      return t('skills.error.zipTooLarge')
+    case 'skill_zip_missing_skill_md':
+      return t('skills.error.zipMissing')
+    case 'skill_zip_invalid_skill_md':
+      return t('skills.error.zipSkillMd')
+    case 'presets_limit':
+      return t('presets.limit')
+    case 'local_only':
+      return t('picker.localOnly')
     case 'not_enough_examples':
       return t('workshop.error.notEnough')
     case 'examples_limit':
@@ -406,7 +538,9 @@ async function send(path: string, init: RequestInit = {}) {
     ...init,
     credentials: 'same-origin',
     headers: {
-      ...(init.body instanceof Blob ? {} : { 'Content-Type': 'application/json' }),
+      // JSON seulement s'il y a un corps texte : le serveur refuse un corps JSON vide
+      // (DELETE, POST sans données). Un fichier envoie son propre type.
+      ...(typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
       ...init.headers,
     },
   })
@@ -555,7 +689,7 @@ export type RunSnapshot = {
   approvals: (ToolApproval & { stepId: string; tool: string })[]
 }
 
-export type ActiveRun = RunSnapshot & { id: string; kind: 'message' | 'regenerate'; question: string }
+export type ActiveRun = RunSnapshot & { id: string; kind: 'message' | 'regenerate' | 'continue'; question: string }
 
 /** Demande de validation reçue du serveur, rattachée à son étape. */
 export const approvalStep = (payload: { id: unknown; stepId: unknown; tool: unknown; title: unknown; detail?: unknown; warning?: unknown; exposure?: unknown; onBehalfOf?: unknown }): AgentStep => ({
@@ -667,9 +801,41 @@ export const api = {
       agentId?: string | null
       model?: ModelSelection | null
       knowledge?: { agent?: boolean; project?: boolean }
+      settings?: ConversationSettings
+      archived?: boolean
+      tags?: string[]
     },
   ) =>
     (await request<{ conversation: ConversationSummary }>(`/conversations/${id}`, json('PATCH', changes))).conversation,
+
+  /** Nouvelle conversation reprenant celle-ci jusqu'à ce message. */
+  forkConversation: async (id: string, messageId: string) =>
+    (await request<{ conversation: ConversationSummary }>(`/conversations/${id}/fork`, json('POST', { messageId }))).conversation,
+
+  listSkills: async () => (await request<{ skills: Skill[] }>('/skills')).skills,
+  createSkill: async (input: SkillInput) => (await request<{ skill: Skill }>('/skills', json('POST', input))).skill,
+  updateSkill: async (id: string, input: SkillInput) => (await request<{ skill: Skill }>(`/skills/${id}`, json('PUT', input))).skill,
+  deleteSkill: (id: string) => request<void>(`/skills/${id}`, { method: 'DELETE' }),
+  uploadSkillFile: async (id: string, file: Blob, name: string) =>
+    (
+      await request<{ file: SkillFile }>(`/skills/${id}/files`, {
+        method: 'POST',
+        body: file,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) },
+      })
+    ).file,
+  deleteSkillFile: (id: string, fileId: string) => request<void>(`/skills/${id}/files/${fileId}`, { method: 'DELETE' }),
+
+  listFiles: async () => (await request<{ files: LibraryFile[] }>('/me/files')).files,
+  /** Copie d'un fichier déjà envoyé, en attente dans cette conversation. */
+  copyAttachment: async (conversationId: string, attachmentId: string) =>
+    request<{ attachment: AttachmentMeta; sensitive?: boolean }>(`/conversations/${conversationId}/attachments/copy`, json('POST', { attachmentId })),
+  deleteFile: (id: string) => request<void>(`/me/files/${id}`, { method: 'DELETE' }),
+
+  listPresets: async () => (await request<{ presets: Preset[] }>('/me/presets')).presets,
+  createPreset: async (name: string, settings: ConversationSettings) =>
+    (await request<{ preset: Preset }>('/me/presets', json('POST', { name, settings }))).preset,
+  deletePreset: (id: string) => request<void>(`/me/presets/${id}`, { method: 'DELETE' }),
 
   getMessages: async (id: string) => {
     const data = await request<Message[] | { messages: Message[] }>(`/conversations/${id}/messages`)
@@ -682,8 +848,12 @@ export const api = {
     options: StreamOptions = {},
   ) => stream<{ userMessage: Message; assistantMessage: Message }>(`/conversations/${id}/messages`, input, options),
 
-  regenerate: (id: string, options: StreamOptions = {}) =>
-    stream<{ assistantMessage: Message }>(`/conversations/${id}/regenerate`, {}, options),
+  /** Régénérer ; avec un modèle : comparer (même question, autre modèle, nouvelle version). */
+  regenerate: (id: string, options: StreamOptions = {}, model?: ModelSelection) =>
+    stream<{ assistantMessage: Message }>(`/conversations/${id}/regenerate`, model ? { model } : {}, options),
+  /** Reprend la dernière réponse inachevée là où elle s'arrête (même message). */
+  continueAnswer: (id: string, options: StreamOptions = {}) =>
+    stream<{ assistantMessage: Message }>(`/conversations/${id}/continue`, {}, options),
 
   /** Ta réponse à une demande de validation : la réponse reprend, diffusée comme un envoi. */
   decideApproval: (conversationId: string, approvalId: string, approved: boolean, options: StreamOptions = {}) =>
@@ -693,6 +863,16 @@ export const api = {
   listMemories: async () => (await request<{ memories: UserMemory[] }>('/me/memories')).memories,
   deleteMemory: (id: string) => request<void>(`/me/memories/${id}`, { method: 'DELETE' }),
   clearMemories: () => request<void>('/me/memories', { method: 'DELETE' }),
+
+  sharingDirectory: () => request<SharingDirectory>('/sharing/directory'),
+  getAccess: async (type: 'agent' | 'prompt' | 'skill', id: string) => (await request<{ grants: AccessGrant[] }>(`/${type}s/${id}/access`)).grants,
+  setAccess: async (type: 'agent' | 'prompt' | 'skill', id: string, grants: AccessGrant[]) =>
+    (await request<{ grants: AccessGrant[] }>(`/${type}s/${id}/access`, json('PUT', { grants }))).grants,
+  listGroups: async () => (await request<{ groups: MemberGroup[] }>('/groups')).groups,
+  createGroup: async (name: string) => (await request<{ group: MemberGroup }>('/groups', json('POST', { name }))).group,
+  updateGroup: async (id: string, changes: { name?: string; memberIds?: string[] }) =>
+    (await request<{ group: MemberGroup }>(`/groups/${id}`, json('PUT', changes))).group,
+  deleteGroup: (id: string) => request<void>(`/groups/${id}`, { method: 'DELETE' }),
 
   listPrompts: async () => (await request<{ prompts: Prompt[] }>('/prompts')).prompts,
   createPrompt: async (input: PromptInput) => (await request<{ prompt: Prompt }>('/prompts', json('POST', input))).prompt,
@@ -849,13 +1029,23 @@ export const api = {
   revokeInvitation: (id: string) => request<void>(`/organization/invitations/${id}`, { method: 'DELETE' }),
 
   // Serveurs MCP : ajout, examen et approbation par un administrateur.
+  mcpCatalog: async () => (await request<{ connectors: CatalogConnector[] }>('/mcp-catalog')).connectors,
+  addCatalogConnector: async (id: string, input: { tenant?: string; token?: string; clientId?: string; clientSecret?: string }) =>
+    (await request<{ server: McpServer }>(`/organization/mcp-catalog/${id}`, json('POST', input))).server,
+  /** Import d'un dossier de compétence zippé (SKILL.md + références). */
+  importSkill: async (file: Blob, confidential: boolean) =>
+    request<{ skill: Skill; skipped: { name: string; reason: 'script' | 'unsupported' | 'unreadable' | 'limit' }[] }>(`/skills/import${confidential ? '?confidential=true' : ''}`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    }),
   listMcpServers: async () => (await request<{ servers: McpServer[] }>('/organization/mcp-servers')).servers,
   listMcpConnections: async () => (await request<{ connections: McpConnection[] }>('/me/mcp-connections')).connections,
   /** Adresse du fournisseur OAuth où envoyer l'utilisateur. */
   connectMcp: async (id: string) => (await request<{ authorizationUrl: string }>(`/mcp-servers/${id}/connect`, json('POST', {}))).authorizationUrl,
   finishMcpConnection: (state: string, code: string) => request<{ serverId: string; name: string }>('/mcp/oauth/callback', json('POST', { state, code })),
   disconnectMcp: (id: string) => request<void>(`/mcp-servers/${id}/connection`, { method: 'DELETE' }),
-  createMcpServer: async (input: { name: string; url: string; token?: string; oauth?: { clientId: string; clientSecret?: string; scope?: string }; openapi?: { spec: Record<string, unknown> } }) =>
+  createMcpServer: async (input: { name: string; url: string; token?: string; oauth?: { clientId?: string; clientSecret?: string; scope?: string }; openapi?: { spec: Record<string, unknown> } }) =>
     (await request<{ server: McpServer }>('/organization/mcp-servers', json('POST', input))).server,
   discoverMcpTools: async (id: string) =>
     (await request<{ tools: McpDiscoveredTool[] }>(`/organization/mcp-servers/${id}/discover`, { method: 'POST' })).tools,

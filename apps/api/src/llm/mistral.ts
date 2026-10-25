@@ -58,7 +58,7 @@ export function createMistralModel(model: string, settings: ProviderSettings): C
       const llm = clientFor(request.generation);
       const runnable = request.tools?.length ? llm.bindTools(toMistralTools(request.tools)) : llm;
       const stream = await runnable.stream(
-        [new SystemMessage(buildSystemPrompt(request.instructions, request.summary, request.memories)), ...toMistralMessages(conversationTurns(request))],
+        [new SystemMessage(buildSystemPrompt(request.instructions, request.summary, request.memories, request.profile)), ...toMistralMessages(conversationTurns(request))],
         { signal: signal ? AbortSignal.any([signal, timeout]) : timeout },
       );
 
@@ -86,6 +86,10 @@ export function createMistralModel(model: string, settings: ProviderSettings): C
           };
         }
       }
+
+      // Fin de réponse : longueur maximale (de la requête ou du modèle) atteinte.
+      const finish = (full?.response_metadata as { finishReason?: string } | undefined)?.finishReason;
+      if (finish === "length" || finish === "model_length") yield { type: "truncated" };
 
       for (const call of full?.tool_calls ?? []) {
         yield { type: "tool_call", call: { id: call.id ?? `call${Math.random().toString(36).slice(2, 7)}`, name: call.name, arguments: call.args } };

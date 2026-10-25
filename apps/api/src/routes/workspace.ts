@@ -1,4 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { detectSensitive } from "../security/sensitive.js";
+import { detectInjection } from "../security/injection.js";
 import { z } from "zod";
 import { knownTools, toolIds, type ToolId } from "../agent/catalog.js";
 import { organizationRoles } from "../auth/auth.js";
@@ -6,7 +8,7 @@ import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddi
 import { providerIds, type ProviderId } from "../llm/types.js";
 import type { ProjectStore } from "../projects/store.js";
 import { MemberRuleError, type MemberStore } from "../workspace/members.js";
-import { locales, type PreferencesStore } from "../workspace/preferences.js";
+import { locales, MAX_INSTRUCTIONS, themes, type PreferencesStore } from "../workspace/preferences.js";
 import { toolMeters, type SettingsStore, type ToolUsageStore } from "../workspace/settings.js";
 import type { RouteKit } from "./kit.js";
 
@@ -64,12 +66,22 @@ const settingsSchema = z.object({
     .optional(),
 }).strict();
 
+/** Instructions personnalisées refusées : donnée sensible ou tentative d'injection. */
+/** Instructions écrites par l'utilisateur (profil, conversation, préréglage) : elles partent vers le modèle. */
+export function instructionsRejection(text: string): "sensitive" | "injection" | null {
+  if (detectSensitive(text).length) return "sensitive";
+  if (detectInjection(text).suspicious) return "injection";
+  return null;
+}
+
 const preferencesSchema = z.object({
   locale: z.enum(locales).nullable(),
   sendOnEnter: z.boolean(),
   reduceMotion: z.enum(["system", "on", "off"]),
   // Absent (ancien client) : la mémoire reste désactivée.
   memory: z.boolean().default(false),
+  theme: z.enum(themes).default("system"),
+  instructions: z.string().max(MAX_INSTRUCTIONS).default(""),
 }).strict();
 
 const projectSchema = z.object({ name: z.string().trim().min(1).max(80) }).strict();
@@ -100,6 +112,9 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       kit.privateResponse(reply);
       const body = preferencesSchema.safeParse(request.body);
       if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+      // Elles partent avec chaque message : ni donnée sensible, ni lien, ni consigne déguisée.
+      const rejected = body.data.instructions.trim() ? instructionsRejection(body.data.instructions) : null;
+      if (rejected) return reply.code(400).send({ error: "Invalid request", reason: `instructions_${rejected}` });
       return { preferences: await preferences.update(user, body.data) };
     });
   }

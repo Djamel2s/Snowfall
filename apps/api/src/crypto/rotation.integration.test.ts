@@ -75,7 +75,7 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     const exchange = (await conversations.appendExchange(as(alice), conversation.id, "Question confidentielle", "Réponse confidentielle"))!;
     await conversations.setFeedback(as(alice), conversation.id, exchange.assistantMessage.id, { rating: "down", comment: "Imprécis" });
     await memories.add(as(alice), "Préfère des réponses courtes");
-    await prompts.create(as(gone), { name: "Résumé", content: "Résume en 3 points.", shared: true });
+    await prompts.create(as(gone), { name: "Résumé", content: "Résume en 3 points." });
 
     // Rotation : version 2 de la clé d'organisation.
     await inTenant(null, async (client) => {

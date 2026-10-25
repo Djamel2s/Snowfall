@@ -4,8 +4,18 @@ import { mockApi } from './mock-api'
 // Parcours : les réglages. « Mon compte » d'un côté, l'organisation de l'autre
 // (administrateurs), en rubriques ; un outil non installé reste visible.
 
+async function openConnectors(page: import('@playwright/test').Page) {
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).waitFor()
+  const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
+  if (await menu.isVisible().catch(() => false)) await menu.click()
+  await page.getByRole('button', { name: 'Connecteurs', exact: true }).first().click()
+}
+
 async function openSettings(page: import('@playwright/test').Page) {
   await page.goto('/')
+  // L'application d'abord : sinon, sur mobile, le bouton menu n'est pas encore là et on le saute.
+  await page.getByPlaceholder(/Posez votre question/).waitFor()
   const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
   if (await menu.isVisible().catch(() => false)) await menu.click()
   await page.getByRole('button', { name: 'Paramètres' }).first().click()
@@ -36,9 +46,9 @@ test('administrateur : mon compte, puis l’organisation en rubriques', async ({
   await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
   // Installé : activable ; non installé (MCP, interpréteur) : visible, grisé, avec la raison.
   await expect(page.getByRole('switch', { name: /Recherche web/ })).toBeEnabled()
-  const mcp = page.getByRole('switch', { name: /Serveurs MCP/ })
+  const mcp = page.getByRole('switch', { name: /^Connecteurs/ })
   await expect(mcp).toBeDisabled()
-  await expect(page.getByText(/Serveurs MCP · non installé sur la plateforme/)).toBeVisible()
+  await expect(page.getByText(/Connecteurs · non installé sur la plateforme/)).toBeVisible()
   await page.screenshot({ path: info.outputPath('outils.png'), fullPage: true })
 
   await page.getByRole('tab', { name: 'Membres et accès' }).click()
@@ -103,13 +113,15 @@ test('pseudonymisation : désactivée par défaut, activée et enregistrée', as
   expect(api.savedSettings[0]!.pseudonymize).toBe(true)
 })
 
-test('MCP installé : la rubrique outils montre aussi les serveurs', async ({ page }) => {
+test('MCP installé : l’outil se règle ici, les serveurs se gèrent dans Connecteurs', async ({ page }) => {
   await mockApi(page, { role: 'admin', platformTools: ['search_knowledge', 'save_to_knowledge', 'mcp'] })
   await openSettings(page)
   await page.getByRole('tab', { name: 'Organisation' }).click()
   await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
-  await expect(page.getByRole('switch', { name: /Serveurs MCP/ })).toBeEnabled()
-  await expect(page.getByRole('heading', { name: 'Serveurs MCP' })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /^Connecteurs/ })).toBeEnabled()
+  await expect(page.getByText('barre latérale › Connecteurs')).toBeVisible()
+  await openConnectors(page)
+  await expect(page.getByRole('tab', { name: 'Ajoutés (0)' })).toBeVisible()
 })
 
 test('membre : seulement son compte, aucun onglet d’organisation', async ({ page }) => {
@@ -142,35 +154,36 @@ test('mémoire : désactivée par défaut, activée, faits visibles et oubliable
   await expect(card.getByText('Rien de retenu pour l’instant.')).toBeVisible()
 })
 
-test('connexion OAuth à un outil externe : retour du fournisseur, code renvoyé en POST, adresse nettoyée', async ({ page }, info) => {
-  const api = await mockApi(page, { mcpOAuth: true })
-  await openSettings(page)
-  const card = page.getByRole('region', { name: 'Connexions' })
-  await expect(card).toContainText('Non connecté')
-  await card.getByRole('button', { name: 'Se connecter à Jira' }).click()
-
-  // Retour sur /mcp/callback : le code part au serveur, l'adresse redevient « / ».
-  await expect.poll(() => api.oauthCallbacks).toEqual([{ state: 'S'.repeat(43), code: 'code-42' }])
-  await expect(page).toHaveURL(/\/$/)
-  const after = page.getByRole('region', { name: 'Connexions' })
-  await expect(after.getByRole('status')).toHaveText('Connecté à Jira.')
-  await expect(after).toContainText('Connecté avec ton compte')
-  await after.scrollIntoViewIfNeeded()
-  await page.screenshot({ path: info.outputPath('connexions.png') })
-})
-
 test('connecteur OpenAPI : la spécification est lue dans le navigateur et envoyée avec l’adresse de base', async ({ page }) => {
   const api = await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
-  await openSettings(page)
-  await page.getByRole('tab', { name: 'Organisation' }).click()
-  await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
-  await page.getByRole('radio', { name: 'API OpenAPI' }).click()
-  await page.getByLabel('Nom').last().fill('Tickets')
-  await page.getByLabel('URL').fill('https://api.example.com/v2')
+  await openConnectors(page)
+  await page.getByRole('tab', { name: 'Catalogue' }).click()
+  await page.getByRole('button', { name: 'Connecteur personnalisé' }).click()
+  const form = page.getByRole('form', { name: 'Connecteur personnalisé' })
+  await form.getByRole('radio', { name: /API décrite par une spécification/ }).click()
+  await form.getByRole('textbox', { name: 'Nom' }).fill('Tickets')
+  await form.getByRole('textbox', { name: /Adresse du connecteur/ }).fill('https://api.example.com/v2')
   const spec = { openapi: '3.1.0', info: { title: 'Tickets', version: '1' }, paths: { '/tickets': { get: { operationId: 'list' } } } }
   await page.locator('.mcp-spec input[type=file]').setInputFiles({ name: 'tickets.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(spec)) })
   await expect(page.locator('.mcp-spec')).toContainText('tickets.json')
-  await page.getByRole('button', { name: 'Ajouter le serveur' }).click()
+  await form.getByRole('button', { name: 'Ajouter', exact: true }).click()
   await expect.poll(() => api.createdConnectors).toEqual([{ name: 'Tickets', url: 'https://api.example.com/v2', openapi: { spec } }])
-  await expect(page.getByText(/^API · /)).toBeVisible()
+  // Même parcours qu'un connecteur du catalogue : sa fiche s'ouvre sur le choix des outils.
+  await expect(page.getByRole('region', { name: 'Tickets' }).getByRole('radio', { name: /Lecture seule/ })).toBeVisible()
+})
+
+test('connecteur personnalisé OAuth : rien d’obligatoire hormis l’adresse, puis connexion depuis la fiche', async ({ page }) => {
+  const api = await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
+  await openConnectors(page)
+  await page.getByRole('tab', { name: 'Catalogue' }).click()
+  await page.getByRole('button', { name: 'Connecteur personnalisé' }).click()
+  const form = page.getByRole('form', { name: 'Connecteur personnalisé' })
+  await expect(form.getByRole('radio', { name: /Chacun avec son compte/ })).toHaveAttribute('aria-checked', 'true')
+  await form.getByRole('textbox', { name: 'Nom' }).fill('Wiki')
+  await form.getByRole('textbox', { name: /Adresse du connecteur/ }).fill('https://wiki.example.com/mcp')
+  await form.getByRole('button', { name: 'Ajouter', exact: true }).click()
+  await expect.poll(() => api.createdConnectors).toEqual([{ name: 'Wiki', url: 'https://wiki.example.com/mcp', oauth: {} }])
+  const card = page.getByRole('region', { name: 'Wiki' })
+  await expect(card.getByRole('list', { name: 'Étapes' }).locator('[aria-current="step"]')).toHaveText(/Connexion/)
+  await expect(card.getByRole('button', { name: 'Se connecter à Wiki' })).toBeVisible()
 })

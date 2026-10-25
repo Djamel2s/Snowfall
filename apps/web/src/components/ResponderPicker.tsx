@@ -1,5 +1,5 @@
 import { useEffect, useId, useImperativeHandle, useRef, useState, type KeyboardEvent, type Ref } from 'react'
-import { Check, Search } from 'lucide-react'
+import { Check, ChevronDown, Search } from 'lucide-react'
 import type { Agent, ProviderCatalog } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
@@ -26,6 +26,8 @@ type Props = {
   onOpenChange: (open: boolean) => void
   onPick: (choice: ResponderChoice) => void
   controlRef?: Ref<PickerControl>
+  /** « chip » : bouton compact de l'en-tête (conversation commencée), au lieu de la grande pastille. */
+  variant?: 'peek' | 'chip'
 }
 
 const responderKey = (current: Responder) =>
@@ -35,7 +37,7 @@ const responderKey = (current: Responder) =>
  * Le « bonhomme » (ou le logo du modèle) qui dépasse du composer : un clic
  * ouvre la liste des agents et des modèles, comme une mention « @ ».
  */
-export default function ResponderPicker({ current, agents, providers, open, mention, onOpenChange, onPick, controlRef }: Props) {
+export default function ResponderPicker({ current, agents, providers, open, mention, onOpenChange, onPick, controlRef, variant = 'peek' }: Props) {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [activeKey, setActiveKey] = useState<string | null>(null)
@@ -114,8 +116,38 @@ export default function ResponderPicker({ current, agents, providers, open, ment
 
   useImperativeHandle(controlRef, () => ({ handleKey }))
 
+  const chip = variant === 'chip'
   return (
-    <div className={`composer-peek ${current.kind === 'agent' ? '' : 'composer-peek-model'}`} ref={rootRef}>
+    <div className={chip ? 'responder-chip' : `composer-peek ${current.kind === 'agent' ? '' : 'composer-peek-model'}`} ref={rootRef}>
+      {chip ? (
+        <button
+          type="button"
+          className="topbar-agent responder-chip-button"
+          aria-label={t('picker.change')}
+          title={t('picker.change')}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          onClick={toggle}
+        >
+          {current.kind === 'agent' ? (
+            <>
+              <AgentAvatar avatar={current.agent.avatar} size={24} />
+              {current.agent.name}
+              <ProviderLogo provider={current.agent.provider} size={12} />
+            </>
+          ) : current.kind === 'model' ? (
+            <>
+              <ProviderLogo provider={current.provider} size={14} />
+              {current.label}
+            </>
+          ) : (
+            <img src="/logo.png" alt="" width={18} height={18} />
+          )}
+          <ChevronDown size={13} aria-hidden="true" />
+        </button>
+      ) : (
+      <>
       <span className="composer-peek-halo" aria-hidden="true" />
       <button
         type="button"
@@ -140,6 +172,8 @@ export default function ResponderPicker({ current, agents, providers, open, ment
           </span>
         )}
       </button>
+      </>
+      )}
 
       {open && (
         <div className="responder-popover" onKeyDown={(event) => void handleKey(event)}>

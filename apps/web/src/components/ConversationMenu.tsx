@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Copy, FileJson, FileText, Link2, MoreHorizontal, Trash2 } from 'lucide-react'
+import { Check, Copy, FileImage, FileJson, FileText, FileType, Link2, MoreHorizontal, Printer, Trash2 } from 'lucide-react'
 import { api, type Message, type ShareLink } from '../lib/api'
-import { downloadText, exportFileName, shareUrl, toExport, toMarkdown } from '../lib/export'
+import { downloadBlob, downloadText, exportFileName, shareUrl, toExport, toImage, toMarkdown, toText } from '../lib/export'
 import { formatDate, useI18n } from '../lib/i18n'
 
 type Props = {
@@ -133,6 +133,34 @@ export default function ConversationMenu({ conversationId, title, messages, canS
               >
                 <FileJson size={14} />
                 JSON
+              </button>
+              <button type="button" className="chat-actions-item" onClick={() => downloadText(toText(title, messages, labels), 'text/plain', exportFileName(title, 'txt'))}>
+                <FileType size={14} />
+                {t('export.text')}
+              </button>
+              <button
+                type="button"
+                className="chat-actions-item"
+                onClick={() => {
+                  // PDF : l'impression du navigateur (« Enregistrer au format PDF »), mise en page dédiée.
+                  setOpen(false)
+                  setTimeout(() => window.print(), 50)
+                }}
+              >
+                <Printer size={14} />
+                PDF
+              </button>
+              <button
+                type="button"
+                className="chat-actions-item"
+                onClick={() =>
+                  void toImage(title, messages, { ...labels, cut: t('export.imageCut') })
+                    .then((blob) => downloadBlob(blob, exportFileName(title, 'png')))
+                    .catch((cause: unknown) => onError(cause instanceof Error ? cause.message : String(cause)))
+                }
+              >
+                <FileImage size={14} />
+                {t('export.image')}
               </button>
             </div>
           </section>

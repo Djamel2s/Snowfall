@@ -20,7 +20,7 @@ test('prompts : création, « / » dans la saisie, variables renseignées', asyn
   await expect(page.getByText('Variables : langue, texte')).toBeVisible()
   const created = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/api/prompts'))
   await page.getByRole('button', { name: 'Enregistrer' }).click()
-  expect((await created).postDataJSON()).toEqual({ name: 'Traduction', content: 'Traduis en {{langue}} : {{texte}}', shared: false })
+  expect((await created).postDataJSON()).toEqual({ name: 'Traduction', content: 'Traduis en {{langue}} : {{texte}}' })
   await page.screenshot({ path: info.outputPath('bibliotheque.png') })
   if (mobile) await page.mouse.click((page.viewportSize()?.width ?? 400) - 10, 300)
 
