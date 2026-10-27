@@ -75,6 +75,9 @@ const privileges: Record<string, string[]> = {
   decision_examples: ["SELECT", "INSERT", "DELETE"],
   decision_models: ["SELECT", "INSERT", "UPDATE (status, activated_at)"],
   agent_schedules: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  // Clés d'API : jamais effacées (audit) ; seuls la révocation et le dernier usage changent.
+  api_keys: ["SELECT", "INSERT", "UPDATE (last_used_at, revoked_at)"],
+  // api_key_index : aucun droit, lue seulement via snowfall_api_key_lookup().
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
@@ -89,6 +92,7 @@ const functions = [
   "snowfall_expired_temporary()",
   "snowfall_agent_ratings()",
   "snowfall_claim_schedules(interval, integer)",
+  "snowfall_api_key_lookup(text)",
   // Contrôles de droits appelés par la RLS (SECURITY INVOKER : la RLS s'applique dedans).
   "snowfall_is_admin()",
   "snowfall_access(text, uuid)",

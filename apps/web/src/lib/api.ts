@@ -57,6 +57,19 @@ export type ConversationSettings = {
 
 /** Compétence : savoir-faire que l'agent charge quand la demande correspond à sa description. */
 /** hasOriginal : modèle binaire (Word, PDF, Excel, image) gardé pour les scripts de la compétence. */
+/** Clé d'API : la clé complète n'est renvoyée qu'à sa création. */
+export type ApiKey = {
+  id: string
+  name: string
+  prefix: string
+  createdBy: string
+  agentIds: string[]
+  expiresAt: string
+  lastUsedAt: string | null
+  revokedAt: string | null
+  createdAt: string
+}
+
 export type SkillFile = { id: string; name: string; mediaType: string; size: number; createdAt: string; hasOriginal?: boolean }
 export type Skill = {
   id: string
@@ -1055,4 +1068,8 @@ export const api = {
   setMcpServerEnabled: async (id: string, enabled: boolean) =>
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}`, json('PATCH', { enabled }))).server,
   deleteMcpServer: (id: string) => request<void>(`/organization/mcp-servers/${id}`, { method: 'DELETE' }),
+  // Clés d'API (administrateurs).
+  listApiKeys: async () => (await request<{ keys: ApiKey[] }>('/organization/api-keys')).keys,
+  createApiKey: (input: { name: string; agentIds: string[]; expiresInDays: number }) => request<{ key: string; record: ApiKey }>('/organization/api-keys', json('POST', input)),
+  revokeApiKey: (id: string) => request<void>(`/organization/api-keys/${id}`, { method: 'DELETE' }),
 }

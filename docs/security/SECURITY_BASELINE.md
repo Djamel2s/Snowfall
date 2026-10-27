@@ -315,8 +315,11 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - Connectors send data to the vendor's service (often outside the EU): the
   organization decides per connector; confidential conversations never call them.
 - No YouTube or Gmail-sending connector: Google publishes none.
-- Two dependency advisories remain open until their fixes are 14 days old
-  (fastify 5.12.6 on 2026-10-27, fast-uri 4.2.3 on 2026-11-02).
+- One dependency advisory remains open until its fix is 14 days old
+  (fast-uri 3.1.9 / 4.2.3 on 2026-11-02; moderate, URI parsing inside
+  fastify's schema compiler). fastify 5.12.6 and mermaid 12.2.0 were applied on
+  2026-10-27; every changed package in the lockfile was checked against the
+  14-day rule.
 - Adversarial review (2026-10-25), two findings fixed and tested:
   connector results now count as private data for the rule of two (a planted
   ticket could previously trigger an outbound call without consent), and a tool
@@ -337,6 +340,16 @@ adversarial code reviews whose findings were all fixed and covered by tests
   test passed vacuously (a raw read without tenant context returns no row under
   FORCE RLS), and that test file was in no test list. Both fixed: the read runs
   in the organization context and asserts one row; the file now runs with the suite.
+
+### Public API (2026-10-27)
+
+- API keys are stored as SHA-256 hashes only, shown once, scoped to listed
+  agents, valid at most 365 days, revocable, and act on behalf of their creator
+  only while that creator is still an administrator. `/v1` routes accept keys
+  only; UI routes accept sessions only. Writes are never approved through the API.
+- Known gaps: no IP allowlist per key; no finer scopes than "agents"; a key name
+  is a plaintext label; no CORS by design (server-to-server only); keys are not
+  rotated automatically (create a new one, then revoke the old one).
 
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 

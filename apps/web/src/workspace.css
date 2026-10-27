@@ -2082,3 +2082,27 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
   .mobile-scrim { opacity: 0; pointer-events: none; transition: opacity .28s ease; }
   .mobile-scrim.open { opacity: 1; pointer-events: auto; }
 }
+
+/* ---- Clés d'API (réglages de l'organisation) ---------------------------------- */
+.api-keys { display: grid; gap: 10px; }
+.api-key-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.api-key-list li { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px; border: 1px solid rgba(183, 210, 244, .1); border-radius: 10px; }
+.api-key-list li > svg { flex: none; margin-top: 2px; color: #8fa2bb; }
+.api-key-list li.inactive { opacity: .55; }
+.api-key-main { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.api-key-main strong { color: #dbe6f5; font-size: 12.5px; }
+.api-key-main small { color: #7d8ca4; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.api-key-main code { color: #c4d4ea; font-size: 10.5px; }
+.api-key-list .settings-icon { flex: none; }
+.api-key-form { display: grid; gap: 8px; }
+.api-key-form fieldset { display: grid; gap: 4px; margin: 0; padding: 8px 10px; border: 1px solid rgba(183, 210, 244, .1); border-radius: 10px; }
+.api-key-form legend { padding: 0 4px; color: #8fa0b8; font-size: 11.5px; }
+.api-key-form > input { height: 32px; padding: 0 10px; border: 1px solid rgba(183, 210, 244, .12); border-radius: 9px; background: rgba(255, 255, 255, .03); color: #dbe6f5; font: inherit; font-size: 12px; }
+.api-key-form select { height: 28px; border: 1px solid rgba(183, 210, 244, .12); border-radius: 7px; background: rgba(255, 255, 255, .03); color: #dbe6f5; font: inherit; font-size: 11.5px; }
+.api-key-fresh { display: grid; gap: 7px; padding: 10px 12px; border: 1px solid rgba(110, 231, 168, .3); border-radius: 12px; background: rgba(110, 231, 168, .06); }
+.api-key-fresh strong { color: #8ff0bf; font-size: 12.5px; }
+.api-key-fresh p { margin: 0; color: #c6d6ea; font-size: 11.5px; line-height: 1.45; }
+.api-key-fresh > button { justify-self: start; }
+.api-key-value { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.api-key-value code { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 8px; background: rgba(0, 0, 0, .35); color: #e3ecf8; font-size: 11px; overflow-wrap: anywhere; user-select: all; }
+.api-key-form fieldset .settings-row { justify-content: flex-start; gap: 9px; }

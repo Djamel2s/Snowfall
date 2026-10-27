@@ -120,6 +120,8 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const mcpConnected = new Set<string>()
   let mcpConnecting = 'mcp-1'
   const approveCalls: { id: string; tools: { name: string; access: string }[] }[] = []
+  const apiKeys: { id: string; name: string; prefix: string; createdBy: string; agentIds: string[]; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }[] = []
+  const apiKeyCreates: { name: string; agentIds: string[]; expiresInDays: number }[] = []
   const audioCalls: { type: string; size: number }[] = []
   const speechCalls: string[] = []
   type MockServer = { id: string; name: string; status: string; auth: string; kind: string; url: string; hasToken?: boolean; catalogId?: string; tools: { name: string; title: string | null; access: string }[] }
@@ -403,6 +405,23 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     }
     // Catalogue : le vrai (données de l'API), pour voir les vrais logos.
     if (key === 'GET /mcp-catalog') return json(route, { connectors: CONNECTOR_CATALOG })
+    // Clés d'API : la clé complète n'est renvoyée qu'à la création (comme l'API).
+    if (key === 'GET /organization/api-keys') return json(route, { keys: apiKeys })
+    if (key === 'POST /organization/api-keys') {
+      const body = request.postDataJSON() as { name: string; agentIds: string[]; expiresInDays: number }
+      apiKeyCreates.push(body)
+      const secret = `snowfall_sk_${'Ab3'.repeat(15)}x`
+      const record = { id: id(), name: body.name, prefix: secret.slice(0, 18), createdBy: 'u-1', agentIds: body.agentIds, expiresAt: new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString(), lastUsedAt: null, revokedAt: null, createdAt: now }
+      apiKeys.unshift(record)
+      return json(route, { key: secret, record }, 201)
+    }
+    const apiKeyPath = /^\/organization\/api-keys\/([^/]+)$/.exec(path)
+    if (apiKeyPath && method === 'DELETE') {
+      const found = apiKeys.find((item) => item.id === apiKeyPath[1])
+      if (!found) return json(route, { error: 'Not found' }, 404)
+      found.revokedAt = now
+      return route.fulfill({ status: 204 })
+    }
     const catalogAdd = /^\/organization\/mcp-catalog\/([a-z0-9-]+)$/.exec(path)
     if (catalogAdd && method === 'POST') {
       const connector = CONNECTOR_CATALOG.find((item) => item.id === catalogAdd[1])
@@ -723,5 +742,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls }
+  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates }
 }

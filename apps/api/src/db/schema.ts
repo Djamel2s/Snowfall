@@ -1541,3 +1541,39 @@ export const agentSchedules = pgTable.withRLS(
     tenantPolicy("agent_schedules_owner", table.organizationId, table.userId),
   ],
 );
+
+/**
+ * Clés d'API (accès des applications tierces). Une clé agit au nom de
+ * l'administrateur qui l'a créée (RLS, audit, quotas : les siens), seulement sur
+ * les routes /v1 et les agents listés, jusqu'à son expiration. Seule l'empreinte
+ * SHA-256 de la clé est gardée ; la clé n'est montrée qu'une fois.
+ */
+export const apiKeys = pgTable.withRLS(
+  "api_keys",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Étiquette choisie par l'administrateur (« Intranet RH ») : en clair, bornée.
+    name: text("name").notNull(),
+    // Début de la clé, pour la reconnaître (jamais assez pour l'utiliser).
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    agentIds: uuid("agent_ids").array().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("api_keys_hash_unique").on(table.keyHash),
+    index("api_keys_organization_idx").on(table.organizationId),
+    check("api_keys_hash_check", sql`${table.keyHash} ~ '^[0-9a-f]{64}$'`),
+    check("api_keys_prefix_check", sql`${table.prefix} ~ '^snowfall_sk_[A-Za-z0-9]{6}$'`),
+    check("api_keys_agents_check", sql`cardinality(${table.agentIds}) BETWEEN 1 AND 20`),
+  ],
+);

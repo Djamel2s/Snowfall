@@ -19,6 +19,7 @@ import {
   type Usage,
 } from '../lib/api'
 import GroupsSettings from './GroupsSettings'
+import ApiKeysSettings from './ApiKeysSettings'
 import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
@@ -633,6 +634,9 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onPref
 
               {/* Serveurs MCP et catalogue : barre latérale › Connecteurs (pas un réglage de plus ici). */}
               {(organization?.platformTools ?? []).includes('mcp') && <p className="settings-hint">{t('connectors.movedHint')}</p>}
+
+              {/* Applications tierces : clés de l'API Snowfall (/v1). */}
+              <ApiKeysSettings onError={setError} />
             </>
           )}
 

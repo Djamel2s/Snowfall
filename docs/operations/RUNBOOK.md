@@ -405,11 +405,29 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   confirme qu'elle répond avant toute activation.
 - Compétences › Importer (.zip) : format Anthropic ; scripts Python gardés,
   autres langages (sh, js…) mis de côté.
-- Dépendances : zod 4.6.6 et ip-address 10.7.4 appliqués. Restent (règle des
-  14 jours) : fastify 5.12.6 et mermaid 12.2.0 (corrige sa copie de katex)
-  installables le 27 octobre ; fast-uri 3.1.9 / 4.2.3 le 2 novembre (vient de
-  fastify : se met à jour avec lui ou par `overrides`). Ne pas lancer
+- Dépendances : zod 4.6.6 et ip-address 10.7.4 appliqués ; fastify 5.12.6 et
+  mermaid 12.2.0 (katex 0.18.10) appliqués le 27 octobre, versions désormais
+  épinglées exactement. Reste (règle des 14 jours) : fast-uri 3.1.9 / 4.2.3 le
+  2 novembre (vient de fastify : par `overrides`). Ne pas lancer
   `npm audit fix --force` (versions trop récentes, majeures possibles).
+- Après une mise à jour de Mermaid : `artifact-csp.spec.ts` rend un diagramme
+  sous la CSP de production du cadre (aucune violation, aucune requête).
+
+## 32. API publique (/v1) et clés d'API
+
+- Migrations `api_keys` et `api_keys_enforcement` : `npm run db:migrate` (droits
+  réappliqués, dont `snowfall_api_key_lookup`), puis redémarrer l'API. Référence
+  pour les intégrateurs : `docs/api/README.md`.
+- Création : Paramètres › Organisation › Outils et intégrations › Clés d'API
+  (administrateurs). La clé n'est montrée qu'une fois.
+- Rotation : créer une nouvelle clé, la déployer chez l'intégrateur, puis
+  révoquer l'ancienne.
+- Clé fuitée : la révoquer (effet immédiat), puis relire l'audit `api.request`
+  (`target_id` = identifiant de la clé) pour voir ce qui a été demandé.
+- Surveillance : une rafale d'`api.auth_failed` signale un essai de clés ; le
+  préfixe dans l'événement permet de reconnaître une vraie clé mal configurée.
+- Un administrateur rétrogradé ou parti : ses clés cessent de fonctionner. Il
+  faut en recréer au nom d'un administrateur actuel.
 
 ## 30. Compétences des agents
 

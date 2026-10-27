@@ -1,3 +1,4 @@
+import { MemoryApiKeyStore, type ApiKeyStore } from "../apikeys/store.js";
 import { strToU8, zipSync } from "fflate";
 import { MemorySkillStore, type SkillStore } from "../skills/store.js";
 import assert from "node:assert/strict";
@@ -120,6 +121,7 @@ async function instance(
     schedules?: MemoryScheduleStore;
     registry?: ModelRegistry;
     skills?: SkillStore;
+    apiKeys?: ApiKeyStore;
   } = {},
 ) {
   let current = alice;
@@ -157,6 +159,7 @@ async function instance(
     ...(options.quality ? { quality: options.quality } : {}),
     ...(options.schedules ? { schedules: options.schedules, scheduleIntervalMs: 40 } : {}),
     ...(options.skills ? { skills: options.skills } : {}),
+    ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
     ...(options.timing ? { runTiming: options.timing } : {}),
     runChat: options.runChat ?? createChatRunner(options.model ?? notingModel),
   });
@@ -2036,5 +2039,136 @@ describe("Compétences des agents", () => {
 
     api.as({ ...alice, role: "reader" });
     assert.equal((await post("/skills", skillInput)).statusCode, 403);
+  });
+});
+
+describe("API Snowfall (/v1) : clés d'API", () => {
+  /** Répond, ou demande d'enregistrer une note (écriture : validation humaine). */
+  const replier: ChatModel = {
+    id: "replier",
+    supportsTools: true,
+    async *stream(request: ChatRequest) {
+      const last = request.turns?.at(-1);
+      if (last?.role === "tool") {
+        yield { type: "token", text: "Enregistré." };
+        return;
+      }
+      // La question : dans le message, ou (réponse d'agent) dans le dernier tour de l'utilisateur.
+      const question = request.message || ([...(request.turns ?? [])].reverse().find((turn) => turn.role === "user")?.content ?? "");
+      if (question.includes("note")) {
+        yield { type: "tool_call", call: { id: "w1", name: "save_to_knowledge", arguments: note } };
+        return;
+      }
+      yield { type: "token", text: `Réponse à « ${question} »` };
+    },
+  };
+
+  async function setup() {
+    const roles = new Map<string, string>([[carol.userId, "admin"], [alice.userId, "member"]]);
+    const keys = new MemoryApiKeyStore((tenant) => roles.get(tenant.userId) ?? null);
+    const db = sharedDatabase();
+    const api = await instance(db, { model: replier, apiKeys: keys });
+    api.as(carol);
+    const create = (payload: unknown) => api.post("/agents", payload);
+    const base = { avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", tools: ["search_knowledge", "save_to_knowledge"] };
+    const support = ((await (await create({ name: "Support", ...base })).json()) as { agent: Agent }).agent;
+    const secret = ((await (await create({ name: "Direction", ...base })).json()) as { agent: Agent }).agent;
+    const call = (path: string, key: string | null, init: { method?: string; body?: unknown } = {}) =>
+      fetch(`${api.base}${path}`, {
+        method: init.method ?? "GET",
+        headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...(init.body ? { "content-type": "application/json" } : {}) },
+        ...(init.body ? { body: JSON.stringify(init.body) } : {}),
+      });
+    return { api, db, keys, roles, support, secret, call };
+  }
+
+  it("un administrateur crée une clé (montrée une fois) ; un membre ne peut pas ; agent inconnu refusé", async (t) => {
+    const { api, db, support, call } = await setup();
+    t.after(() => api.close());
+    const created = await api.post("/organization/api-keys", { name: "Intranet RH", agentIds: [support.id], expiresInDays: 90 });
+    assert.equal(created.status, 201);
+    const { key, record } = (await created.json()) as { key: string; record: { id: string; prefix: string } };
+    assert.match(key, /^snowfall_sk_[A-Za-z0-9]{46}$/);
+    assert.equal(record.prefix, key.slice(0, 18));
+    // Jamais la clé ni son empreinte dans la liste.
+    const listed = JSON.stringify(await (await api.get("/organization/api-keys")).json());
+    assert.ok(!listed.includes(key) && !listed.includes(key.slice(18)));
+    assert.equal((await api.post("/organization/api-keys", { name: "X", agentIds: ["00000000-0000-4000-8000-000000000099"], expiresInDays: 30 })).status, 400);
+    assert.equal((await api.post("/organization/api-keys", { name: "X", agentIds: [support.id], expiresInDays: 9999 })).status, 400);
+    api.as(alice);
+    assert.equal((await api.post("/organization/api-keys", { name: "Moi", agentIds: [support.id], expiresInDays: 30 })).status, 403);
+    assert.equal((await call("/v1/agents", key)).status, 200);
+    // La clé n'apparaît dans aucun événement d'audit.
+    assert.ok(!JSON.stringify(db.events).includes(key));
+  });
+
+  it("une application parle à l'agent permis : même route que l'interface, conversation visible de son créateur", async (t) => {
+    const { api, support, secret, call } = await setup();
+    t.after(() => api.close());
+    const { key } = (await (await api.post("/organization/api-keys", { name: "Intranet", agentIds: [support.id], expiresInDays: 30 })).json()) as { key: string };
+
+    const listed = (await (await call("/v1/agents", key)).json()) as { agents: { id: string; name: string }[] };
+    assert.deepEqual(listed.agents, [{ id: support.id, name: "Support" }]);
+
+    const first = await call(`/v1/agents/${support.id}/messages`, key, { method: "POST", body: { content: "Bonjour" } });
+    assert.equal(first.status, 200);
+    const answer = (await first.json()) as { conversation_id: string; status: string; message: { content: string } };
+    assert.deepEqual([answer.status, answer.message.content], ["completed", "Réponse à « Bonjour »"]);
+    // Suite de la même conversation.
+    const next = (await (await call(`/v1/agents/${support.id}/messages`, key, { method: "POST", body: { content: "Et ensuite ?", conversation_id: answer.conversation_id } })).json()) as { conversation_id: string };
+    assert.equal(next.conversation_id, answer.conversation_id);
+    const thread = (await (await call(`/v1/conversations/${answer.conversation_id}`, key)).json()) as { messages: { role: string; content: string }[] };
+    assert.deepEqual(thread.messages.map((message) => message.role), ["user", "assistant", "user", "assistant"]);
+    // Visible de son créateur, dans Snowfall, comme une conversation ordinaire.
+    const history = (await (await api.get("/conversations")).json()) as { conversations?: { id: string }[] } | { id: string }[];
+    const ids = (Array.isArray(history) ? history : (history.conversations ?? [])).map((item) => item.id);
+    assert.ok(ids.includes(answer.conversation_id));
+
+    // Agent non listé sur la clé, ou conversation d'un autre agent : introuvables.
+    assert.equal((await call(`/v1/agents/${secret.id}/messages`, key, { method: "POST", body: { content: "Salaires ?" } })).status, 404);
+    const other = ((await (await api.post("/conversations", { agentId: secret.id })).json()) as { conversation: { id: string } }).conversation.id;
+    assert.equal((await call(`/v1/agents/${support.id}/messages`, key, { method: "POST", body: { content: "x", conversation_id: other } })).status, 404);
+    assert.equal((await call(`/v1/conversations/${other}`, key)).status, 404);
+  });
+
+  it("écriture demandée par l'agent : jamais validée par l'application (202, une personne valide dans Snowfall)", async (t) => {
+    const { api, db, support, call } = await setup();
+    t.after(() => api.close());
+    const { key } = (await (await api.post("/organization/api-keys", { name: "Bot", agentIds: [support.id], expiresInDays: 30 })).json()) as { key: string };
+    const response = await call(`/v1/agents/${support.id}/messages`, key, { method: "POST", body: { content: "Prends une note" } });
+    assert.equal(response.status, 202);
+    const body = (await response.json()) as { status: string; approvals: { tool: string }[] };
+    assert.equal(body.status, "needs_approval");
+    assert.deepEqual(body.approvals.map((item) => item.tool), ["save_to_knowledge"]);
+    // Rien n'a été écrit.
+    assert.equal(db.events.filter((event) => event.eventType === "knowledge.source_create").length, 0);
+  });
+
+  it("refus : sans clé, clé fausse, session seule, clé sur une route de l'interface, clé révoquée, créateur rétrogradé", async (t) => {
+    const { api, db, roles, support, call } = await setup();
+    t.after(() => api.close());
+    const created = (await (await api.post("/organization/api-keys", { name: "Bot", agentIds: [support.id], expiresInDays: 30 })).json()) as { key: string; record: { id: string } };
+    assert.equal((await call("/v1/agents", null)).status, 401);
+    assert.equal((await call("/v1/agents", `snowfall_sk_${"A".repeat(46)}`)).status, 401);
+    assert.equal((await call("/v1/agents", "pas une clé")).status, 401);
+    // La session (ici : l'utilisateur courant du banc) n'ouvre pas /v1.
+    assert.equal((await api.get("/v1/agents")).status, 401);
+    // Une clé n'ouvre pas les routes de l'interface.
+    api.as(null as unknown as AuthenticatedUser);
+    assert.equal((await call("/conversations", created.key)).status, 401);
+    api.as(carol);
+    // Créateur rétrogradé : la clé s'arrête ; de nouveau administrateur : elle reprend.
+    roles.set(carol.userId, "member");
+    assert.equal((await call("/v1/agents", created.key)).status, 401);
+    roles.set(carol.userId, "admin");
+    assert.equal((await call("/v1/agents", created.key)).status, 200);
+    // Révoquée : définitivement.
+    assert.equal((await fetch(`${api.base}/organization/api-keys/${created.record.id}`, { method: "DELETE", headers: { origin: ORIGIN } })).status, 204);
+    assert.equal((await call("/v1/agents", created.key)).status, 401);
+    // Audit : préfixe seulement pour un échec, jamais la clé.
+    const failures = db.events.filter((event) => event.eventType === "api.auth_failed");
+    assert.ok(failures.length >= 4);
+    assert.ok(!JSON.stringify(db.events).includes(created.key));
+    assert.ok(db.events.some((event) => event.eventType === "api.request" && event.targetId === created.record.id));
   });
 });

@@ -192,6 +192,19 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Fuite des données d'un connecteur par un contenu qu'il renvoie (I) — *revue adversariale du 25 octobre* | Un résultat MCP est non fiable ET privé : à lui seul, il expose la réponse. Retour libre vers le même connecteur (la donnée ne change pas de mains) ; vers le web ou un autre connecteur, accord de l'utilisateur avec ce qui sort. Avant : un ticket Jira piégé pouvait faire ouvrir `evil.example/?d=…` sans accord | F | `exposure.test.ts` (« ticket Jira piégé »), cas d'évaluation `securite-connecteur-exfiltration` (3/3 sur gemini-3.5-flash-lite) |
 | Outil d'écriture annoncé en lecture par l'éditeur (E) — *revue adversariale du 25 octobre* | `readOnlyHint` n'est qu'une déclaration : un outil au nom de modification (create, delete, send…) n'est jamais pris pour une lecture, il est signalé ; la liste de ce qui sera approuvé reste visible dans les modes prédéfinis | M (heuristique sur le nom ; l'administrateur reste juge) | `connectors.spec.ts` (outil `delete_page` piégé) |
 
+### 3.4 undecies API publique (/v1) et clés d'API (27 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Clé volée en base (I) | Seule l'empreinte SHA-256 est gardée (≈ 300 bits d'aléa : pas de recherche exhaustive) ; préfixe affiché, jamais la clé ; jamais dans l'audit | F | `apikeys.integration.test.ts`, test « un administrateur crée une clé » |
+| Clé fuitée chez l'intégrateur (S, E) | Agents listés seulement, 365 jours au plus, révocation immédiate, 60 appels/min par clé, quotas de l'organisation, audit de chaque appel (`api.request`) et de chaque échec (`api.auth_failed`, préfixe seulement) | M : valable jusqu'à sa révocation | tests « refus » |
+| Clé qui survit à son créateur (E) | Valide seulement si son créateur est TOUJOURS administrateur (vérifié à chaque appel, en base) | F | tests « créateur rétrogradé » (route et Postgres) |
+| Membre qui fabrique une clé (E) | Création réservée aux administrateurs (politique d'insertion, en son propre nom) ; index de recherche sans aucun droit pour l'application, lu par une seule fonction `SECURITY DEFINER` | F | `apikeys.integration.test.ts` |
+| Clé utilisée sur l'interface, ou session sur l'API (E) | Routes `/v1` : clé seulement ; interface : session seulement | F | test « clé sur une route de l'interface » |
+| Application qui valide une écriture à la place d'un humain (E) | Aucune validation par l'API : réponse 202 « needs_approval », une personne décide dans Snowfall | F | test « écriture demandée par l'agent » |
+| Contournement des contrôles du chat (T) | Le message passe par la MÊME route que l'interface (quotas, routage, règle de deux, données sensibles, audit) | F | tests de l'API (réponse identique) |
+| Conversation d'un autre agent lue par une clé (I) | Lecture et suite seulement pour une conversation avec un agent permis à la clé | F | test « conversation d'un autre agent : introuvable » |
+
 ### 3.5 Artifacts
 
 | Menace | Mesures | Résiduel | Preuve |

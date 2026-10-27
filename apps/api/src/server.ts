@@ -135,6 +135,8 @@ import { PostgresMcpServerStore } from "./mcp/store.js";
 import { publicAddressOnly } from "./mcp/client.js";
 import { mcpToolsFor } from "./mcp/tools.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
+import { parseSse, registerPublicApiRoutes } from "./routes/public-api.js";
+import { PostgresApiKeyStore, type ApiKeyStore } from "./apikeys/store.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { EmbeddingRegistry, type EmbeddingConfig, type EmbeddingProvider } from "./knowledge/embeddings.js";
 import { citationsOf, KnowledgeService, renderKnowledge, type ActiveBase, type Passage } from "./knowledge/service.js";
@@ -178,6 +180,8 @@ declare module "fastify" {
      * et authentifiée autrement que par la session : pas de contrôle Origin.
      */
     csrfExempt?: boolean;
+    /** Route de l'API publique (/v1) : clé d'API seulement, jamais la session. */
+    apiKey?: boolean;
   }
   interface FastifyRequest {
     principal: AuthenticatedUser | null;
@@ -221,6 +225,8 @@ export type AppDependencies = {
   preferences?: PreferencesStore;
   projects?: ProjectStore;
   attachments?: AttachmentStore;
+  /** Clés d'API (routes /v1). Absent : API publique indisponible. */
+  apiKeys?: ApiKeyStore;
   /** Bases de connaissances (agents et projets). */
   knowledge?: KnowledgeService;
   /** Fournisseurs configurés pour les embeddings. */
@@ -682,6 +688,25 @@ export function createAppServer(deps: AppDependencies) {
       // Exécution planifiée : jeton aléatoire à usage unique, valable 30 s, créé en
       // mémoire par le planificateur pour SA requête interne (jamais par le réseau ;
       // nginx efface de toute façon cet en-tête).
+      // API publique : une clé d'API valide, rien d'autre (la session n'y sert pas).
+      if (request.routeOptions.config.apiKey) {
+        const header = request.headers.authorization;
+        const key = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+        const principal = key && deps.apiKeys ? await deps.apiKeys.authenticate(key) : null;
+        if (!principal) {
+          await audit.record(request, {
+            eventType: "api.auth_failed",
+            outcome: "denied",
+            // Préfixe seulement (de quoi reconnaître une clé, jamais de quoi l'utiliser).
+            details: { route: request.routeOptions.url ?? "", ...(/^snowfall_sk_[A-Za-z0-9]{6}/.test(key) ? { prefix: key.slice(0, 18) } : {}) },
+          });
+          return reply.code(401).send({ error: "Unauthorized" });
+        }
+        request.apiKey = principal;
+        request.principal = { organizationId: principal.organizationId, userId: principal.userId, role: principal.role };
+        return;
+      }
+
       const internal = request.headers["x-snowfall-internal"];
       if (internal !== undefined) {
         const entry = typeof internal === "string" ? internalPrincipals.get(internal) : undefined;
@@ -726,6 +751,38 @@ export function createAppServer(deps: AppDependencies) {
 
     if (deps.login) {
       registerLoginRoutes(api, deps.login);
+    }
+
+    // API publique (/v1) et gestion des clés. Chaque message passe par la route des
+    // messages, comme un message de l'interface (jeton interne à usage unique, 10 min).
+    if (deps.apiKeys && agents) {
+      registerPublicApiRoutes(api, kit, {
+        keys: deps.apiKeys,
+        agents,
+        conversations: conversationStore,
+        send: async (user, conversationId, content) => {
+          const token = randomBytes(32).toString("base64url");
+          internalPrincipals.set(token, { user, expires: Date.now() + 600_000 });
+          const response = await app
+            .inject({
+              method: "POST",
+              url: `/conversations/${conversationId}/messages`,
+              headers: { origin: appOrigin, "content-type": "application/json", "x-snowfall-internal": token },
+              payload: { content },
+            })
+            .finally(() => internalPrincipals.delete(token));
+          const isStream = (response.headers["content-type"] ?? "").toString().startsWith("text/event-stream");
+          if (isStream) return { status: response.statusCode, body: null, events: parseSse(response.body) };
+          // Refus en JSON (quota, réponse en cours…) ; corps vide ou illisible : rien à transmettre.
+          let body: unknown = null;
+          try {
+            body = response.body ? response.json() : null;
+          } catch {
+            body = null;
+          }
+          return { status: response.statusCode, body, events: [] };
+        },
+      });
     }
 
     api.get("/auth/me", async (request, reply) => {
@@ -3392,6 +3449,7 @@ export function createProductionServer() {
     preferences: new PostgresPreferencesStore(pool, keyring),
     projects: new PostgresProjectStore(pool, keyring),
     attachments: new PostgresAttachmentStore(pool, keyring),
+    apiKeys: new PostgresApiKeyStore(pool),
     appOrigin: config.appOrigin,
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,

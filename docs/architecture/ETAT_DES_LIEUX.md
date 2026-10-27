@@ -144,7 +144,7 @@ humaine, anti-exfiltration des adresses).
 | **OCR** (PDF scannés, images) | ✅ (local, profil « ocr ») | — |
 | **Catalogue d'agents** (duplication, droits fins) | ✅ | — |
 | Images, voix, actions OpenAPI, sous-agents | ✅ (voir sections 0 et 8) | — |
-| API d'agents pour des applications tierces | ❌ | P3 |
+| API d'agents pour des applications tierces | ✅ (27 oct. : clés d'API, `/v1`, voir `docs/api/README.md`) | P3 |
 
 ## 6. Expérience utilisateur
 

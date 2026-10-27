@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (854 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (873 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -1854,6 +1854,64 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .connector-link {
   color: #202f41;
+}
+
+:root[data-theme="light"] .api-key-list li {
+  border: 1px solid rgba(27, 40, 56, 0.1);
+}
+
+:root[data-theme="light"] .api-key-list li > svg {
+  color: #445770;
+}
+
+:root[data-theme="light"] .api-key-main strong {
+  color: #111822;
+}
+
+:root[data-theme="light"] .api-key-main small {
+  color: #5b6a82;
+}
+
+:root[data-theme="light"] .api-key-main code {
+  color: #1a2636;
+}
+
+:root[data-theme="light"] .api-key-form fieldset {
+  border: 1px solid rgba(27, 40, 56, 0.1);
+}
+
+:root[data-theme="light"] .api-key-form legend {
+  color: #475870;
+}
+
+:root[data-theme="light"] .api-key-form > input {
+  border: 1px solid rgba(27, 40, 56, 0.12);
+  background: rgba(26, 26, 26, 0.03);
+  color: #111822;
+}
+
+:root[data-theme="light"] .api-key-form select {
+  border: 1px solid rgba(27, 40, 56, 0.12);
+  background: rgba(26, 26, 26, 0.03);
+  color: #111822;
+}
+
+:root[data-theme="light"] .api-key-fresh {
+  border: 1px solid rgba(31, 189, 107, 0.3);
+  background: rgba(31, 189, 107, 0.06);
+}
+
+:root[data-theme="light"] .api-key-fresh strong {
+  color: #159d58;
+}
+
+:root[data-theme="light"] .api-key-fresh p {
+  color: #192535;
+}
+
+:root[data-theme="light"] .api-key-value code {
+  background: rgba(255, 255, 255, 0.35);
+  color: #111822;
 }
 
 :root[data-theme="light"] .studio-icon {
