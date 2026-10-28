@@ -2106,3 +2106,50 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 .api-key-value { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .api-key-value code { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 8px; background: rgba(0, 0, 0, .35); color: #e3ecf8; font-size: 11px; overflow-wrap: anywhere; user-select: all; }
 .api-key-form fieldset .settings-row { justify-content: flex-start; gap: 9px; }
+
+/* ---- Catalogue d'agents prêts à l'emploi --------------------------------------- */
+.template-list { display: grid; gap: 8px; }
+.template-list > .settings-hint { margin: 0; }
+.template-list ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.template-detail { display: grid; min-width: 0; gap: 12px; }
+.template-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.template-head > div { display: grid; min-width: 0; gap: 2px; }
+.template-head h3 { margin: 0; color: #e3ecf8; font-size: 14px; }
+.template-head p { margin: 0; color: #8796ad; font-size: 11.5px; line-height: 1.4; }
+.template-quality { display: flex; align-items: center; gap: 6px; margin: 0; padding: 7px 10px; border-radius: 10px; background: rgba(110, 231, 168, .08); color: #8ff0bf; font-size: 11.5px; line-height: 1.4; }
+.template-quality.pending { background: rgba(255, 255, 255, .04); color: #8fa2bb; }
+.template-quality svg { flex: none; }
+.template-block { display: grid; gap: 6px; }
+.template-block h4 { display: flex; align-items: center; gap: 6px; margin: 0; color: #dbe6f5; font-size: 12px; font-weight: 700; }
+.template-block > .settings-hint { margin: 0; }
+.template-block ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.template-block li { display: flex; align-items: flex-start; gap: 6px; color: #c6d6ea; font-size: 11.5px; line-height: 1.45; }
+.template-block li > svg { flex: none; margin-top: 3px; color: #8ff0bf; }
+.template-limits li { color: #8fa2bb; }
+.template-limits li::before { content: "–"; flex: none; }
+.template-skills li { display: grid; gap: 1px; padding: 6px 8px; border: 1px solid rgba(183, 210, 244, .08); border-radius: 8px; }
+.template-skills strong { color: #dbe6f5; font-size: 11.5px; }
+.template-skills small { color: #7d8ca4; font-size: 10.5px; line-height: 1.35; }
+.template-connectors { display: flex; flex-wrap: wrap; gap: 6px; }
+.template-connectors span { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px 3px 4px; border-radius: 999px; background: rgba(255, 255, 255, .04); color: #c6d6ea; font-size: 11px; }
+.projects-panel .connector-tabs { margin: 0 0 8px; }
+
+/* Administration › Pilotage : chiffres clés, barres, agents (totaux, jamais par personne). */
+.admin-period { margin-bottom: 2px; }
+.admin-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.admin-kpi { gap: 2px; }
+.admin-kpi small { color: #8094ad; font-size: 10px; }
+.admin-kpi strong { color: #eef4ff; font-size: 22px; font-weight: 650; line-height: 1.2; }
+.admin-kpi span { color: #66788f; font-size: 10px; }
+.admin-bars { display: flex; align-items: flex-end; gap: 2px; height: 64px; }
+.admin-bars span { flex: 1 1 0; min-width: 1px; border-radius: 2px 2px 0 0; background: linear-gradient(180deg, #8ec9ff, #b9a7f5); }
+.admin-bars span.empty { background: rgba(255, 255, 255, .06); }
+.admin-axis { display: flex; justify-content: space-between; gap: 4px; margin-top: -4px; color: #66788f; font-size: 9px; }
+.admin-agents { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.admin-agents li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.admin-agents li > div { display: flex; flex-direction: column; min-width: 0; }
+.admin-agents strong { overflow: hidden; color: #dfe9f7; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.admin-agents strong.muted { color: #8094ad; font-style: italic; font-weight: 500; }
+.admin-agents small { color: #66788f; font-size: 10px; }
+.admin-rating { display: inline-flex; flex: none; align-items: center; gap: 4px; color: #9ee6c0; font-size: 10px; }
+.admin-line { display: flex; justify-content: space-between; gap: 8px; color: #a9b8cc; font-size: 11px; }

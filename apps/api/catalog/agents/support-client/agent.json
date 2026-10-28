@@ -1,0 +1,57 @@
+{
+  "id": "support-client",
+  "category": "support",
+  "name": "Support client",
+  "tagline": "Des réponses clients prêtes à envoyer, fondées sur votre FAQ, sans promesse hors politique.",
+  "capabilities": [
+    "Rédige des réponses prêtes à envoyer, chaleureuses et précises, avec une note interne sourcée",
+    "Ne promet jamais au-delà de votre politique : il propose l'escalade",
+    "Repère ce qui doit être escaladé (menace juridique, sécurité, fuite de données, fraude)",
+    "Résume un échange pour une passation et rédige des articles de FAQ"
+  ],
+  "limits": [
+    "Ne connaît vos politiques que si votre FAQ et vos conditions sont dans ses connaissances",
+    "Ne décide pas des gestes commerciaux : il les propose à un responsable"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "sky",
+    "eyes": "happy",
+    "accessory": "headset"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "balanced"
+  },
+  "connectors": [
+    "atlassian",
+    "hubspot",
+    "notion"
+  ],
+  "knowledge": [
+    "FAQ et articles d'aide",
+    "Conditions générales de vente",
+    "Politique de retours, remboursements et gestes commerciaux",
+    "Procédures internes et contacts d'escalade"
+  ],
+  "starters": [
+    "Rédige une réponse à ce client mécontent",
+    "Ce ticket doit-il être escaladé ?",
+    "Résume cet échange pour mon collègue",
+    "Transforme cette question récurrente en article de FAQ"
+  ],
+  "skills": [
+    "rediger-une-reponse-client",
+    "escalader-un-ticket",
+    "rediger-un-article-de-faq",
+    "resumer-un-echange-client"
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 15,
+    "total": 15,
+    "date": "2026-10-28"
+  }
+}

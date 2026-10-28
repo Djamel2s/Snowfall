@@ -1,3 +1,5 @@
+import { MemoryScimUserStore } from "../scim/store.js";
+import { MemberRuleError, type Member, type MemberStore } from "../workspace/members.js";
 import { MemoryApiKeyStore, type ApiKeyStore } from "../apikeys/store.js";
 import { strToU8, zipSync } from "fflate";
 import { MemorySkillStore, type SkillStore } from "../skills/store.js";
@@ -122,6 +124,8 @@ async function instance(
     registry?: ModelRegistry;
     skills?: SkillStore;
     apiKeys?: ApiKeyStore;
+    scimUsers?: MemoryScimUserStore;
+    members?: MemberStore;
   } = {},
 ) {
   let current = alice;
@@ -160,6 +164,8 @@ async function instance(
     ...(options.schedules ? { schedules: options.schedules, scheduleIntervalMs: 40 } : {}),
     ...(options.skills ? { skills: options.skills } : {}),
     ...(options.apiKeys ? { apiKeys: options.apiKeys } : {}),
+    ...(options.scimUsers ? { scimUsers: options.scimUsers } : {}),
+    ...(options.members ? { members: options.members } : {}),
     ...(options.timing ? { runTiming: options.timing } : {}),
     runChat: options.runChat ?? createChatRunner(options.model ?? notingModel),
   });
@@ -2172,3 +2178,195 @@ describe("API Snowfall (/v1) : clés d'API", () => {
     assert.ok(db.events.some((event) => event.eventType === "api.request" && event.targetId === created.record.id));
   });
 });
+
+describe("SCIM 2.0 : comptes poussés par l'annuaire", () => {
+  /** Membres de l'organisation (faux) : retrait comme la vraie règle (un propriétaire ne se retire pas par un admin). */
+  function fakeMembers(initial: Member[]) {
+    const list = [...initial];
+    const invitations = [{ id: "inv-1", email: "camille@acme.test", role: "member" as const, createdAt: "", expiresAt: "" }];
+    const store = {
+      list: async () => list,
+      remove: async (tenant: { userId: string }, userId: string) => {
+        const target = list.find((item) => item.userId === userId);
+        if (target?.userId === tenant.userId) throw new MemberRuleError("SELF_CHANGE_FORBIDDEN");
+        if (target?.role === "owner") throw new MemberRuleError("FORBIDDEN");
+        list.splice(list.indexOf(target!), 1);
+      },
+      invitations: async () => invitations,
+      revokeInvitation: async (_tenant: unknown, id: string) => {
+        const index = invitations.findIndex((item) => item.id === id);
+        if (index !== -1) invitations.splice(index, 1);
+        return index !== -1;
+      },
+    } as unknown as MemberStore;
+    return { store, list, invitations };
+  }
+
+  async function setup() {
+    const keys = new MemoryApiKeyStore(() => "admin");
+    const users = new MemoryScimUserStore();
+    const people = fakeMembers([
+      { userId: carol.userId, email: "carol@acme.test", role: "admin", joinedAt: "" },
+      { userId: "11111111-1111-4111-8111-111111111111", email: "alice@acme.test", role: "member", joinedAt: "" },
+      { userId: "22222222-2222-4222-8222-222222222222", email: "patron@acme.test", role: "owner", joinedAt: "" },
+    ]);
+    const db = sharedDatabase();
+    const api = await instance(db, { apiKeys: keys, scimUsers: users, members: people.store });
+    api.as(carol);
+    const { key } = (await (await api.post("/organization/api-keys", { kind: "scim", name: "Entra ID", expiresInDays: 365 })).json()) as { key: string };
+    const scim = (method: string, path: string, body?: unknown, token = key) =>
+      fetch(`${api.base}/scim/v2${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/scim+json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    return { api, db, key, users, people, scim };
+  }
+
+  it("Entra ID : création, recherche par userName, désactivation (accès retiré), suppression", async (t) => {
+    const { api, db, users, people, scim } = await setup();
+    t.after(() => api.close());
+    assert.match(String((await (await scim("GET", "/ServiceProviderConfig")).json() as { schemas: string[] }).schemas), /ServiceProviderConfig/);
+
+    // L'annuaire cherche d'abord, puis crée (userName = UPN ; l'adresse vient de emails).
+    const search = (await (await scim("GET", `/Users?filter=${encodeURIComponent('userName eq "Alice@Acme.test"')}`)).json()) as { totalResults: number };
+    assert.equal(search.totalResults, 0);
+    const created = await scim("POST", "/Users", {
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+      userName: "Alice@Acme.test",
+      externalId: "entra-42",
+      name: { givenName: "Alice", familyName: "Martin" },
+      emails: [{ value: "Alice@Acme.test", type: "work", primary: true }],
+      active: true,
+      title: "Juriste",
+    });
+    assert.equal(created.status, 201);
+    assert.match(created.headers.get("content-type") ?? "", /^application\/scim\+json/);
+    const alice = (await created.json()) as { id: string; userName: string; displayName: string; active: boolean };
+    assert.deepEqual([alice.userName, alice.displayName, alice.active], ["alice@acme.test", "Alice Martin", true]);
+    // Moindre donnée : le titre n'est pas gardé.
+    assert.ok(!JSON.stringify(users.items).includes("Juriste"));
+    assert.equal((await scim("POST", "/Users", { userName: "alice@acme.test" })).status, 409);
+    const found = (await (await scim("GET", `/Users?filter=${encodeURIComponent('externalId eq "entra-42"')}`)).json()) as { Resources: { id: string }[] };
+    assert.deepEqual(found.Resources.map((item) => item.id), [alice.id]);
+
+    // Désactivation façon Entra ID (op en majuscule, valeur en texte) : appartenance retirée.
+    const off = await scim("PATCH", `/Users/${alice.id}`, { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "Replace", path: "active", value: "False" }] });
+    assert.equal(off.status, 200);
+    assert.equal(((await off.json()) as { active: boolean }).active, false);
+    assert.ok(!people.list.some((item) => item.email === "alice@acme.test"));
+    assert.ok(db.events.some((event) => event.eventType === "scim.user_deactivate"));
+    assert.ok(db.events.some((event) => event.eventType === "scim.deprovision" && event.details?.removed === true));
+
+    assert.equal((await scim("DELETE", `/Users/${alice.id}`)).status, 204);
+    assert.equal((await scim("GET", `/Users/${alice.id}`)).status, 404);
+  });
+
+  it("Okta : PATCH sans chemin ; création inactive d'un membre existant : accès retiré ; invitation annulée", async (t) => {
+    const { api, people, scim } = await setup();
+    t.after(() => api.close());
+    // Invitation en attente pour Camille : l'annuaire la crée inactive, l'invitation part.
+    const camille = (await (await scim("POST", "/Users", { userName: "camille@acme.test", active: false })).json()) as { id: string };
+    assert.deepEqual(people.invitations, []);
+    const on = await scim("PATCH", `/Users/${camille.id}`, { Operations: [{ op: "replace", value: { active: true, displayName: "Camille D." } }] });
+    assert.equal(((await on.json()) as { displayName: string }).displayName, "Camille D.");
+  });
+
+  it("retrait impossible (propriétaire, ou créateur de la clé) : signalé à l'annuaire, jamais silencieux", async (t) => {
+    const { api, db, people, scim } = await setup();
+    t.after(() => api.close());
+    const boss = (await (await scim("POST", "/Users", { userName: "patron@acme.test" })).json()) as { id: string };
+    const refused = await scim("PATCH", `/Users/${boss.id}`, { Operations: [{ op: "replace", path: "active", value: false }] });
+    assert.equal(refused.status, 409);
+    assert.match(((await refused.json()) as { detail: string }).detail, /owner/);
+    assert.ok(people.list.some((item) => item.email === "patron@acme.test"));
+    assert.ok(db.events.some((event) => event.eventType === "scim.deprovision" && event.outcome === "failure"));
+    const self = (await (await scim("POST", "/Users", { userName: "carol@acme.test" })).json()) as { id: string };
+    assert.equal((await scim("DELETE", `/Users/${self.id}`)).status, 409);
+  });
+
+  it("refus : clé d'API sur SCIM, clé SCIM sur /v1, filtre non pris en charge, adresse invalide", async (t) => {
+    const { api, key, scim } = await setup();
+    t.after(() => api.close());
+    const agent = ((await (await api.post("/agents", { name: "Support", avatar: alien, instructions: "", provider: "mistral", model: "mistral-small-latest", tools: ["search_knowledge"] })).json()) as { agent: Agent }).agent;
+    const { key: apiKey } = (await (await api.post("/organization/api-keys", { name: "Intranet", agentIds: [agent.id], expiresInDays: 30 })).json()) as { key: string };
+    assert.equal((await scim("GET", "/Users", undefined, apiKey)).status, 401);
+    assert.equal((await fetch(`${api.base}/v1/agents`, { headers: { authorization: `Bearer ${key}` } })).status, 401);
+    assert.equal((await scim("GET", `/Users?filter=${encodeURIComponent('emails co "acme"')}`)).status, 400);
+    assert.equal((await scim("POST", "/Users", { userName: "pas-une-adresse" })).status, 400);
+    // Une clé SCIM ne porte aucun agent.
+    assert.equal((await api.post("/organization/api-keys", { kind: "scim", name: "X", agentIds: [agent.id], expiresInDays: 30 })).status, 400);
+  });
+});
+
+describe("Catalogue d'agents : installation par les routes ordinaires", () => {
+  it("installe l'Assistant RH (compétences, outils, modèle) ; une 2e installation réutilise les compétences ; lecteur refusé", async (t) => {
+    const db = sharedDatabase();
+    const skills = new MemorySkillStore(() => null, async (tenant, agentId) => (await db.agents.get(tenant, agentId))?.skills ?? []);
+    const api = await instance(db, { skills });
+    t.after(() => api.close());
+    api.as(alice);
+
+    const catalog = (await (await api.get("/agent-templates")).json()) as { templates: { id: string; skills: { name: string }[]; evaluation: { cases: number } }[] };
+    const rh = catalog.templates.find((item) => item.id === "assistant-rh")!;
+    assert.equal(rh.skills.length, 4);
+    assert.ok(rh.evaluation.cases >= 5);
+    // Les cas d'évaluation (documents piégés…) ne sont pas exposés.
+    assert.ok(!JSON.stringify(catalog).includes("Note pour l'assistant"));
+
+    const installed = await api.post("/agent-templates/assistant-rh/install", {});
+    assert.equal(installed.status, 201);
+    const { agent } = (await installed.json()) as { agent: { id: string } };
+    const stored = (await db.agents.get(alice, agent.id))!;
+    assert.equal(stored.name, "Assistant RH");
+    assert.equal(stored.skills?.length, 4);
+    assert.ok(stored.tools.includes("search_knowledge"));
+    assert.ok(stored.instructions.startsWith("Tu es l'Assistant RH"));
+    assert.ok(db.events.some((event) => event.eventType === "agent.template_install" && event.details?.template === "assistant-rh"));
+
+    // Deuxième installation : un nouvel agent, mais les mêmes compétences (pas de doublon).
+    const again = (await (await api.post("/agent-templates/assistant-rh/install", {})).json()) as { agent: { id: string } };
+    assert.notEqual(again.agent.id, agent.id);
+    assert.equal((await skills.list(alice)).length, 4);
+    assert.deepEqual((await db.agents.get(alice, again.agent.id))!.skills?.slice().sort(), stored.skills?.slice().sort());
+
+    assert.equal((await api.post("/agent-templates/inconnu/install", {})).status, 404);
+    api.as({ ...alice, role: "reader" });
+    assert.equal((await api.post("/agent-templates/assistant-rh/install", {})).status, 403);
+  });
+
+  it("Assistant général : son équipe est installée et branchée ; délégation non activée : signalée", async (t) => {
+    const db = sharedDatabase();
+    const skills = new MemorySkillStore(() => null, async (tenant, agentId) => (await db.agents.get(tenant, agentId))?.skills ?? []);
+    const withDelegation = await instance(db, { skills, settings: { tools: ["search_knowledge", "save_to_knowledge", "delegate"] } });
+    t.after(() => withDelegation.close());
+    withDelegation.as(alice);
+    const installed = (await (await withDelegation.post("/agent-templates/assistant-general/install", {})).json()) as { agent: { id: string }; team: { id: string; name: string }[]; missingTools: string[] };
+    assert.deepEqual(installed.team.map((member) => member.name), ["Assistant RH", "Juriste contrats", "DPO / RGPD", "Acheteur", "Chef de projet"]);
+    const orchestrator = (await db.agents.get(alice, installed.agent.id))!;
+    assert.ok(orchestrator.tools.includes("delegate"));
+    assert.deepEqual(orchestrator.delegates?.slice().sort(), installed.team.map((member) => member.id).sort());
+    assert.deepEqual(installed.missingTools, []);
+
+    // Sans la délégation dans l'organisation : l'installation le dit (l'agent répondrait seul).
+    const plain = await instance(sharedDatabase(), { skills: new MemorySkillStore(), settings: { tools: ["search_knowledge"] } });
+    t.after(() => plain.close());
+    plain.as(alice);
+    const listed = (await (await plain.get("/agent-templates")).json()) as { templates: { id: string; missingTools: string[] }[] };
+    assert.ok(listed.templates.find((item) => item.id === "assistant-general")!.missingTools.includes("delegate"));
+  });
+
+  it("chaque modèle du catalogue s'installe (aucune compétence refusée par les contrôles)", async (t) => {
+    const db = sharedDatabase();
+    const skills = new MemorySkillStore(() => null, async (tenant, agentId) => (await db.agents.get(tenant, agentId))?.skills ?? []);
+    const api = await instance(db, { skills });
+    t.after(() => api.close());
+    api.as(alice);
+    const catalog = (await (await api.get("/agent-templates")).json()) as { templates: { id: string }[] };
+    for (const template of catalog.templates) {
+      const response = await api.post(`/agent-templates/${template.id}/install`, {});
+      assert.equal(response.status, 201, `${template.id} : ${response.status} ${await response.text()}`);
+    }
+  });
+});
+

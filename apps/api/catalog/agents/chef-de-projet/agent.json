@@ -1,0 +1,56 @@
+{
+  "id": "chef-de-projet",
+  "category": "projet",
+  "name": "Chef de projet",
+  "tagline": "Comptes rendus fidèles, actions avec responsables, risques et rapports d'avancement.",
+  "capabilities": [
+    "Transforme des notes ou une transcription en compte rendu : décisions, actions, questions ouvertes",
+    "N'invente jamais un responsable ou une date : ce qui n'a pas été dit reste « à définir »",
+    "Tient un registre des risques (probabilité × impact, réponse, responsable)",
+    "Rédige des rapports d'avancement d'une page et découpe un projet en tâches et jalons"
+  ],
+  "limits": [
+    "Ne crée rien dans Jira ou Notion sans votre accord",
+    "Les estimations de durée sont des propositions à valider"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "lime",
+    "eyes": "wink",
+    "accessory": "antenna"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "precise"
+  },
+  "connectors": [
+    "atlassian",
+    "notion",
+    "asana",
+    "linear"
+  ],
+  "knowledge": [
+    "Méthode projet de l'organisation (modèles de comptes rendus, comités)",
+    "Fiches projet et plannings en cours"
+  ],
+  "starters": [
+    "Fais le compte rendu de ces notes",
+    "Monte le registre des risques de mon projet",
+    "Rédige le point d'avancement pour le comité",
+    "Découpe ce projet en tâches"
+  ],
+  "skills": [
+    "compte-rendu-de-reunion",
+    "registre-des-risques",
+    "rapport-d-avancement",
+    "decouper-et-planifier-un-projet"
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 15,
+    "total": 15,
+    "date": "2026-10-28"
+  }
+}

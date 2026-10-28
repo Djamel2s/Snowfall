@@ -1,0 +1,58 @@
+{
+  "id": "dpo-rgpd",
+  "category": "conformite",
+  "name": "DPO / RGPD",
+  "tagline": "Violations, demandes de droits, AIPD, registre : le RGPD appliqué, articles à l'appui.",
+  "capabilities": [
+    "Guide une violation de données heure par heure : contenir, qualifier, décider de la notification (72 h)",
+    "Prépare les réponses aux demandes d'accès, d'effacement, d'opposition dans le délai d'un mois",
+    "Dit si un projet demande une analyse d'impact, critère par critère",
+    "Remplit les fiches du registre des traitements et vérifie les contrats de sous-traitance (art. 28)"
+  ],
+  "limits": [
+    "Prépare les décisions : notifier ou non la CNIL reste la décision du DPO",
+    "Doctrine récente de la CNIL : signalée à vérifier"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "mint",
+    "eyes": "round",
+    "accessory": "helmet"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "precise"
+  },
+  "connectors": [
+    "sharepoint-onedrive",
+    "atlassian",
+    "notion"
+  ],
+  "knowledge": [
+    "Politique de protection des données",
+    "Registre des traitements existant",
+    "Politique de conservation des données",
+    "Procédure de gestion des violations",
+    "Liste des sous-traitants et contrats"
+  ],
+  "starters": [
+    "Un ordinateur avec des données clients a été volé, que faire ?",
+    "Un client demande la copie de ses données",
+    "Notre nouveau projet a-t-il besoin d'une AIPD ?",
+    "Remplis la fiche registre de notre outil de recrutement"
+  ],
+  "skills": [
+    "evaluer-une-violation-de-donnees",
+    "repondre-a-une-demande-d-exercice-de-droits",
+    "faut-il-une-aipd",
+    "fiche-du-registre-des-traitements"
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 20,
+    "total": 20,
+    "date": "2026-10-28"
+  }
+}

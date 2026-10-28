@@ -15,6 +15,11 @@ export type ToolResult = {
    * reprise), jamais envoyées au modèle : ex. passages cités, pour les sources.
    */
   data?: unknown;
+  /**
+   * L'outil a échoué de lui-même (introuvable, refus, entrée inutilisable) : le
+   * tour est marqué en erreur (et ne compte pas comme une lecture pour la règle de deux).
+   */
+  isError?: boolean;
 };
 
 /** Ce que l'utilisateur voit avant d'approuver : construit par NOTRE code à partir des arguments validés. */
@@ -130,7 +135,7 @@ export async function runTool(
   try {
     const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]), callId: call.id, approve, report, exposure });
     const content = result.content.length > TOOL_RESULT_CHARS ? `${result.content.slice(0, TOOL_RESULT_CHARS)}\n[… résultat tronqué]` : result.content;
-    return { ...result, content, isError: false };
+    return { ...result, content, isError: result.isError ?? false };
   } catch (error) {
     if (signal.aborted) throw error;
     // Pause de validation demandée DEPUIS l'outil (sous-agent) : elle doit remonter

@@ -58,6 +58,10 @@ describe("Règle de deux : contenu externe + données internes → accord pour s
     assert.equal(isExposed(exposureOf([tool("read_webpage", true), tool("search_knowledge")])), false);
     // Pièce jointe : externe et interne à la fois.
     assert.equal(isExposed(exposureOf([{ role: "user", content: '<document name="a.pdf">\n…\n</document>\n\nRésume' }])), true);
+    // Code qui a lu une pièce jointe (même sortie de la fenêtre) : comme la pièce jointe.
+    assert.equal(isExposed(exposureOf([{ ...tool("run_code"), data: { files: [], inputs: 1 } }])), true);
+    // Code sans fichier : le modèle a tout écrit, rien d'externe.
+    assert.equal(isExposed(exposureOf([{ ...tool("run_code"), data: { files: [], inputs: 0 } }, tool("search_knowledge")])), false);
   });
 
   it("réponse exposée : les appels sortants deviennent des actions à valider, avec ce qui sort", () => {

@@ -36,13 +36,24 @@ const messageSchema = z
     conversation_id: z.uuid().optional(),
   })
   .strict();
-const createKeySchema = z
-  .object({
-    name: z.string().trim().min(1).max(60).regex(/^[^\p{Cc}]+$/u),
-    agentIds: z.array(z.uuid()).min(1).max(MAX_KEY_AGENTS),
-    expiresInDays: z.number().int().min(1).max(MAX_KEY_DAYS),
-  })
-  .strict();
+const createKeySchema = z.union([
+  z
+    .object({
+      kind: z.literal("api").optional(),
+      name: z.string().trim().min(1).max(60).regex(/^[^\p{Cc}]+$/u),
+      agentIds: z.array(z.uuid()).min(1).max(MAX_KEY_AGENTS),
+      expiresInDays: z.number().int().min(1).max(MAX_KEY_DAYS),
+    })
+    .strict(),
+  // Clé SCIM : provisionnement des comptes, aucun agent.
+  z
+    .object({
+      kind: z.literal("scim"),
+      name: z.string().trim().min(1).max(60).regex(/^[^\p{Cc}]+$/u),
+      expiresInDays: z.number().int().min(1).max(MAX_KEY_DAYS),
+    })
+    .strict(),
+]);
 
 /** Événements d'un flux SSE (« event: … » / « data: … »). */
 export function parseSse(text: string): SseEvent[] {
@@ -190,17 +201,18 @@ export function registerPublicApiRoutes(api: FastifyInstance, kit: RouteKit, dep
     if (!kit.isAdmin(user)) return kit.denyWrite(request, reply, user);
     const body = createKeySchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "Invalid request" });
+    const kind = body.data.kind ?? "api";
     // Seulement des agents que l'administrateur voit lui-même.
     const visible = new Set((await deps.agents.list(user)).map((agent) => agent.id));
-    const agentIds = [...new Set(body.data.agentIds)];
+    const agentIds = "agentIds" in body.data ? [...new Set(body.data.agentIds)] : [];
     if (agentIds.some((id) => !visible.has(id))) return reply.code(400).send({ error: "Invalid request", reason: "unknown_agent" });
-    const created = await deps.keys.create(user, { name: body.data.name, agentIds, expiresAt: new Date(Date.now() + body.data.expiresInDays * 86_400_000) });
+    const created = await deps.keys.create(user, { kind, name: body.data.name, agentIds, expiresAt: new Date(Date.now() + body.data.expiresInDays * 86_400_000) });
     if (!created) return kit.denyWrite(request, reply, user);
     await kit.record(request, user, {
       eventType: "api_key.create",
       targetType: "api_key",
       targetId: created.record.id,
-      details: { agents: agentIds.length, days: body.data.expiresInDays, prefix: created.record.prefix },
+      details: { kind, agents: agentIds.length, days: body.data.expiresInDays, prefix: created.record.prefix },
     });
     // La clé complète : cette fois-ci seulement.
     return reply.code(201).send({ key: created.key, record: created.record });

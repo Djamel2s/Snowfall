@@ -146,6 +146,21 @@ describe("Limite de débit (429)", () => {
     assert.equal(calls.length, 3);
   });
 
+  it("quota nommé (par minute ou par jour) : seul son identifiant est gardé, rien d'autre du corps", async () => {
+    const answer = (quotaId: string) =>
+      new Response(JSON.stringify({ error: { code: 429, message: "Requête : secret 7731", details: [{ violations: [{ quotaId }] }] } }), { status: 429 });
+    for (const [quotaId, expected] of [
+      ["GenerateRequestsPerDayPerProjectPerModel-FreeTier", "GenerateRequestsPerDayPerProjectPerModel-FreeTier"],
+      ["x\", \"secret 7731", undefined],
+    ] as const) {
+      globalThis.fetch = (async () => answer(quotaId)) as unknown as typeof fetch;
+      const error = await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" })).catch((caught: unknown) => caught);
+      assert.ok(error instanceof ProviderRateLimitError);
+      assert.equal(error.quota, expected);
+      assert.equal(error.message, "PROVIDER_RATE_LIMITED");
+    }
+  });
+
   it("reconnaît le 429 des SDK, quelle que soit leur forme", () => {
     assert.ok(isRateLimit(new ProviderRateLimitError()));
     assert.ok(isRateLimit(Object.assign(new Error("Rate limit reached"), { status: 429 })));

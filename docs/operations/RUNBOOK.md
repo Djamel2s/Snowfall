@@ -356,7 +356,7 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Démarrer : `docker compose -f compose.yaml -f compose.prod.yaml --profile decision up -d decision`,
   puis côté API `DECISION_SOCKET=/run/decision/decision.sock` et redémarrer l'API.
   Sans service : le routage marche quand même, à l'heuristique seule.
-- Activer : Paramètres › Organisation › Modèles et quotas › Routage automatique,
+- Activer : Administration › Modèles et quotas › Routage automatique,
   choisir le modèle rapide et le puissant (fournisseurs autorisés seulement).
 - Vérifier : les journaux de l'API montrent `model routed` avec `source: engine`
   (le service a répondu) ou `heuristic` (repli). Jamais le texte de la question.
@@ -364,7 +364,7 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   `Dockerfile` et `fetch_model.py`, puis la CI rejoue le jeu tenu à l'écart
   (`decision_test.py`) ; en dessous de 21/24, ne pas déployer. Changer la
   formulation de la question (`ROUTING_QUESTION`) oblige à remesurer le seuil.
-- Atelier (Organisation › Modèles et quotas › Entraîner le décideur) : il faut au
+- Atelier (Administration › Modèles et quotas › Entraîner le décideur) : il faut au
   moins 5 exemples de chaque sorte en entraînement ET en test. « Revenir à la
   base » désactive la tête entraînée (les autres instances suivent sous 60 s).
   Une nouvelle révision du modèle Laya rend les têtes existantes inutilisables :
@@ -418,7 +418,7 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Migrations `api_keys` et `api_keys_enforcement` : `npm run db:migrate` (droits
   réappliqués, dont `snowfall_api_key_lookup`), puis redémarrer l'API. Référence
   pour les intégrateurs : `docs/api/README.md`.
-- Création : Paramètres › Organisation › Outils et intégrations › Clés d'API
+- Création : Administration › Outils et intégrations › Clés d'API
   (administrateurs). La clé n'est montrée qu'une fois.
 - Rotation : créer une nouvelle clé, la déployer chez l'intégrateur, puis
   révoquer l'ancienne.
@@ -428,6 +428,56 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   préfixe dans l'événement permet de reconnaître une vraie clé mal configurée.
 - Un administrateur rétrogradé ou parti : ses clés cessent de fonctionner. Il
   faut en recréer au nom d'un administrateur actuel.
+
+## 33. Provisionnement SCIM
+
+- Migrations `scim` et `scim_enforcement` (comptes SCIM, type de clé, nouvelle
+  règle d'entrée à la connexion) : `npm run db:migrate`, puis redémarrer l'API.
+  Guide de mise en place (Entra ID, Okta) : `docs/api/SCIM.md`.
+- Attention : dès qu'une clé SCIM existe, l'entrée par le seul SSO est fermée.
+  Faire pousser les comptes par l'annuaire AVANT de compter sur le SCIM, sinon
+  les nouveaux arrivants ne pourront pas entrer.
+- Retrait en échec (`scim.deprovision`, outcome failure) : un propriétaire ou le
+  créateur de la clé ne se retire pas par le SCIM. Le traiter à la main
+  (Administration › Membres et accès), puis relancer la synchronisation de l'annuaire.
+- Rotation de la clé SCIM : créer une nouvelle clé, la mettre dans l'annuaire,
+  tester la connexion, puis révoquer l'ancienne.
+
+## 34. Catalogue d'agents
+
+- Aucune migration. Le catalogue est un dossier de données (`apps/api/catalog/`,
+  voir son README) copié dans l'image de l'API ; il est validé au démarrage.
+- Mesurer après toute modification d'un modèle :
+  `npm run agent:eval -w @snowfall/api -- --model <fournisseur:modèle> --template <id|all> --repeat 3`.
+  Lire les transcriptions des échecs avant de corriger : un échec peut venir du test.
+  Une mesure complète (≈ 60 cas × 3) dépasse le quota journalier d'une clé gratuite :
+  mesurer un agent à la fois (`--template <id>`), jamais deux mesures en parallèle sur
+  la même clé. Le rapport nomme le quota dépassé (Gemini : `…PerMinute…` ou `…PerDay…`) ;
+  quota du jour, ou trois cas de suite bloqués : le banc s'arrête (code de sortie 3,
+  pour arrêter une boucle de mesures : `… || break`).
+- Agents qui exécutent du code (Analyste de données) : ajouter `--sandbox`. Le banc
+  construit l'image du bac à sable et la lance durcie dans des conteneurs jetables
+  (`snowfall-eval-sandbox-*`), supprimés à la fin. Sans `--sandbox`, ces cas sont
+  des erreurs techniques, jamais des échecs.
+- Un agent installé est une copie : modifier le modèle ne change pas les agents
+  déjà installés (réinstaller, ou modifier dans le studio).
+- Contenu juridique (RH, contrats, RGPD) : à relire par l'organisation avant
+  usage ; dater la relecture.
+
+## 35. Administration et pilotage
+
+- Migration `admin_overview` (`npm run db:migrate`) : table de comptage
+  `member_activity`, trigger sur `messages`, fonction `snowfall_admin_overview`
+  (droits appliqués par `db-grants`). L'historique des 400 derniers jours est
+  repris à la migration (les anciens imports y sont comptés).
+- Accès : barre latérale › Administration (propriétaires et administrateurs).
+  Les Paramètres ne gardent que « Mon compte ».
+- Pilotage vide alors que l'organisation travaille : vérifier que le trigger
+  existe (`\dS messages` côté propriétaire) et que la migration est passée.
+- Refus : audit `admin.overview` (outcome `denied`) — rôle périmé dans le
+  jeton ou tentative d'un membre.
+- Données : totaux seulement ; ne jamais ajouter de vue par personne sans
+  analyse d'impact et information du CSE (surveillance des salariés).
 
 ## 30. Compétences des agents
 
@@ -467,7 +517,7 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   existants et les prompts déjà partagés restent visibles de toute
   l'organisation (autorisation créée par la migration) ; la colonne
   `prompts.shared` disparaît.
-- Groupes : Organisation › Membres et accès › Groupes (administrateurs).
+- Groupes : Administration › Membres et accès › Groupes (administrateurs).
 - Un membre retiré perd ses partages ; réinvité, il repart de zéro.
 - Thème clair : généré depuis les feuilles de style. Après une modification de
   CSS : `npm run theme -w @snowfall/web` (sinon `npm test` échoue) ; retouches à
@@ -495,7 +545,7 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 
 ## 28 bis. Données sensibles
 
-- Activé par défaut (Organisation › Modèles et quotas › Protéger les données
+- Activé par défaut (Administration › Modèles et quotas › Protéger les données
   sensibles). Désactiver est tracé (`security.sensitive_policy`).
 - Sans modèle local publié (fournisseur « local » autorisé et configuré), une
   donnée sensible bloque l'envoi : installer un modèle local avant d'ouvrir la

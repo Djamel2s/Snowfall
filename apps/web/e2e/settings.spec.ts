@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { mockApi } from './mock-api'
 
-// Parcours : les réglages. « Mon compte » d'un côté, l'organisation de l'autre
-// (administrateurs), en rubriques ; un outil non installé reste visible.
+// Parcours : les réglages. « Mon compte » dans Paramètres, l'organisation dans
+// Administration (administrateurs), en rubriques ; un outil non installé reste visible.
 
 async function openConnectors(page: import('@playwright/test').Page) {
   await page.goto('/')
@@ -10,6 +10,14 @@ async function openConnectors(page: import('@playwright/test').Page) {
   const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
   if (await menu.isVisible().catch(() => false)) await menu.click()
   await page.getByRole('button', { name: 'Connecteurs', exact: true }).first().click()
+}
+
+async function openAdmin(page: import('@playwright/test').Page) {
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).waitFor()
+  const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
+  if (await menu.isVisible().catch(() => false)) await menu.click()
+  await page.getByRole('button', { name: 'Administration' }).first().click()
 }
 
 async function openSettings(page: import('@playwright/test').Page) {
@@ -21,24 +29,25 @@ async function openSettings(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Paramètres' }).first().click()
 }
 
-test('administrateur : mon compte, puis l’organisation en rubriques', async ({ page }, info) => {
+test('administrateur : mon compte dans Paramètres, l’organisation dans Administration', async ({ page }, info) => {
   const api = await mockApi(page, { role: 'admin', platformTools: ['search_knowledge', 'save_to_knowledge', 'web_search'] })
   await openSettings(page)
 
   // Mon compte : profil, préférences, consommation — et rien de l'administration.
-  await expect(page.getByRole('tab', { name: 'Mon compte' })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('region', { name: 'Profil' }).getByText('Camille Test')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Membres' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Modèles et quotas' })).toHaveCount(0)
   // Consommation : les appels d'outils du mois, avec leur plafond.
   await expect(page.getByText('Recherches et pages web', { exact: true })).toBeVisible()
   await expect(page.getByText('42 / 500')).toBeVisible()
   await page.screenshot({ path: info.outputPath('compte.png'), fullPage: true })
 
-  // Organisation : quatre rubriques, une seule affichée à la fois.
-  await page.getByRole('tab', { name: 'Organisation' }).click()
-  for (const name of ['Modèles et quotas', 'Connaissances', 'Outils et intégrations', 'Membres et accès']) {
+  // Administration : cinq rubriques, une seule affichée à la fois (Pilotage d'abord).
+  await openAdmin(page)
+  for (const name of ['Pilotage', 'Membres et accès', 'Modèles et quotas', 'Connaissances', 'Outils et intégrations']) {
     await expect(page.getByRole('tab', { name })).toBeVisible()
   }
+  await expect(page.getByRole('tab', { name: 'Pilotage' })).toHaveAttribute('aria-selected', 'true')
   // Modèles et quotas : plafond mensuel des outils installés seulement (web ici, pas le code).
   await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
   await expect(page.getByLabel('Recherches et pages web par mois')).toHaveValue('500')
@@ -59,8 +68,7 @@ test('administrateur : mon compte, puis l’organisation en rubriques', async ({
 
 test('routage automatique : question simple → modèle rapide, enregistré avec les deux modèles', async ({ page }, info) => {
   const api = await mockApi(page, { role: 'admin' })
-  await openSettings(page)
-  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await openAdmin(page)
   await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
   const routing = page.getByRole('switch', { name: /Routage automatique/ })
   await expect(routing).not.toBeChecked()
@@ -76,8 +84,7 @@ test('routage automatique : question simple → modèle rapide, enregistré avec
 
 test('atelier : exemples écrits à la main, entraînement mesuré, déploiement sur clic', async ({ page }, info) => {
   const api = await mockApi(page, { role: 'admin' })
-  await openSettings(page)
-  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await openAdmin(page)
   await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
   await page.getByText('Entraîner le décideur').click()
   await expect(page.getByText('Décideur : Laya de base')).toBeVisible()
@@ -101,8 +108,7 @@ test('atelier : exemples écrits à la main, entraînement mesuré, déploiement
 
 test('pseudonymisation : désactivée par défaut, activée et enregistrée', async ({ page }) => {
   const api = await mockApi(page, { role: 'admin' })
-  await openSettings(page)
-  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await openAdmin(page)
   await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
   const toggle = page.getByRole('switch', { name: /Pseudonymiser avant un fournisseur externe/ })
   await expect(toggle).not.toBeChecked()
@@ -115,8 +121,7 @@ test('pseudonymisation : désactivée par défaut, activée et enregistrée', as
 
 test('MCP installé : l’outil se règle ici, les serveurs se gèrent dans Connecteurs', async ({ page }) => {
   await mockApi(page, { role: 'admin', platformTools: ['search_knowledge', 'save_to_knowledge', 'mcp'] })
-  await openSettings(page)
-  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await openAdmin(page)
   await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
   await expect(page.getByRole('switch', { name: /^Connecteurs/ })).toBeEnabled()
   await expect(page.getByText('barre latérale › Connecteurs')).toBeVisible()
@@ -124,11 +129,13 @@ test('MCP installé : l’outil se règle ici, les serveurs se gèrent dans Conn
   await expect(page.getByRole('tab', { name: 'Ajoutés (0)' })).toBeVisible()
 })
 
-test('membre : seulement son compte, aucun onglet d’organisation', async ({ page }) => {
-  await mockApi(page, { role: 'member' })
+test('membre : seulement son compte, aucune administration', async ({ page }) => {
+  const api = await mockApi(page, { role: 'member' })
   await openSettings(page)
   await expect(page.getByRole('region', { name: 'Profil' }).getByText('Camille Test')).toBeVisible()
-  await expect(page.getByRole('tab', { name: 'Organisation' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Administration' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Modèles et quotas' })).toHaveCount(0)
+  expect(api.adminOverviewCalls).toEqual([])
 })
 
 test('mémoire : désactivée par défaut, activée, faits visibles et oubliables', async ({ page }, info) => {

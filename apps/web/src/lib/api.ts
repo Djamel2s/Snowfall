@@ -57,12 +57,33 @@ export type ConversationSettings = {
 
 /** Compétence : savoir-faire que l'agent charge quand la demande correspond à sa description. */
 /** hasOriginal : modèle binaire (Word, PDF, Excel, image) gardé pour les scripts de la compétence. */
+/** Agent prêt à l'emploi du catalogue (qualité mesurée sur un vrai modèle). */
+export type AgentTemplate = {
+  id: string
+  category: string
+  name: string
+  tagline: string
+  capabilities: string[]
+  limits: string[]
+  avatar: AgentAvatarData
+  tools: ToolId[]
+  missingTools: ToolId[]
+  skills: { name: string; description: string; scripts: number }[]
+  connectors: { id: string; name: string; icon: string | null; color: string | null }[]
+  knowledge: string[]
+  starters: string[]
+  team: { id: string; name: string }[]
+  evaluation: { cases: number; measured?: { model: string; passed: number; total: number; date: string } }
+}
+
 /** Clé d'API : la clé complète n'est renvoyée qu'à sa création. */
 export type ApiKey = {
   id: string
   name: string
   prefix: string
   createdBy: string
+  /** api : routes /v1 ; scim : provisionnement des comptes par l'annuaire. */
+  kind: 'api' | 'scim'
   agentIds: string[]
   expiresAt: string
   lastUsedAt: string | null
@@ -267,6 +288,20 @@ export type Preferences = {
 export type UserMemory = { id: string; content: string; createdAt: string }
 
 export type UsageTotals = { inputTokens: number; outputTokens: number }
+
+export const adminPeriods = [7, 30, 90] as const
+export type AdminPeriod = (typeof adminPeriods)[number]
+
+/** Pilotage : des totaux, jamais un classement par personne ; un agent n'apparaît qu'à partir de 5 personnes. */
+export type AdminOverview = {
+  days: AdminPeriod
+  members: { total: number; active7: number; active30: number; activePeriod: number }
+  activity: { day: string; users: number; messages: number }[]
+  agents: { agentId: string; name: string | null; messages: number; users: number; rating?: { up: number; total: number } }[]
+  tokens: { period: string; byProvider: Partial<Record<ProviderId, number>> }[]
+  monthlyTokenLimit: number | null
+  tools: Partial<Record<ToolMeter, number>>
+}
 
 export type Usage = {
   usage: {
@@ -1028,6 +1063,8 @@ export const api = {
     (await request<{ preferences: Preferences }>('/me/preferences', json('PUT', preferences))).preferences,
 
   getUsage: () => request<Usage>('/usage'),
+  /** Administration › Pilotage (administrateurs) : totaux de l'organisation. */
+  getAdminOverview: (days: AdminPeriod) => request<AdminOverview>(`/admin/overview?days=${days}`),
   getOrganization: () => request<Organization>('/organization'),
   saveOrganizationSettings: async (settings: OrganizationSettings) =>
     (await request<{ settings: OrganizationSettings }>('/organization/settings', json('PUT', settings))).settings,
@@ -1068,8 +1105,11 @@ export const api = {
   setMcpServerEnabled: async (id: string, enabled: boolean) =>
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}`, json('PATCH', { enabled }))).server,
   deleteMcpServer: (id: string) => request<void>(`/organization/mcp-servers/${id}`, { method: 'DELETE' }),
+  // Catalogue d'agents prêts à l'emploi.
+  listAgentTemplates: async () => (await request<{ templates: AgentTemplate[] }>('/agent-templates')).templates,
+  installAgentTemplate: (id: string) => request<{ agent: { id: string; name: string }; team: { id: string; name: string }[]; missingTools: ToolId[] }>(`/agent-templates/${id}/install`, json('POST', {})),
   // Clés d'API (administrateurs).
   listApiKeys: async () => (await request<{ keys: ApiKey[] }>('/organization/api-keys')).keys,
-  createApiKey: (input: { name: string; agentIds: string[]; expiresInDays: number }) => request<{ key: string; record: ApiKey }>('/organization/api-keys', json('POST', input)),
+  createApiKey: (input: { kind?: 'api' | 'scim'; name: string; agentIds?: string[]; expiresInDays: number }) => request<{ key: string; record: ApiKey }>('/organization/api-keys', json('POST', input)),
   revokeApiKey: (id: string) => request<void>(`/organization/api-keys/${id}`, { method: 'DELETE' }),
 }

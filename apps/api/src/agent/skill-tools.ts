@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { TenantContext } from "../db/tenant.js";
 import { copiedToSandbox, sandboxPath, SKILL_SCRIPT_TYPE } from "../skills/scripts.js";
 import type { SkillCatalogEntry, SkillStore } from "../skills/store.js";
-import { deliverRun, MAX_RUNS, RUNS_EXHAUSTED, type SandboxDeps, type SkillRunFile } from "./code-tool.js";
+import { copyInputs, deliverRun, MAX_RUNS, MAX_SCRIPT_INPUTS, RUNS_EXHAUSTED, SANDBOX_INPUT_BYTES, type SandboxDeps, type ScriptInputs, type SkillRunFile } from "./code-tool.js";
 import { defineTool, type AgentTool } from "./tools.js";
 
 // Compétences : chargement progressif. Le catalogue (nom + description) tient
@@ -13,13 +13,20 @@ import { defineTool, type AgentTool } from "./tools.js";
 
 /** Au-delà, le fichier est tronqué : le contexte du modèle reste borné. */
 export const SKILL_FILE_CHARS = 20_000;
-/** Fichiers copiés à côté d'un script : sous la limite du bac à sable (8 Mio, base64 compris). */
-const SANDBOX_INPUT_BYTES = 7_500_000;
-/** Fichiers de l'utilisateur transmis à un script, au plus. */
-export const MAX_SCRIPT_INPUTS = 5;
+export { MAX_SCRIPT_INPUTS, type ScriptInputs };
 
-/** Fichiers de la conversation (pièces jointes), retrouvés par leur nom. */
-export type ScriptInputs = (names: string[]) => Promise<{ name: string; bytes: Buffer }[]>;
+/**
+ * Fichier désigné par le modèle : son identifiant, ou son nom (avec ou sans dossier),
+ * ou — s'il n'y a qu'un candidat — rien. Les modèles mélangent les trois.
+ */
+function pickFile<T extends { id: string; name: string }>(files: T[], wanted: string | undefined): T | undefined {
+  if (!wanted) return files.length === 1 ? files[0] : undefined;
+  const key = wanted.trim().toLowerCase();
+  const base = (name: string) => name.toLowerCase().split("/").pop()!;
+  return files.find((file) => file.id === wanted) ?? files.find((file) => file.name.toLowerCase() === key) ?? files.find((file) => base(file.name) === base(key));
+}
+
+const listing = (files: { id: string; name: string }[]) => files.map((file) => `- ${file.id} — ${file.name}`).join("\n");
 
 /** Une ligne du catalogue : jamais de saut de ligne venu d'une description (rien ne s'y glisse). */
 const line = (skill: SkillCatalogEntry) => `- ${skill.id} — ${skill.name.replace(/\s+/g, " ")} : ${skill.description.replace(/\s+/g, " ")}`;
@@ -74,12 +81,14 @@ export function skillTools(deps: {
     parameters: z
       .object({
         skill: skillId.describe("Identifiant de la compétence."),
-        file: z.string().min(1).max(64).describe("Identifiant du fichier, donné par use_skill."),
+        file: z.string().min(1).max(200).describe("Identifiant (ou nom) du fichier, donné par use_skill."),
       })
       .strict(),
     access: "read",
     async execute({ skill, file }) {
-      const found = await deps.store.readFile(deps.tenant, deps.agentId, skill, file);
+      const loaded = await deps.store.load(deps.tenant, deps.agentId, skill);
+      const chosen = loaded ? pickFile(loaded.files, file) : undefined;
+      const found = chosen ? await deps.store.readFile(deps.tenant, deps.agentId, skill, chosen.id) : null;
       if (!found) return { content: "Fichier introuvable dans cette compétence.", summary: "Introuvable", isError: true };
       const text = found.text.length > SKILL_FILE_CHARS ? `${found.text.slice(0, SKILL_FILE_CHARS)}\n[… fichier tronqué]` : found.text;
       return { content: `Fichier « ${found.name} » :\n\n${text}`, summary: found.name };
@@ -99,7 +108,7 @@ export function skillTools(deps: {
     parameters: z
       .object({
         skill: skillId.describe("Identifiant de la compétence."),
-        script: z.string().min(1).max(64).describe("Identifiant du script, donné par use_skill."),
+        script: z.string().min(1).max(200).optional().describe("Identifiant (ou nom de fichier) du script, donné par use_skill ; facultatif si la compétence n'a qu'un script."),
         arguments: z.array(z.string().max(2_000)).max(20).default([]).describe("Arguments du script (sys.argv[1:])."),
         files: z
           .array(z.string().min(1).max(120))
@@ -112,8 +121,18 @@ export function skillTools(deps: {
     async execute({ skill, script, arguments: args, files: wanted }, { signal }) {
       if (sandbox.runs.count >= MAX_RUNS) return { content: RUNS_EXHAUSTED, summary: "limite" };
       const loaded = await deps.store.load(deps.tenant, deps.agentId, skill);
-      const entry = loaded?.files.find((file) => file.id === script && file.mediaType === SKILL_SCRIPT_TYPE);
-      if (!loaded || !entry) return { content: "Script introuvable dans cette compétence (voir use_skill).", summary: "Introuvable", isError: true };
+      const scripts = loaded?.files.filter((file) => file.mediaType === SKILL_SCRIPT_TYPE) ?? [];
+      const entry = pickFile(scripts, script);
+      // Erreur utile : les scripts disponibles, pour que le modèle corrige son appel (et ne calcule pas de tête).
+      if (!loaded || !entry) {
+        return {
+          content: scripts.length
+            ? `Script introuvable : « ${script ?? ""} ». Scripts de cette compétence (réessaie avec l'un d'eux) :\n${listing(scripts)}`
+            : "Cette compétence n'a pas de script.",
+          summary: "Introuvable",
+          isError: true,
+        };
+      }
 
       // Fichiers de la compétence sous skill/, chemins sûrs : le script d'abord, puis les
       // autres tant que le total tient dans la limite du bac à sable (un chemin en
@@ -146,31 +165,12 @@ export function skillTools(deps: {
       if (!entryPath) return { content: "Script inutilisable : son nom n'est pas un chemin accepté par le bac à sable.", summary: "Refusé", isError: true };
 
       // Pièces jointes demandées, cherchées dans CETTE conversation seulement, sous inputs/.
-      const copied: string[] = [];
-      const missing: string[] = [];
-      const found = wanted.length && sandbox.inputs ? await sandbox.inputs([...new Set(wanted)]) : [];
-      for (const name of new Set(wanted)) {
-        const input = found.find((item) => item.name === name);
-        const relative = sandboxPath(name.replace(/\//g, "_"));
-        const path = relative && `inputs/${relative}`;
-        const data = input?.bytes.toString("base64");
-        if (!input || !path || !free(path) || !data || total + data.length > SANDBOX_INPUT_BYTES) {
-          missing.push(name);
-          continue;
-        }
-        total += data.length;
-        files.push({ path, data });
-        copied.push(path);
-      }
+      const { note } = await copyInputs(wanted, sandbox.inputs, files, total);
 
       sandbox.runs.count++;
       const result = await sandbox.sandbox.run("", { timeoutSeconds: 30, signal, skill: { files, entry: entryPath, args } });
       const delivered = await deliverRun(result, sandbox);
-      const notes = [
-        ...(copied.length ? [`Pièces jointes copiées : ${copied.join(", ")}.`] : []),
-        ...(missing.length ? [`Pièces jointes introuvables dans la conversation (ou trop lourdes) : ${missing.join(", ")}.`] : []),
-      ];
-      return notes.length ? { ...delivered, content: `${notes.join("\n")}\n\n${delivered.content}` } : delivered;
+      return note ? { ...delivered, content: `${note}\n\n${delivered.content}` } : delivered;
     },
   });
 

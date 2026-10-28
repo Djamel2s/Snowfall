@@ -1,0 +1,53 @@
+{
+  "id": "assistant-rh",
+  "category": "rh",
+  "name": "Assistant RH",
+  "tagline": "Répond aux salariés à partir de vos règles RH, et rédige pour l'équipe RH.",
+  "capabilities": [
+    "Répond aux questions sur les congés, le télétravail, les frais, le temps de travail, en citant vos documents",
+    "Distingue la règle de l'entreprise du minimum légal, sans jamais inventer de chiffre",
+    "Oriente avec tact les situations personnelles sensibles (santé, conflit, harcèlement)",
+    "Rédige des offres d'emploi non discriminantes, des trames d'entretien, des plans d'accueil"
+  ],
+  "limits": [
+    "Ne tranche aucun cas individuel et ne donne pas d'avis juridique",
+    "Ne connaît vos règles que si vos documents RH sont dans ses connaissances"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "coral",
+    "eyes": "happy",
+    "accessory": "headset"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "precise"
+  },
+  "connectors": [
+    "google-drive",
+    "sharepoint-onedrive",
+    "notion"
+  ],
+  "knowledge": [
+    "Règlement intérieur",
+    "Accords d'entreprise (télétravail, temps de travail, congés)",
+    "Politique de notes de frais",
+    "Livret d'accueil",
+    "Convention collective applicable",
+    "Contacts RH, référent harcèlement, CSE"
+  ],
+  "starters": [
+    "Combien de jours de télétravail puis-je faire ?",
+    "Comment poser mes congés ?",
+    "Rédige une offre pour un développeur confirmé",
+    "Prépare le plan d'accueil d'une nouvelle chargée de clientèle"
+  ],
+  "skills": [
+    "repondre-a-une-question-rh",
+    "rediger-une-offre-d-emploi",
+    "preparer-un-entretien",
+    "accueillir-un-nouvel-arrivant"
+  ]
+}

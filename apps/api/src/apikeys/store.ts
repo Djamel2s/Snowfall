@@ -8,8 +8,12 @@ import { withTenant, type TenantContext } from "../db/tenant.js";
 // - Une clé agit au nom de l'administrateur qui l'a créée (RLS, audit, quotas),
 //   et seulement tant qu'il est administrateur : rétrogradé ou parti, elle s'arrête.
 // - Elle ne sert qu'aux routes /v1, pour les agents listés, jusqu'à son expiration.
+// - Une clé SCIM (« snowfall_scim_… ») sert seulement au provisionnement des
+//   comptes (/scim/v2), sans agent ; une clé d'API n'y sert pas, et inversement.
 
-export const API_KEY_PATTERN = /^snowfall_sk_[A-Za-z0-9]{46}$/;
+export type ApiKeyKind = "api" | "scim";
+export const API_KEY_PATTERN = /^snowfall_(sk|scim)_[A-Za-z0-9]{46}$/;
+const PREFIX: Record<ApiKeyKind, string> = { api: "snowfall_sk_", scim: "snowfall_scim_" };
 export const MAX_KEY_AGENTS = 20;
 export const MAX_KEY_DAYS = 365;
 
@@ -20,6 +24,7 @@ export type ApiKey = {
   prefix: string;
   /** Administrateur au nom duquel la clé agit. */
   createdBy: string;
+  kind: ApiKeyKind;
   agentIds: string[];
   expiresAt: string;
   lastUsedAt: string | null;
@@ -28,7 +33,7 @@ export type ApiKey = {
 };
 
 /** Ce qu'une clé valide permet (le reste vient du compte de son créateur). */
-export type ApiKeyPrincipal = { keyId: string; organizationId: string; userId: string; role: "owner" | "admin" };
+export type ApiKeyPrincipal = { keyId: string; organizationId: string; userId: string; role: "owner" | "admin"; kind: ApiKeyKind };
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -45,16 +50,18 @@ function randomAlphanumeric(length: number) {
 
 export const hashKey = (key: string) => createHash("sha256").update(key, "utf8").digest("hex");
 
-/** Nouvelle clé : 52 caractères alphanumériques après le préfixe fixe (≈ 310 bits d'aléa). */
-export function newApiKey() {
-  const key = `snowfall_sk_${randomAlphanumeric(46)}`;
-  return { key, prefix: key.slice(0, 18), hash: hashKey(key) };
+/** Nouvelle clé : 46 caractères alphanumériques après le préfixe fixe (≈ 270 bits d'aléa). */
+export function newApiKey(kind: ApiKeyKind = "api") {
+  const key = `${PREFIX[kind]}${randomAlphanumeric(46)}`;
+  return { key, prefix: key.slice(0, PREFIX[kind].length + 6), hash: hashKey(key) };
 }
+
+export type NewApiKey = { name: string; agentIds: string[]; expiresAt: Date; kind?: ApiKeyKind | undefined };
 
 export interface ApiKeyStore {
   list(tenant: TenantContext): Promise<ApiKey[]>;
   /** null : refusé (pas administrateur). */
-  create(tenant: TenantContext, input: { name: string; agentIds: string[]; expiresAt: Date }): Promise<{ key: string; record: ApiKey } | null>;
+  create(tenant: TenantContext, input: NewApiKey): Promise<{ key: string; record: ApiKey } | null>;
   revoke(tenant: TenantContext, id: string): Promise<boolean>;
   /** Clé présentée par une application : valide et son créateur toujours administrateur. */
   authenticate(key: string): Promise<ApiKeyPrincipal | null>;
@@ -67,6 +74,7 @@ type Row = {
   name: string;
   prefix: string;
   userId: string;
+  kind: ApiKeyKind;
   agentIds: string[];
   expiresAt: string;
   lastUsedAt: string | null;
@@ -80,6 +88,7 @@ const view = (row: Row): ApiKey => ({
   name: row.name,
   prefix: row.prefix,
   createdBy: row.userId,
+  kind: row.kind,
   agentIds: row.agentIds,
   expiresAt: iso(row.expiresAt)!,
   lastUsedAt: iso(row.lastUsedAt),
@@ -87,7 +96,7 @@ const view = (row: Row): ApiKey => ({
   createdAt: iso(row.createdAt)!,
 });
 
-const COLUMNS = `id, name, prefix, user_id AS "userId", agent_ids AS "agentIds", expires_at AS "expiresAt",
+const COLUMNS = `id, name, prefix, user_id AS "userId", kind, agent_ids AS "agentIds", expires_at AS "expiresAt",
   last_used_at AS "lastUsedAt", revoked_at AS "revokedAt", created_at AS "createdAt"`;
 
 export class PostgresApiKeyStore implements ApiKeyStore {
@@ -99,16 +108,17 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     );
   }
 
-  create(tenant: TenantContext, input: { name: string; agentIds: string[]; expiresAt: Date }) {
+  create(tenant: TenantContext, input: NewApiKey) {
     return withTenant(this.pool, tenant, async (client) => {
       const admin = await client.query<{ ok: boolean }>("SELECT snowfall_is_admin() AS ok");
       if (!admin.rows[0]?.ok) return null;
-      const { key, prefix, hash } = newApiKey();
+      const kind = input.kind ?? "api";
+      const { key, prefix, hash } = newApiKey(kind);
       const row = (
         await client.query<Row>(
-          `INSERT INTO api_keys (id, organization_id, user_id, name, prefix, key_hash, agent_ids, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${COLUMNS}`,
-          [randomUUID(), tenant.organizationId, tenant.userId, input.name, prefix, hash, input.agentIds, input.expiresAt],
+          `INSERT INTO api_keys (id, organization_id, user_id, name, prefix, key_hash, agent_ids, expires_at, kind)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ${COLUMNS}`,
+          [randomUUID(), tenant.organizationId, tenant.userId, input.name, prefix, hash, input.agentIds, input.expiresAt, kind],
         )
       ).rows[0]!;
       return { key, record: view(row) };
@@ -127,8 +137,8 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     const client = await this.pool.connect();
     try {
       const row = (
-        await client.query<{ keyId: string; organizationId: string; userId: string; role: ApiKeyPrincipal["role"] }>(
-          `SELECT key_id AS "keyId", organization_id AS "organizationId", user_id AS "userId", role FROM snowfall_api_key_lookup($1)`,
+        await client.query<ApiKeyPrincipal>(
+          `SELECT key_id AS "keyId", organization_id AS "organizationId", user_id AS "userId", role, kind FROM snowfall_api_key_lookup($1)`,
           [hashKey(key)],
         )
       ).rows[0];
@@ -178,11 +188,12 @@ export class MemoryApiKeyStore implements ApiKeyStore {
     return this.items.filter((item) => item.organizationId === tenant.organizationId).map(({ organizationId: _o, hash: _h, ...item }) => item);
   }
 
-  async create(tenant: TenantContext, input: { name: string; agentIds: string[]; expiresAt: Date }) {
+  async create(tenant: TenantContext, input: NewApiKey) {
     if (!(await this.admin(tenant))) return null;
-    const { key, prefix, hash } = newApiKey();
+    const kind = input.kind ?? "api";
+    const { key, prefix, hash } = newApiKey(kind);
     const now = new Date().toISOString();
-    const record: ApiKey = { id: randomUUID(), name: input.name, prefix, createdBy: tenant.userId, agentIds: input.agentIds, expiresAt: input.expiresAt.toISOString(), lastUsedAt: null, revokedAt: null, createdAt: now };
+    const record: ApiKey = { id: randomUUID(), name: input.name, prefix, createdBy: tenant.userId, kind, agentIds: input.agentIds, expiresAt: input.expiresAt.toISOString(), lastUsedAt: null, revokedAt: null, createdAt: now };
     this.items.unshift({ ...record, organizationId: tenant.organizationId, hash });
     return { key, record };
   }
@@ -201,7 +212,7 @@ export class MemoryApiKeyStore implements ApiKeyStore {
     if (!item || item.revokedAt || Date.parse(item.expiresAt) <= Date.now()) return null;
     const tenant = { organizationId: item.organizationId, userId: item.createdBy };
     const role = await this.roleOf(tenant);
-    return role === "owner" || role === "admin" ? { keyId: item.id, ...tenant, role: role as ApiKeyPrincipal["role"] } : null;
+    return role === "owner" || role === "admin" ? { keyId: item.id, ...tenant, role: role as ApiKeyPrincipal["role"], kind: item.kind } : null;
   }
 
   async agentsFor(principal: ApiKeyPrincipal) {

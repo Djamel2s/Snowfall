@@ -137,6 +137,11 @@ import { mcpToolsFor } from "./mcp/tools.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
 import { parseSse, registerPublicApiRoutes } from "./routes/public-api.js";
 import { PostgresApiKeyStore, type ApiKeyStore } from "./apikeys/store.js";
+import { registerScimRoutes } from "./routes/scim.js";
+import { registerTemplateRoutes } from "./routes/templates.js";
+import { registerAdminRoutes } from "./routes/admin.js";
+import { PostgresAdminOverviewStore, type AdminOverviewStore } from "./admin/overview.js";
+import { PostgresScimUserStore, type ScimUserStore } from "./scim/store.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { EmbeddingRegistry, type EmbeddingConfig, type EmbeddingProvider } from "./knowledge/embeddings.js";
 import { citationsOf, KnowledgeService, renderKnowledge, type ActiveBase, type Passage } from "./knowledge/service.js";
@@ -182,6 +187,8 @@ declare module "fastify" {
     csrfExempt?: boolean;
     /** Route de l'API publique (/v1) : clé d'API seulement, jamais la session. */
     apiKey?: boolean;
+    /** Route SCIM (/scim/v2) : clé SCIM seulement. */
+    scimKey?: boolean;
   }
   interface FastifyRequest {
     principal: AuthenticatedUser | null;
@@ -227,6 +234,8 @@ export type AppDependencies = {
   attachments?: AttachmentStore;
   /** Clés d'API (routes /v1). Absent : API publique indisponible. */
   apiKeys?: ApiKeyStore;
+  /** Comptes poussés par l'annuaire (SCIM, avec une clé SCIM). */
+  scimUsers?: ScimUserStore;
   /** Bases de connaissances (agents et projets). */
   knowledge?: KnowledgeService;
   /** Fournisseurs configurés pour les embeddings. */
@@ -287,6 +296,8 @@ export type AppDependencies = {
   speech?: OpenAiCompatibleSpeech;
   /** Taux de réponses utiles par agent (agrégat de l'organisation). */
   agentRatings?: AgentRatingStore;
+  /** Pilotage des administrateurs (totaux de l'organisation). Absent : route désactivée. */
+  adminOverview?: AdminOverviewStore;
   /** Traces des agents (OpenTelemetry → Langfuse). Absent : aucune trace. */
   tracer?: RunTracer;
   /** Résumés de compaction des longues conversations. Absent : en mémoire. */
@@ -688,17 +699,23 @@ export function createAppServer(deps: AppDependencies) {
       // Exécution planifiée : jeton aléatoire à usage unique, valable 30 s, créé en
       // mémoire par le planificateur pour SA requête interne (jamais par le réseau ;
       // nginx efface de toute façon cet en-tête).
-      // API publique : une clé d'API valide, rien d'autre (la session n'y sert pas).
-      if (request.routeOptions.config.apiKey) {
+      // API publique et SCIM : une clé valide DU BON TYPE, rien d'autre (la session n'y sert pas).
+      const keyKind = request.routeOptions.config.apiKey ? "api" : request.routeOptions.config.scimKey ? "scim" : null;
+      if (keyKind) {
         const header = request.headers.authorization;
         const key = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-        const principal = key && deps.apiKeys ? await deps.apiKeys.authenticate(key) : null;
+        const found = key && deps.apiKeys ? await deps.apiKeys.authenticate(key) : null;
+        const principal = found?.kind === keyKind ? found : null;
         if (!principal) {
           await audit.record(request, {
             eventType: "api.auth_failed",
             outcome: "denied",
             // Préfixe seulement (de quoi reconnaître une clé, jamais de quoi l'utiliser).
-            details: { route: request.routeOptions.url ?? "", ...(/^snowfall_sk_[A-Za-z0-9]{6}/.test(key) ? { prefix: key.slice(0, 18) } : {}) },
+            details: {
+              route: request.routeOptions.url ?? "",
+              ...(found ? { reason: "wrong_kind" } : {}),
+              ...(/^snowfall_(sk|scim)_[A-Za-z0-9]{6}/.test(key) ? { prefix: key.slice(0, key.startsWith("snowfall_sk_") ? 18 : 20) } : {}),
+            },
           });
           return reply.code(401).send({ error: "Unauthorized" });
         }
@@ -751,6 +768,43 @@ export function createAppServer(deps: AppDependencies) {
 
     if (deps.login) {
       registerLoginRoutes(api, deps.login);
+    }
+
+    // Catalogue d'agents prêts à l'emploi : installés par les routes ordinaires,
+    // au nom de l'utilisateur (jeton interne à usage unique par appel).
+    if (agents) {
+      registerTemplateRoutes(api, kit, {
+        organizationTools: async (user) => (deps.settings ? (await deps.settings.get(user)).tools : defaultOrganizationTools),
+        call: async (user, method, url, payload, headers = {}) => {
+          const token = randomBytes(32).toString("base64url");
+          internalPrincipals.set(token, { user, expires: Date.now() + 30_000 });
+          const response = await app
+            .inject({
+              method,
+              url,
+              headers: { origin: appOrigin, ...(payload !== undefined && !Buffer.isBuffer(payload) ? { "content-type": "application/json" } : {}), ...headers, "x-snowfall-internal": token },
+              ...(payload !== undefined ? { payload: Buffer.isBuffer(payload) ? payload : JSON.stringify(payload) } : {}),
+            })
+            .finally(() => internalPrincipals.delete(token));
+          let body: unknown = null;
+          try {
+            body = response.body ? response.json() : null;
+          } catch {
+            body = null;
+          }
+          return { status: response.statusCode, body };
+        },
+      });
+    }
+
+    // Administration › Pilotage : totaux de l'organisation, administrateurs seulement.
+    if (deps.adminOverview && deps.members) {
+      registerAdminRoutes(api, kit, { overview: deps.adminOverview, members: deps.members, agents, ratings: deps.agentRatings, settings: deps.settings });
+    }
+
+    // SCIM 2.0 : comptes poussés par l'annuaire (clé SCIM).
+    if (deps.apiKeys && deps.scimUsers && deps.members) {
+      registerScimRoutes(api, kit, { users: deps.scimUsers, members: deps.members, baseUrl: `${appOrigin}/api` });
     }
 
     // API publique (/v1) et gestion des clés. Chaque message passe par la route des
@@ -1530,7 +1584,7 @@ export function createAppServer(deps: AppDependencies) {
       selection: ModelSelection | undefined,
       plan: KnowledgePlan,
       permitted: Set<ToolId>,
-      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number }; images: { count: number } },
+      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number }; images: { count: number }; attachmentIds?: string[] },
     ): AgentTool[] {
       if (!models.supportsTools?.(selection)) return [];
       const tools: AgentTool[] = plan.mode === "agent" ? [...plan.tools] : [];
@@ -1557,6 +1611,7 @@ export function createAppServer(deps: AppDependencies) {
             scanner: deps.scanner,
             saveFile: (file) => generatedFiles.create(user, context.conversationId, file),
             runs: context.codeRuns,
+            inputs: scriptInputs(user, context.conversationId, context.attachmentIds ?? []),
           }),
         );
       }
@@ -2057,6 +2112,7 @@ export function createAppServer(deps: AppDependencies) {
           conversationId: run.conversationId,
           codeRuns,
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
+          attachmentIds: run.request.attachmentIds,
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
         tools.push(...(await skillsFor(user, agent, selection, { permitted, conversationId: run.conversationId, codeRuns, attachmentIds: run.request.attachmentIds })));
@@ -3421,6 +3477,7 @@ export function createProductionServer() {
     ...(ocr ? { ocr } : {}),
     memories: new PostgresUserMemoryStore(pool, keyring),
     agentRatings: new PostgresAgentRatingStore(pool),
+    adminOverview: new PostgresAdminOverviewStore(pool),
     quality: new PostgresQualityStore(pool, keyring),
     speech: new OpenAiCompatibleSpeech(config.speech.stt, config.speech.tts),
     ...(config.images ? { images: new OpenAiCompatibleImages(config.images) } : {}),
@@ -3450,6 +3507,7 @@ export function createProductionServer() {
     projects: new PostgresProjectStore(pool, keyring),
     attachments: new PostgresAttachmentStore(pool, keyring),
     apiKeys: new PostgresApiKeyStore(pool),
+    scimUsers: new PostgresScimUserStore(pool),
     appOrigin: config.appOrigin,
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,

@@ -1,0 +1,57 @@
+{
+  "id": "juriste-contrats",
+  "category": "juridique",
+  "name": "Juriste contrats",
+  "tagline": "Revue de contrats B2B : risques classés, citations exactes, rédactions proposées.",
+  "capabilities": [
+    "Passe un contrat au crible d'une grille de 16 points (durée, prix, responsabilité, PI, résiliation, réversibilité…)",
+    "Classe chaque risque et propose une rédaction de remplacement",
+    "Vérifie les clauses obligatoires du RGPD (article 28) quand un prestataire traite vos données",
+    "Rédige des accords de confidentialité, compare deux versions d'un contrat"
+  ],
+  "limits": [
+    "Prépare l'analyse : la décision revient au service juridique ou à un avocat",
+    "Ne traite pas le contentieux, le pénal ni la fiscalité"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "lavender",
+    "eyes": "classic",
+    "accessory": "tie"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "precise"
+  },
+  "connectors": [
+    "sharepoint-onedrive",
+    "google-drive",
+    "box"
+  ],
+  "knowledge": [
+    "Modèles de contrats de l'organisation",
+    "Politique de signature et délégations de pouvoir",
+    "Clauses types validées par le service juridique",
+    "Conditions générales d'achat et de vente"
+  ],
+  "starters": [
+    "Analyse ce contrat (nous sommes le client)",
+    "Rédige un accord de confidentialité mutuel",
+    "Ce contrat respecte-t-il le RGPD ?",
+    "Compare ces deux versions"
+  ],
+  "skills": [
+    "revue-de-contrat",
+    "clauses-rgpd-de-sous-traitance-art-28",
+    "rediger-un-accord-de-confidentialite",
+    "comparer-deux-versions-d-un-contrat"
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 18,
+    "total": 18,
+    "date": "2026-10-28"
+  }
+}

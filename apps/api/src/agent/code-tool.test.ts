@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { MemoryGeneratedFileStore } from "../files/generated.js";
-import { codeTool, generatedFileIds, MAX_RUNS, UnixSocketSandbox, type CodeSandbox, type SandboxResult } from "./code-tool.js";
+import { codeTool, generatedFileIds, MAX_RUNS, UnixSocketSandbox, type CodeSandbox, type SandboxResult, type SkillRun } from "./code-tool.js";
 import { runTool } from "./tools.js";
 
 const tenant = { organizationId: "11111111-1111-4111-8111-111111111111", userId: "22222222-2222-4222-8222-222222222222" };
@@ -74,6 +74,42 @@ describe("Interpréteur de code", () => {
     const { run, codes } = setup({ stdout: "ok" });
     for (let index = 0; index <= MAX_RUNS; index++) await run(`print(${index})`);
     assert.equal(codes.length, MAX_RUNS);
+  });
+
+  it("pièces jointes : copiées sous inputs/ (cette conversation seulement), le code sous skill/ ; sans fichier, rien ne change", async () => {
+    const runs: { code: string; skill: SkillRun | undefined }[] = [];
+    const sandbox: CodeSandbox = {
+      run: async (code, options) => (runs.push({ code, skill: options.skill }), { exitCode: 0, timedOut: false, durationMs: 1, stdout: "3", stderr: "", files: [] }),
+    };
+    const asked: string[][] = [];
+    const known: Record<string, Buffer> = { "ventes.csv": Buffer.from("mois,ca\n1,10"), "a/../../main.py": Buffer.from("import os") };
+    const tool = codeTool({
+      sandbox,
+      runs: { count: 0 },
+      saveFile: async () => assert.fail("aucun fichier produit"),
+      inputs: async (names) => (asked.push(names), names.flatMap((name) => (known[name] ? [{ name, bytes: known[name]! }] : []))),
+    });
+    const call = (args: Record<string, unknown>) => runTool([tool], { id: "c", name: "run_code", arguments: args }, signal);
+
+    const plain = await call({ code: "print(1)" });
+    assert.equal(plain.isError, false);
+    assert.deepEqual(runs[0], { code: "print(1)", skill: undefined });
+    assert.equal(asked.length, 0);
+
+    const result = await call({ code: "import pandas", files: ["ventes.csv", "a/../../main.py", "absent.xlsx"] });
+    const skill = runs[1]!.skill!;
+    assert.equal(skill.entry, "skill/main.py");
+    // Un fichier de l'utilisateur ne remplace jamais le code lancé : il reste sous inputs/.
+    assert.deepEqual(skill.files.map((file) => file.path), ["skill/main.py", "inputs/ventes.csv", "inputs/a_.._.._main.py"]);
+    assert.deepEqual(skill.files[0], { path: "skill/main.py", content: "import pandas" });
+    assert.match(result.content, /Pièces jointes copiées : inputs\/ventes\.csv/);
+    assert.match(result.content, /introuvables[^\n]*absent\.xlsx/);
+    // Fichiers lus : la réponse sera traitée comme exposée (règle de deux).
+    assert.equal((result.data as { inputs: number }).inputs, 2);
+    assert.equal((plain.data as { inputs?: number }).inputs, undefined);
+    // Plus de 5 fichiers : refusé avant toute exécution.
+    assert.equal((await call({ code: "x", files: ["1", "2", "3", "4", "5", "6"] })).isError, true);
+    assert.equal(runs.length, 2);
   });
 
   it("client du bac à sable : HTTP sur socket local, aucun port réseau", async (t) => {

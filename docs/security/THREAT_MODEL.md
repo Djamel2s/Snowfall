@@ -205,6 +205,39 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Contournement des contrôles du chat (T) | Le message passe par la MÊME route que l'interface (quotas, routage, règle de deux, données sensibles, audit) | F | tests de l'API (réponse identique) |
 | Conversation d'un autre agent lue par une clé (I) | Lecture et suite seulement pour une conversation avec un agent permis à la clé | F | test « conversation d'un autre agent : introuvable » |
 
+### 3.4 duodecies Provisionnement SCIM (27 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Ancien salarié qui garde l'accès (E, I) | L'annuaire désactive ou supprime : appartenance, partages et invitations retirés ; appartenance relue à chaque requête (une session ouverte ne sert plus) | F | `scim.integration.test.ts`, test « Entra ID » |
+| Retour par le SSO après désactivation (E) | Organisation gérée par l'annuaire (comptes SCIM ou clé SCIM active) : seul un compte SCIM actif entre, SSO compris — même si l'annuaire a tout supprimé | F | `scim.integration.test.ts` (désactivé puis reconnecté : refusé) |
+| Retrait qui échoue sans bruit (E) | Erreur 409 rendue à l'annuaire et audit `scim.deprovision` en échec (propriétaire, créateur de la clé) | F | test « retrait impossible » |
+| Clé SCIM utilisée ailleurs, ou clé d'API sur le SCIM (E) | Type de clé vérifié à chaque requête : `snowfall_scim_` n'ouvre que `/scim/v2`, `snowfall_sk_` que `/v1` | F | test « refus » |
+| Compte poussé avec une adresse non vérifiée (S) | L'entrée exige un e-mail vérifié par le fournisseur d'identité, comme pour une invitation | F | `scim.integration.test.ts` |
+| Trop de données reçues de l'annuaire (I) | Adresse, identifiant externe, nom affiché et état seulement ; le reste est ignoré | F | test « Entra ID » (le titre n'est pas gardé) |
+| Rôle élevé donné par l'annuaire (E) | Le SCIM ne fixe pas le rôle : rôle par défaut de l'organisation, changé seulement par un administrateur | F | `scim.integration.test.ts` |
+
+### 3.4 terdecies Catalogue d'agents (27 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Installation qui contourne les contrôles (E, T) | Le catalogue ne crée rien lui-même : compétences, puis agent, par les routes ordinaires (droits, détection des données sensibles, quotas, audit) via un appel interne à usage unique | F | `runs.routes.test.ts` (« chaque modèle s'installe », lecteur refusé 403) |
+| Modèle qui embarque une donnée sensible (I) | Instructions et compétences passées au même détecteur qu'une saisie ; aucune donnée personnelle dans le catalogue | F | `templates.test.ts` (détecteur sur chaque modèle) |
+| Équipe qui donne plus de droits que prévu (E) | L'Assistant général délègue à des spécialistes installés dans l'organisation ; outil `delegate` exigé et affiché comme manquant sinon ; chaque spécialiste garde ses propres outils | F | test « équipe câblée, delegate manquant » |
+| Document piégé qui détourne un agent du catalogue (T) | Chaque modèle a au moins un cas de sécurité mesuré (contrat, devis, ticket, procès-verbal piégés ; tiers qui demande des données) | M : mesure probabiliste | `agent:eval --template all` |
+| Fichier de l'utilisateur transmis au code du modèle (I, E) | `run_code` reçoit seulement les pièces jointes de CETTE conversation, nommées par le modèle, copiées sous `inputs/` (jamais lancées : le code est sous `skill/`), 5 au plus, 8 Mio ; bac à sable sans réseau ; une exécution qui a lu un fichier vaut une pièce jointe (non fiable et privée) pour la règle de deux, même si la pièce jointe est sortie de la fenêtre de conversation (défaut trouvé en revue) | F | `code-tool.test.ts` (« pièces jointes »), `exposure.test.ts`, `attack_test.py` |
+| Script de compétence qui échoue en silence (T) | `runTool` garde l'indicateur d'erreur de l'outil (il était écrasé) ; erreur qui liste les scripts pour que le modèle corrige son appel au lieu de calculer de tête | F | `files.test.ts` (« script désigné par son nom ») |
+
+### 3.4 quattuordecies Administration et pilotage (28 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Surveillance individuelle des salariés par le tableau de bord (I, conformité RGPD / CSE) | Des totaux seulement : aucune donnée par personne, aucun classement ; l'usage d'un agent n'apparaît qu'à partir de 5 personnes distinctes | F | `admin.integration.test.ts` (seuil), `admin.test.ts` (aucun identifiant de personne dans la réponse) |
+| Administrateur qui lit les messages des autres pour « compter » (I) | Les messages restent lisibles par leur seul auteur (RLS) ; le comptage se fait dans une table sans contenu (`member_activity`), remplie par trigger, sans aucun droit pour le rôle applicatif | F | `admin.integration.test.ts` (« permission denied », colonnes de la table) |
+| Membre, ou administrateur d'une autre organisation, qui lit le pilotage (I, E) | Rôle vérifié par la route (refus journalisé `admin.overview`) ET par la fonction SQL (membre owner/admin de l'organisation du contexte) | F | `admin.test.ts`, `admin.integration.test.ts` (membre, autre organisation, rôle périmé dans le jeton) |
+| Chiffres faussés (T) | Copie de conversation et import d'historique marqués dans la transaction : non comptés (le drapeau ne peut que retirer) ; un seul utilisateur ne fait pas apparaître un agent (seuil de personnes, pas de messages) | M : les tâches planifiées et l'API publique comptent comme activité de leur auteur | `admin.integration.test.ts` (copie et import) |
+| Conservation excessive de l'activité (conformité) | 400 jours (13 mois), purge à chaque écriture | F | migration `admin_overview` |
+
 ### 3.5 Artifacts
 
 | Menace | Mesures | Résiduel | Preuve |

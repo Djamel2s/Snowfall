@@ -10,8 +10,7 @@ test('clé d’API : créée pour un agent, montrée une fois, révoquée', asyn
   await page.getByPlaceholder(/Posez votre question/).waitFor()
   const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
   if (await menu.isVisible().catch(() => false)) await menu.click()
-  await page.getByRole('button', { name: 'Paramètres' }).first().click()
-  await page.getByRole('tab', { name: 'Organisation' }).click()
+  await page.getByRole('button', { name: 'Administration' }).first().click()
   await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
 
   const card = page.getByRole('region', { name: 'Clés d’API'.replace('’', "'") })
@@ -45,4 +44,30 @@ test('clé d’API : créée pour un agent, montrée une fois, révoquée', asyn
   await row.getByRole('button', { name: 'Confirmer la révocation de Intranet RH' }).click()
   await expect(row).toContainText('Révoquée')
   expect(api.apiKeys[0]?.revokedAt).not.toBeNull()
+})
+
+test('SCIM : clé pour l’annuaire (sans agent), adresse à copier ; séparée des clés d’API', async ({ page }, info) => {
+  const api = await mockApi(page, { role: 'admin', agents: [fakeAgent('Support RH', { mine: true })] })
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).waitFor()
+  const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
+  if (await menu.isVisible().catch(() => false)) await menu.click()
+  await page.getByRole('button', { name: 'Administration' }).first().click()
+  await page.getByRole('tab', { name: 'Membres et accès' }).click()
+
+  const card = page.getByRole('region', { name: 'Provisionnement SCIM' })
+  await expect(card.getByLabel('Adresse à donner à l’annuaire'.replace('’', "'"))).toContainText(/\/api\/scim\/v2$/)
+  const form = card.getByRole('form', { name: 'Nouvelle clé SCIM' })
+  // Aucun choix d'agent pour une clé SCIM.
+  await expect(form.getByRole('checkbox')).toHaveCount(0)
+  await form.getByRole('textbox', { name: /Nom/ }).fill('Entra ID')
+  await form.getByRole('button', { name: 'Créer la clé SCIM' }).click()
+  await expect(card.getByRole('status').locator('code')).toHaveText(/^snowfall_scim_[A-Za-z0-9]{46}$/)
+  expect(api.apiKeyCreates).toEqual([{ kind: 'scim', name: 'Entra ID', expiresInDays: 90 }])
+  await card.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: info.outputPath('scim.png') })
+
+  // Les clés d'API (autre onglet) ne la montrent pas.
+  await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
+  await expect(page.getByRole('region', { name: 'Clés d’API'.replace('’', "'") }).locator('.api-key-list li')).toHaveCount(0)
 })

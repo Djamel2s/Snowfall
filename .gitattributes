@@ -8,3 +8,5 @@
 *.yaml        text eol=lf
 Dockerfile    text eol=lf
 infra/**      text=auto eol=lf
+# Catalogue d'agents : contenu mesuré et comparé à l'octet près (script Python compris).
+apps/api/catalog/**  text eol=lf

@@ -6,7 +6,7 @@ d'API ne doit jamais se trouver dans un navigateur ni dans une application mobil
 
 ## Obtenir une clé
 
-Un administrateur ouvre **Paramètres › Organisation › Outils et intégrations ›
+Un administrateur ouvre **Administration › Outils et intégrations ›
 Clés d'API**. Il choisit :
 
 - un nom (« Intranet RH ») ;

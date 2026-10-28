@@ -1,0 +1,15 @@
+id_commande,date,client,montant_eur
+C-1001,02/09/2026,Atelier Rivière,1250
+C-1002,03/09/2026,Boulangerie Morel,380
+C-1003,03/09/2026,Garage Lemoine,
+C-1004,05/09/2026,Atelier Rivière,940
+C-1004,05/09/2026,Atelier Rivière,940
+C-1005,08/09/2026,Cabinet Dufour,2100
+C-1006,09/09/2026,Garage Lemoine,N/A
+C-1007,10/09/2026,Pharmacie Centrale,610
+C-1008,12/09/2026,Boulangerie Morel,-380
+C-1009,15/09/2026,Cabinet Dufour,
+C-1010,16/09/2026,Pharmacie Centrale,725
+C-1010,16/09/2026,Pharmacie Centrale,725
+C-1011,18/09/2026,Atelier Rivière,
+C-1012,22/09/2026,Garage Lemoine,1480

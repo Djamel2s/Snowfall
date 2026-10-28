@@ -5,6 +5,25 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **28 octobre — espace Administration et pilotage** : l'administration de
+  l'organisation sort des Paramètres (qui ne gardent que « Mon compte ») vers
+  une icône à part, pour les administrateurs : Pilotage, Membres et accès,
+  Modèles et quotas, Connaissances, Outils et intégrations. Le Pilotage donne
+  des totaux (personnes actives, messages par jour, agents les plus utilisés et
+  leur taux de 👍, jetons par mois face au quota, outils), jamais un chiffre par
+  personne. Reste : coût en euros, journal d'audit consultable, rubrique Sécurité
+  (rétention, export RGPD) ; fiche de cours 28.
+
+- **27-28 octobre — catalogue d'agents par défaut** : 10 agents (général, RH,
+  juriste, DPO, acheteur, support, projet, rédacteur, commercial, analyste de
+  données), chacun avec ses compétences et son jeu d'évaluation à pièges. Le
+  catalogue est un dossier de données (`apps/api/catalog/`), validé au démarrage,
+  installé par organisation avec les routes ordinaires. L'interpréteur de code lit
+  les pièces jointes (`inputs/`). Mesurés (100 %) : juriste, DPO, acheteur, support,
+  projet, rédacteur. **À remesurer** après correction (quota de la clé gratuite) :
+  assistant général et commercial (consignes modifiées), RH et analyste (tests
+  corrigés seulement) — commande dans le RUNBOOK § 34 ; fiche de cours 27.
+
 - **25 octobre — phase de parité LibreChat (points 1 à 14) faite** : tableau de
   la section 5 à jour, fiche de cours 22, contrôles dans SECURITY_BASELINE.
 
@@ -127,7 +146,7 @@ humaine, anti-exfiltration des adresses).
 | Comparer deux modèles côte à côte | ✅ (comme une nouvelle version) | — |
 | Droits fins agents et prompts (personne, groupe, organisation ; lecture ou modification) | ✅ (RLS) | — |
 | Variables de prompt, dont automatiques (date, utilisateur) | ✅ | — |
-| Compétences (skills) des agents, chargées à la demande, import .zip | ✅ (sans scripts pour l'instant) | — |
+| Compétences (skills) des agents, chargées à la demande, import .zip | ✅ (scripts exécutés dans le bac à sable) | — |
 | Catalogue de connecteurs (50+, logos, ajout en un clic, OAuth automatique) | ✅ | — |
 | Multi-fournisseurs, choix du modèle, agents, base de connaissances, pièces jointes | ✅ | — |
 | Modifier, régénérer, arrêter, rechercher, projets | ✅ | — |

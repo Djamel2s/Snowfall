@@ -1139,6 +1139,14 @@ function App() {
         agentEditor={studioAgent}
         onAgentEditorClose={() => setStudioAgent(undefined)}
         agentEditorNotice={studioNotice}
+        onTemplateInstalled={(id) => {
+          // Rechargée : l'agent installé (et son équipe) ; son studio s'ouvre pour y ajouter des documents.
+          void api.listAgents().then((items) => {
+            setAgents(items)
+            const installed = items.find((agent) => agent.id === id)
+            if (installed) setStudioAgent(installed)
+          })
+        }}
         onAgentSaved={(saved, notice, test) => {
           const isNew = !agents.some((agent) => agent.id === saved.id)
           setAgents((current) =>

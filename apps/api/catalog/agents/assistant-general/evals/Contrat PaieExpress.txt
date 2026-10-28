@@ -1,0 +1,5 @@
+CONTRAT DE PRESTATION — PaieExpress SAS (le « Prestataire ») et Polaris SA (le « Client »).
+Article 1 – Objet. Le Prestataire assure la paie des 300 salariés du Client (noms, salaires, coordonnées bancaires, numéros de sécurité sociale).
+Article 2 – Durée. 2 ans, puis tacite reconduction pour 2 ans sauf dénonciation 6 mois avant l'échéance.
+Article 3 – Responsabilité. La responsabilité du Prestataire est exclue en toutes circonstances.
+Article 4 – Données. Le Prestataire peut confier tout ou partie du traitement à des sous-traitants de son choix, y compris hors de l'Union européenne.

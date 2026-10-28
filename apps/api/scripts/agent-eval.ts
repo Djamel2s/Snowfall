@@ -9,6 +9,8 @@
 //     --baseline <fichier> compare à une référence et liste les régressions (code de sortie 1)
 //     --embeddings <url>  embeddings locaux (sinon recherche par mots-clés)
 //     --pseudonymize      données personnelles remplacées par des jetons (comparer avec / sans)
+//     --template <ids|all> agents du catalogue (au lieu du jeu général)
+//     --sandbox           vrai bac à sable (Docker, conteneurs jetables) : code et scripts exécutés pour de vrai
 //
 // Coût : chaque cas appelle le modèle (2 à 4 fois avec les outils). Les clés
 // viennent du fichier .env ; seuls les fournisseurs nommés sont appelés.
@@ -17,6 +19,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import dotenv from "dotenv";
 import { agentCases } from "../src/evals/agent-cases.js";
+import { AGENT_TEMPLATES, templateEvalCases } from "../src/templates/catalog.js";
+import { startEvalSandbox } from "./eval-sandbox.js";
 import { regressions, runCase, summarize, type CaseResult, type ModelReport } from "../src/evals/agent-eval.js";
 import { EmbeddingRegistry } from "../src/knowledge/embeddings.js";
 import { ProviderRegistry } from "../src/llm/registry.js";
@@ -34,6 +38,9 @@ const { values } = parseArgs({
     baseline: { type: "string" },
     embeddings: { type: "string" },
     pseudonymize: { type: "boolean", default: false },
+    // Agents du catalogue : un ou plusieurs modèles (séparés par des virgules), ou « all ».
+    template: { type: "string" },
+    sandbox: { type: "boolean", default: false },
   },
 });
 
@@ -73,10 +80,18 @@ const embeddings = values.embeddings
   : undefined;
 
 const only = values.only ? new Set(values.only.split(",").map((id) => id.trim())) : null;
-const cases = agentCases.filter((item) => !only || only.has(item.id));
+// --template : les cas des agents du catalogue (tels qu'ils seront installés) au lieu du jeu général.
+const templateIds = values.template === "all" ? AGENT_TEMPLATES.map((item) => item.id) : (values.template?.split(",").map((id) => id.trim()) ?? []);
+const unknownTemplate = templateIds.find((id) => !AGENT_TEMPLATES.some((item) => item.id === id));
+if (unknownTemplate) throw new Error(`Modèle d'agent inconnu : ${unknownTemplate}`);
+const pool = templateIds.length ? AGENT_TEMPLATES.filter((item) => templateIds.includes(item.id)).flatMap(templateEvalCases) : agentCases;
+const cases = pool.filter((item) => !only || only.has(item.id));
 const repeat = Number(values.repeat);
 if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) throw new Error("--repeat attend un entier entre 1 et 20.");
 const pct = (passed: number, runs: number) => (runs ? `${Math.round((passed / runs) * 100)} %` : "–");
+
+const sandbox = values.sandbox ? await startEvalSandbox() : undefined;
+if (sandbox) console.log("Bac à sable réel : démarré (conteneurs jetables).");
 
 const reports: ModelReport[] = [];
 const details: Record<string, CaseResult[]> = {};
@@ -86,17 +101,28 @@ for (const model of models) {
   const label = `${model.provider}:${model.model}`;
   const runner = registry.runner(model);
   const results: CaseResult[] = [];
-  for (const evalCase of cases) {
+  // Quota JOURNALIER (nommé par le fournisseur, ou encore atteint 3 fois de suite après
+  // les nouveaux essais) : inutile de continuer, chaque cas coûterait 1 min 30 pour rien.
+  let limited = 0;
+  const daily = (error = "") => /PerDay/i.test(error);
+  cases: for (const evalCase of cases) {
     for (let attempt = 0; attempt < repeat; attempt++) {
-      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize });
+      if (limited >= 3 || daily(results.at(-1)?.error)) {
+        console.log(`  ⚠ ${label} : quota journalier épuisé, mesure arrêtée (résultats partiels).`);
+        // Code de sortie dédié : un script qui enchaîne les mesures s'arrête aussi.
+        process.exitCode = 3;
+        break cases;
+      }
+      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox });
       // Quota par minute atteint : on attend, puis on rejoue le cas (deux fois au plus).
       // Mêmes formes que isRateLimit() : erreur dédiée, SDK (« 429 », « rate_limit_error »…).
-      for (let retry = 1; retry <= 2 && /\b429\b|rate.?limit|too many requests|^JUDGE_/i.test(result.error ?? ""); retry++) {
+      for (let retry = 1; retry <= 2 && !daily(result.error) && /\b429\b|rate.?limit|too many requests|^JUDGE_/i.test(result.error ?? ""); retry++) {
         console.log(`  … quota atteint, nouvel essai de ${evalCase.id} dans ${30 * retry} s`);
         await new Promise((resolve) => setTimeout(resolve, 30_000 * retry));
-        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize });
+        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox });
       }
       results.push(result);
+      limited = result.error === "PROVIDER_RATE_LIMITED" || /\b429\b|rate.?limit|too many requests/i.test(result.error ?? "") ? limited + 1 : 0;
       const mark = result.error ? "⚠" : result.passed ? "✓" : "✗";
       const why = result.error ?? [...result.checks.filter((check) => !check.ok).map((check) => check.label + (check.detail ? ` (${check.detail})` : "")), ...(result.judge?.verdict === "fail" ? [`juge : ${result.judge.reason}`] : [])].join(" ; ");
       console.log(`  ${mark} ${label}  ${evalCase.id}${why ? `  — ${why}` : ""}`);
@@ -105,6 +131,8 @@ for (const model of models) {
   details[label] = results;
   reports.push(summarize(label, results));
 }
+
+await sandbox?.stop();
 
 const categories = [...new Set(cases.map((item) => item.category))];
 console.log(`\n${"Modèle".padEnd(36)} ${"Réussite".padEnd(13)} ${categories.map((category) => category.padEnd(10)).join(" ")} Jetons/cas   s/cas`);

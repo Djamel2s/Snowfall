@@ -92,7 +92,8 @@ export interface ChatModel {
 
 /** Le fournisseur limite le débit (HTTP 429 : quota par minute ou par jour atteint). */
 export class ProviderRateLimitError extends Error {
-  constructor() {
+  /** Quota dépassé, si le fournisseur le nomme (identifiant fixe, jamais montré à l'utilisateur). */
+  constructor(readonly quota?: string) {
     super("PROVIDER_RATE_LIMITED");
   }
 }

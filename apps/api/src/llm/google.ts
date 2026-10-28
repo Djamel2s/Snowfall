@@ -50,10 +50,16 @@ async function request(path: string, init: RequestInit, apiKey: string, attempts
     });
     if (response.ok) return response;
 
+    const last = !RETRYABLE.has(response.status) || attempt >= attempts || init.signal?.aborted;
+    if (last && response.status === 429) {
+      // Seul l'identifiant du quota dépassé est gardé (nom fixe, ex. « …PerDay… ») :
+      // le reste du corps peut refléter la requête.
+      const body = await response.text().catch(() => "");
+      throw new ProviderRateLimitError(/"quotaId":\s*"([A-Za-z0-9-]{1,100})"/.exec(body.slice(0, 20_000))?.[1]);
+    }
     // Corps d'erreur volontairement ignoré : il peut refléter la requête.
     await response.body?.cancel();
-    if (!RETRYABLE.has(response.status) || attempt >= attempts || init.signal?.aborted) {
-      if (response.status === 429) throw new ProviderRateLimitError();
+    if (last) {
       throw new Error(`GOOGLE_${response.status}`);
     }
     // Délai demandé par Google s'il est indiqué (borné à 10 s), sinon attente croissante.

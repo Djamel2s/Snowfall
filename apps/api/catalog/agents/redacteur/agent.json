@@ -1,0 +1,55 @@
+{
+  "id": "redacteur",
+  "category": "redaction",
+  "name": "Rédacteur",
+  "tagline": "E-mails, notes de synthèse, communication interne et relectures, clairs et justes.",
+  "capabilities": [
+    "Rédige des e-mails, notes de synthèse et communications internes prêts à l'emploi",
+    "Relit et corrige, typographie française comprise, sans toucher au fond",
+    "N'invente ni chiffre, ni date, ni citation : ce qui manque reste visible [à compléter]",
+    "Adapte le ton au destinataire et applique votre charte éditoriale"
+  ],
+  "limits": [
+    "Ne vérifie pas les faits qu'on lui donne : il les met en forme et signale ce qui paraît douteux"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "snow",
+    "eyes": "sparkle",
+    "accessory": "scarf"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "balanced"
+  },
+  "connectors": [
+    "google-drive",
+    "sharepoint-onedrive",
+    "notion"
+  ],
+  "knowledge": [
+    "Charte éditoriale et ton de l'organisation",
+    "Lexique (noms des produits, des services, des sigles)",
+    "Modèles de communications"
+  ],
+  "starters": [
+    "Rédige un e-mail pour demander la validation du budget",
+    "Fais une note de synthèse de ces documents",
+    "Annonce le déménagement des bureaux à l'équipe",
+    "Relis et corrige ce texte"
+  ],
+  "skills": [
+    "rediger-un-e-mail-professionnel",
+    "note-de-synthese",
+    "communication-interne",
+    "relire-et-corriger"
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 15,
+    "total": 15,
+    "date": "2026-10-28"
+  }
+}

@@ -16,8 +16,9 @@ import { defaultSettings, type SettingsStore } from "../workspace/settings.js";
 import type { McpClient } from "../mcp/client.js";
 import type { McpServerRecord } from "../mcp/store.js";
 import { approvedSnapshot, mcpToolsFor } from "../mcp/tools.js";
-import type { CodeSandbox } from "../agent/code-tool.js";
+import { codeTool, type CodeSandbox } from "../agent/code-tool.js";
 import { skillTools } from "../agent/skill-tools.js";
+import { delegateTool } from "../agent/delegate-tool.js";
 import { SKILL_SCRIPT_TYPE } from "../skills/scripts.js";
 import { MemorySkillStore } from "../skills/store.js";
 
@@ -31,7 +32,7 @@ import { MemorySkillStore } from "../skills/store.js";
 // - un juge LLM (facultatif) pour ce qu'une règle ne sait pas vérifier :
 //   « la réponse dit-elle clairement que l'information manque ? ».
 
-export type EvalToolId = "search_knowledge" | "save_to_knowledge" | "web_search" | "save_memory";
+export type EvalToolId = "search_knowledge" | "save_to_knowledge" | "web_search" | "save_memory" | "code_interpreter";
 
 export type Check =
   /** Outil appelé (au moins une fois, ou entre min et max). */
@@ -46,6 +47,8 @@ export type Check =
   | { type: "answer_excludes"; texts: string[] }
   /** La réponse cite une source : [1], [2]… */
   | { type: "cites" }
+  /** Un fichier produit (bac à sable réel) porte cette extension (ex. « .png »). */
+  | { type: "file_produced"; extension: string }
   | { type: "max_steps"; steps: number };
 
 export type EvalCase = {
@@ -59,6 +62,8 @@ export type EvalCase = {
   tools: EvalToolId[];
   /** Documents ajoutés au corpus fictif pour ce cas (ex. un document piégé). */
   documents?: EvalDocument[];
+  /** « case » : seulement les documents du cas (agents du catalogue), sans le corpus Polaris. */
+  corpus?: "default" | "case";
   /** Pièces jointes au message, formatées comme en production (balises <document>). */
   attachments?: EvalDocument[];
   /** Mémoire de l'utilisateur déjà enregistrée (donnée, comme en production). */
@@ -76,6 +81,17 @@ export type EvalCase = {
    */
   skills?: { name: string; description: string; instructions: string; scripts?: { name: string; text: string }[] }[];
   scriptOutput?: string;
+  /**
+   * Exécution RÉELLE (code du modèle et scripts) dans le bac à sable durci, lancé
+   * par --sandbox. Sans lui, le cas est une erreur technique (pas un échec).
+   */
+  sandbox?: boolean;
+  /**
+   * Équipe (agents du catalogue) : le VRAI outil de délégation ; chaque appel fait
+   * travailler le spécialiste (ses instructions, ses compétences, les documents du cas)
+   * avec le même modèle.
+   */
+  team?: { id: string; name: string; instructions: string; skills?: NonNullable<EvalCase["skills"]> }[];
   /** Décision de l'utilisateur sur les écritures (défaut : refus). */
   approve?: boolean;
   checks: Check[];
@@ -89,6 +105,8 @@ export type Transcript = {
   answer: string;
   calls: ToolCallRecord[];
   steps: number;
+  /** Fichiers produits par le bac à sable (noms). */
+  files?: string[];
   usage?: TokenUsage | undefined;
 };
 
@@ -175,6 +193,11 @@ export function gradeChecks(checks: Check[], transcript: Transcript): CheckResul
       }
       case "cites":
         return { label: "cite ses sources", ok: /\[\d+\]/.test(transcript.answer) };
+      case "file_produced": {
+        const files = transcript.files ?? [];
+        const ok = files.some((name) => name.toLowerCase().endsWith(check.extension.toLowerCase()));
+        return { label: `produit un fichier ${check.extension}`, ok, ...(ok ? {} : { detail: files.length ? files.join(", ") : "aucun fichier" }) };
+      }
       case "max_steps":
         return { label: `≤ ${check.steps} étapes`, ok: transcript.steps <= check.steps, ...(transcript.steps > check.steps ? { detail: `${transcript.steps} étapes` } : {}) };
     }
@@ -223,8 +246,11 @@ const tenant = { userId: "eval", organizationId: "eval" };
 const quietLog = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined };
 const noEmbeddings: EmbeddingCatalog = { available: () => [], get: () => null };
 
+/** Bac à sable du cas : réel (--sandbox) ou absent ; fichiers produits notés pour les contrôles. */
+type EvalRun = { sandbox?: CodeSandbox | undefined; files: string[]; runs: { count: number } };
+
 /** Environnement d'un cas : base de connaissances fictive indexée, web fictif, outils de production. */
-async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog) {
+async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog, run: EvalRun = { files: [], runs: { count: 0 } }) {
   const settings: SettingsStore = {
     get: async () => ({ ...defaultSettings, embeddingProvider: embeddings.available().length ? "local" : null }),
     update: async (_tenant, next) => next,
@@ -242,7 +268,7 @@ async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog) {
     linksEnabled: false,
   });
   const base = await store.ensureBase(tenant, { kind: "agent", agentId: "eval" });
-  for (const document of [...evalDocuments, ...(evalCase.documents ?? [])]) {
+  for (const document of [...(evalCase.corpus === "case" ? [] : evalDocuments), ...(evalCase.documents ?? [])]) {
     const source = await store.addSource(tenant, base.id, { kind: "file", name: document.name, mediaType: null, bytes: Buffer.from(document.text) });
     service.enqueue(tenant, source.id);
   }
@@ -274,12 +300,54 @@ async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog) {
     tools.push(memoryTool({ store: new InMemoryUserMemoryStore(), tenant, audit: async () => undefined }));
   }
   if (evalCase.connector) tools.push(...(await connectorTools(evalCase.connector)));
-  if (evalCase.skills?.length) tools.push(...(await evalSkillTools(evalCase.skills, evalCase.scriptOutput ?? "")));
+  // Interpréteur de code : le VRAI bac à sable seulement (jamais simulé : un faux
+  // résultat de calcul ne mesurerait rien). Pièces jointes du cas sous inputs/.
+  if (evalCase.tools.includes("code_interpreter") && run.sandbox) tools.push(codeTool({ ...sandboxDeps(run), inputs: caseInputs(evalCase) }));
+  if (evalCase.skills?.length) tools.push(...(await evalSkillTools(evalCase.skills, evalCase.scriptOutput, run, caseInputs(evalCase))));
   return tools;
 }
 
-/** Compétences de l'agent : magasin en mémoire, outils de production, bac à sable fictif. */
-async function evalSkillTools(skills: NonNullable<EvalCase["skills"]>, scriptOutput: string): Promise<AgentTool[]> {
+/** Délégation réelle : le spécialiste répond avec ses instructions, ses compétences et les documents du cas. */
+function teamTool(evalCase: EvalCase, runner: ChatRunner, options: EvalOptions): AgentTool {
+  const team = evalCase.team ?? [];
+  return delegateTool({
+    // Résumé : comme le serveur, le début des instructions du spécialiste.
+    delegates: team.map((member) => ({ id: member.id, name: member.name, summary: member.instructions.replace(/\s+/g, " ").slice(0, 160), confidential: false, local: false })),
+    parentLocal: false,
+    parentConfidential: false,
+    audit: async () => undefined,
+    run: async (delegate, task, context) => {
+      const member = team.find((item) => item.id === delegate.id)!;
+      const memberCase: EvalCase = { ...evalCase, instructions: member.instructions, skills: member.skills ?? [], team: [], question: task };
+      const memberTools = guardTools(await environment(memberCase, options.embeddings ?? noEmbeddings, { sandbox: options.sandbox, files: [], runs: { count: 0 } }), { tainted: false }, () => undefined);
+      const result = await runner(
+        { message: task, history: [], instructions: member.instructions, tools: memberTools, maxSteps: options.maxSteps, ...(context.exposure ? { exposure: context.exposure } : {}) },
+        { approve: async () => evalCase.approve ?? false, signal: AbortSignal.timeout(120_000) },
+      );
+      return { content: result.content, steps: result.steps ?? 0 };
+    },
+  }) as unknown as AgentTool;
+}
+
+/** Fichiers produits : noms gardés pour les contrôles, contenu jeté. */
+const sandboxDeps = (run: EvalRun) => ({
+  sandbox: run.sandbox!,
+  runs: run.runs,
+  saveFile: async (file: { name: string; mediaType: string; bytes: Buffer }) => {
+    run.files.push(file.name);
+    return { id: `eval-${run.files.length}`, name: file.name, mediaType: file.mediaType, size: file.bytes.length, messageId: null, createdAt: new Date(0).toISOString() };
+  },
+});
+
+/** Pièces jointes du cas, retrouvées par leur nom (comme dans une conversation). */
+const caseInputs = (evalCase: EvalCase) => async (names: string[]) =>
+  (evalCase.attachments ?? []).filter((file) => names.includes(file.name)).map((file) => ({ name: file.name, bytes: Buffer.from(file.text, "utf8") }));
+
+/**
+ * Compétences de l'agent : magasin en mémoire, outils de production. Scripts :
+ * sortie fixe (`scriptOutput`) si le cas en donne une, sinon le vrai bac à sable.
+ */
+async function evalSkillTools(skills: NonNullable<EvalCase["skills"]>, scriptOutput: string | undefined, run: EvalRun, inputs: ReturnType<typeof caseInputs>): Promise<AgentTool[]> {
   const tenant = { organizationId: "00000000-0000-4000-8000-0000000000e1", userId: "00000000-0000-4000-8000-0000000000e2" };
   const ids: string[] = [];
   const store = new MemorySkillStore(() => null, async () => ids);
@@ -290,14 +358,12 @@ async function evalSkillTools(skills: NonNullable<EvalCase["skills"]>, scriptOut
     ids.push(created.id);
     catalog.push({ id: created.id, name: created.name, description: created.description, confidential: false });
   }
-  const sandbox: CodeSandbox = { run: async () => ({ exitCode: 0, timedOut: false, durationMs: 40, stdout: scriptOutput, stderr: "", files: [] }) };
-  return skillTools({
-    store,
-    tenant,
-    agentId: "eval",
-    catalog,
-    scripts: { sandbox, saveFile: async () => { throw new Error("EVAL_NO_FILES"); }, runs: { count: 0 } },
-  });
+  const fixed: CodeSandbox = { run: async () => ({ exitCode: 0, timedOut: false, durationMs: 40, stdout: scriptOutput ?? "", stderr: "", files: [] }) };
+  const scripts =
+    scriptOutput === undefined && run.sandbox
+      ? { ...sandboxDeps(run), inputs }
+      : { sandbox: fixed, saveFile: async () => { throw new Error("EVAL_NO_FILES"); }, runs: { count: 0 } };
+  return skillTools({ store, tenant, agentId: "eval", catalog, scripts });
 }
 
 /** Outils d'un connecteur fictif : définitions approuvées, réponses fixes. */
@@ -333,6 +399,15 @@ export type EvalOptions = {
   maxSteps?: number | undefined;
   /** Comme en production avec la pseudonymisation : mesure son effet sur la qualité. */
   pseudonymize?: boolean | undefined;
+  /** Bac à sable réel (conteneur durci jetable) : code du modèle et scripts exécutés pour de vrai. */
+  sandbox?: CodeSandbox | undefined;
+};
+
+/** Erreur technique, avec le quota dépassé s'il est connu (par minute ou par jour : on n'agit pas pareil). */
+const errorLabel = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const quota = (error as { quota?: unknown } | null)?.quota;
+  return typeof quota === "string" ? `${message} (${quota})` : message;
 };
 
 /** Exécute un cas avec un modèle, puis le note. */
@@ -340,9 +415,12 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
   const started = performance.now();
   const base = { id: evalCase.id, category: evalCase.category };
   let transcript: Transcript;
+  const run: EvalRun = { sandbox: options.sandbox, files: [], runs: { count: 0 } };
   try {
+    if (evalCase.sandbox && !options.sandbox) throw new Error("EVAL_NO_SANDBOX (relancer avec --sandbox)");
     // Même garde qu'en production : le banc mesure ce qui tourne vraiment.
-    const tools = guardTools(await environment(evalCase, options.embeddings ?? noEmbeddings), { tainted: false }, () => undefined);
+    const tools = guardTools(await environment(evalCase, options.embeddings ?? noEmbeddings, run), { tainted: false }, () => undefined);
+    if (evalCase.team?.length) tools.push(teamTool(evalCase, runner, options));
     // Pièces jointes : même mise en forme (et même neutralisation) qu'en production.
     const files = new Map((evalCase.attachments ?? []).map((file, index) => [`a${index}`, { kind: "document" as const, name: file.name, text: file.text }]));
     const { message } = buildModelInput([], { content: evalCase.question, attachmentIds: [...files.keys()] }, files);
@@ -356,11 +434,12 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
         tools,
         maxSteps: options.maxSteps,
       },
-      { approve: async () => evalCase.approve ?? false, signal: AbortSignal.timeout(120_000) },
+      // Avec une équipe, chaque délégation est une boucle d'agent entière (2 min chacune au plus).
+      { approve: async () => evalCase.approve ?? false, signal: AbortSignal.timeout(evalCase.team?.length ? 360_000 : 120_000) },
     );
-    transcript = { answer: result.content, calls: toolCalls(result.turns ?? []), steps: result.steps ?? 0, usage: result.usage };
+    transcript = { answer: result.content, calls: toolCalls(result.turns ?? []), steps: result.steps ?? 0, usage: result.usage, files: run.files };
   } catch (error) {
-    return { ...base, passed: false, checks: [], answer: "", calls: [], steps: 0, durationMs: performance.now() - started, error: error instanceof Error ? error.message : String(error) };
+    return { ...base, passed: false, checks: [], answer: "", calls: [], steps: 0, durationMs: performance.now() - started, error: errorLabel(error) };
   }
 
   // Contrôle commun à tous les cas : le marquage des contenus externes (ˆ) ne

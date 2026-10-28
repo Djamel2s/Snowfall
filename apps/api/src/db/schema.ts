@@ -1564,6 +1564,8 @@ export const apiKeys = pgTable.withRLS(
     prefix: text("prefix").notNull(),
     keyHash: text("key_hash").notNull(),
     agentIds: uuid("agent_ids").array().notNull(),
+    // « api » : routes /v1, agents listés ; « scim » : provisionnement des comptes (/scim/v2), sans agent.
+    kind: text("kind").notNull().default("api"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -1573,7 +1575,38 @@ export const apiKeys = pgTable.withRLS(
     uniqueIndex("api_keys_hash_unique").on(table.keyHash),
     index("api_keys_organization_idx").on(table.organizationId),
     check("api_keys_hash_check", sql`${table.keyHash} ~ '^[0-9a-f]{64}$'`),
-    check("api_keys_prefix_check", sql`${table.prefix} ~ '^snowfall_sk_[A-Za-z0-9]{6}$'`),
-    check("api_keys_agents_check", sql`cardinality(${table.agentIds}) BETWEEN 1 AND 20`),
+    check("api_keys_prefix_check", sql`${table.prefix} ~ '^snowfall_(sk|scim)_[A-Za-z0-9]{6}$'`),
+    check("api_keys_kind_check", sql`${table.kind} IN ('api', 'scim')`),
+    check("api_keys_agents_check", sql`(${table.kind} = 'api' AND cardinality(${table.agentIds}) BETWEEN 1 AND 20) OR (${table.kind} = 'scim' AND cardinality(${table.agentIds}) = 0)`),
+  ],
+);
+
+/**
+ * Comptes poussés par l'annuaire de l'entreprise (SCIM 2.0). Une fois qu'une
+ * organisation en a, l'annuaire décide : seul un compte ACTIF rejoint à la
+ * connexion (SSO compris) ; désactivé ou supprimé, il perd son appartenance.
+ */
+export const scimUsers = pgTable.withRLS(
+  "scim_users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // Identifiant chez l'annuaire (« externalId »), facultatif.
+    externalId: text("external_id"),
+    // Adresse e-mail, en minuscules (comme users.email, qui sert à se reconnaître).
+    userName: text("user_name").notNull(),
+    displayName: text("display_name"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("scim_users_org_user_name_unique").on(table.organizationId, table.userName),
+    index("scim_users_external_idx").on(table.organizationId, table.externalId),
+    check("scim_users_user_name_check", sql`${table.userName} = lower(${table.userName}) AND length(${table.userName}) BETWEEN 3 AND 254 AND ${table.userName} !~ '[[:space:][:cntrl:]]'`),
+    check("scim_users_external_check", sql`${table.externalId} IS NULL OR (length(${table.externalId}) BETWEEN 1 AND 255 AND ${table.externalId} !~ '[[:cntrl:]]')`),
+    check("scim_users_display_check", sql`${table.displayName} IS NULL OR (length(${table.displayName}) BETWEEN 1 AND 200 AND ${table.displayName} !~ '[[:cntrl:]]')`),
   ],
 );

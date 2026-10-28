@@ -351,6 +351,58 @@ adversarial code reviews whose findings were all fixed and covered by tests
   is a plaintext label; no CORS by design (server-to-server only); keys are not
   rotated automatically (create a new one, then revoke the old one).
 
+### SCIM provisioning (2026-10-27)
+
+- The company directory pushes accounts (SCIM 2.0, Users). Once a SCIM key
+  exists, the organization is directory-managed: only an active SCIM account can
+  join, SSO included, so a deactivated person cannot come back by signing in.
+  Deactivation removes membership, grants and pending invitations; membership is
+  re-read on every request, so open sessions stop working at once.
+- Known gaps: no SCIM Groups (roles stay manual); roles are not driven by the
+  directory; a failed deprovisioning (owner, key creator) is reported to the
+  directory and audited, but still needs a human.
+
+### Agent catalog (2026-10-27)
+
+- Ready-made agents (HR, contracts, GDPR, purchasing, support, project, writing,
+  sales, general assistant with a team) install through the ordinary routes:
+  same permissions, sensitive-data checks, quotas and audit as a manual
+  creation. Every template ships its own evaluation set, including at least one
+  prompt-injection case, and the quality shown in the catalog is measured.
+- Fixed while building it: `runTool` overwrote tool-reported errors as successes.
+- `run_code` can read attachments of the current conversation (copied under
+  `inputs/`, never executed), so figures are computed on the file instead of
+  being retyped by the model. Same sandbox, same limits.
+- A Gemini 429 body is read for one thing only: the quota identifier
+  (`[A-Za-z0-9-]{1,100}`, e.g. per-minute vs per-day), kept on the error and
+  shown in evaluation reports, never to users. The rest of the body, which can
+  echo the request, is discarded (test in `google.test.ts`).
+- Known gaps: quality is measured on one model (the cheapest available); a
+  template's legal content reflects French law at the measurement date and must
+  be reviewed by the organization; no automatic update of an installed agent
+  when its template changes.
+
+### Administration and overview (2026-10-28)
+
+- Organization administration moved out of Settings into its own space
+  (sidebar › Administration, admins only): Overview, Members and access, Models
+  and quotas, Knowledge, Tools and integrations. Settings only holds the user's
+  own account.
+- Overview = organization totals only: active people (7 days, 30 days, period),
+  messages per day, most used agents with their helpful rate, tokens per month
+  against the quota, tool calls this month. No per-person figure, no ranking;
+  an agent appears only once 5 distinct people use it.
+- Messages stay readable by their author only. Activity is counted by a
+  trigger into `member_activity` (organization, day, person, agent, count; no
+  content), which the application role cannot read or write. Only
+  `snowfall_admin_overview(days)` returns totals, after checking in the
+  database that the caller is owner/admin of the context organization. The API
+  route checks the role too and audits refusals (`admin.overview`).
+- Retention: 400 days. Copies (fork) and imports are not counted.
+- Known gaps: scheduled tasks and public-API calls count as their author's
+  activity; no cost in euros yet (tokens only, no price table); no audit-log
+  viewer in Administration yet (the log is insert-only for the application).
+
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 
 - A fork does not copy attachments: the copy's model no longer sees their content.

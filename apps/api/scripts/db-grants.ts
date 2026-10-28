@@ -78,6 +78,8 @@ const privileges: Record<string, string[]> = {
   // Clés d'API : jamais effacées (audit) ; seuls la révocation et le dernier usage changent.
   api_keys: ["SELECT", "INSERT", "UPDATE (last_used_at, revoked_at)"],
   // api_key_index : aucun droit, lue seulement via snowfall_api_key_lookup().
+  // Comptes poussés par l'annuaire (SCIM) : gérés par les administrateurs (RLS).
+  scim_users: ["SELECT", "INSERT", "UPDATE (external_id, user_name, display_name, active, updated_at)", "DELETE"],
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
@@ -91,6 +93,8 @@ const functions = [
   "snowfall_stale_runs(interval)",
   "snowfall_expired_temporary()",
   "snowfall_agent_ratings()",
+  // member_activity : aucun droit, lue seulement via snowfall_admin_overview() (totaux, administrateurs).
+  "snowfall_admin_overview(integer)",
   "snowfall_claim_schedules(interval, integer)",
   "snowfall_api_key_lookup(text)",
   // Contrôles de droits appelés par la RLS (SECURITY INVOKER : la RLS s'applique dedans).

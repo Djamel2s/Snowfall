@@ -302,6 +302,13 @@ function snippet(text: string, index: number, length: number) {
  * Isolation en profondeur : chaque requête filtre explicitement par
  * (organisation, utilisateur) ET s'exécute sous RLS avec le contexte tenant.
  */
+/**
+ * Messages recopiés (copie de conversation, import) : pas une activité du jour.
+ * Le compteur du pilotage (trigger messages_activity_count) les ignore pour
+ * cette transaction seulement.
+ */
+const notActivity = (client: PoolClient) => client.query("SELECT set_config('app.copy', 'on', true)");
+
 export class PostgresConversationStore implements ConversationStore {
   constructor(
     private readonly pool: Pool,
@@ -867,6 +874,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!source) return null;
       // Une conversation temporaire disparaît en 24 h : elle ne se recopie pas.
       if (source.temporary) throw new Error("TEMPORARY");
+      await notActivity(client);
 
       const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
         `SELECT id, role, content, sources, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
@@ -933,6 +941,7 @@ export class PostgresConversationStore implements ConversationStore {
     const conversation = await this.create(owner, title);
     try {
       await withTenant(this.pool, owner, async (client) => {
+        await notActivity(client);
         let parentId: string | null = null;
         for (const message of messages) {
           parentId = (await this.insertMessage(client, owner, conversation.id, message.role, message.content, undefined, parentId)).id;

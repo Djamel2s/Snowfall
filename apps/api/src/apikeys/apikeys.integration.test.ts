@@ -59,7 +59,7 @@ describe("Clés d'API : empreinte seule, RLS administrateurs, recherche contrôl
   it("recherche : valide tant que le créateur est administrateur ; révoquée ou rétrogradé, plus rien", async () => {
     const created = (await keys.create(as(admin), { name: "Bot", agentIds: [agent], expiresAt: new Date(Date.now() + 86_400_000) }))!;
     const found = await keys.authenticate(created.key);
-    assert.deepEqual(found, { keyId: created.record.id, organizationId: org, userId: admin, role: "admin" });
+    assert.deepEqual(found, { keyId: created.record.id, organizationId: org, userId: admin, role: "admin", kind: "api" });
     assert.deepEqual(await keys.agentsFor(found!), [agent]);
     assert.equal(await keys.authenticate(`snowfall_sk_${"A".repeat(46)}`), null);
 

@@ -32,6 +32,8 @@ const UNTRUSTED_RESULT = (name: string) => name === "web_search" || name === "re
 /** Résultats tirés des données de l'organisation. */
 // Compétences : documents internes de l'organisation, comme la base de connaissances.
 const SENSITIVE_RESULT = (name: string) => name === "search_knowledge" || name === "delegate_task" || name === "use_skill" || name === "read_skill_file";
+const readsUserFiles = (turn: { name: string; data?: unknown }) =>
+  turn.name === "run_code" && typeof turn.data === "object" && turn.data !== null && Number((turn.data as { inputs?: unknown }).inputs) > 0;
 /** Appels dont les arguments quittent la plateforme. */
 export const isOutbound = (name: string) => name === "web_search" || name === "read_webpage" || isMcp(name);
 
@@ -53,6 +55,11 @@ export function exposureOf(turns: ChatTurn[]): Exposure {
       if (turn.content.includes("<knowledge>")) exposure.sensitive = true;
     }
     if (turn.role === "tool" && !turn.isError) {
+      // Code du modèle qui a lu des pièces jointes : sa sortie vaut une pièce jointe.
+      if (readsUserFiles(turn)) {
+        exposure.untrusted = true;
+        exposure.sensitive = true;
+      }
       if (UNTRUSTED_RESULT(turn.name)) exposure.untrusted = true;
       if (SENSITIVE_RESULT(turn.name)) exposure.sensitive = true;
       if (isMcp(turn.name)) connectors.add(turn.name);

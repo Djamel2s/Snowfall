@@ -1,4 +1,5 @@
 import { CONNECTOR_CATALOG } from '../../api/src/mcp/catalog'
+import { AGENT_TEMPLATES } from '../../api/src/templates/catalog'
 import type { Page, Route } from '@playwright/test'
 
 // Faux backend pour les tests d'écran : chaque appel /api/… reçoit une réponse
@@ -120,8 +121,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const mcpConnected = new Set<string>()
   let mcpConnecting = 'mcp-1'
   const approveCalls: { id: string; tools: { name: string; access: string }[] }[] = []
-  const apiKeys: { id: string; name: string; prefix: string; createdBy: string; agentIds: string[]; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }[] = []
-  const apiKeyCreates: { name: string; agentIds: string[]; expiresInDays: number }[] = []
+  const apiKeys: { id: string; name: string; prefix: string; createdBy: string; kind: 'api' | 'scim'; agentIds: string[]; expiresAt: string; lastUsedAt: string | null; revokedAt: string | null; createdAt: string }[] = []
+  const installedAgents: ReturnType<typeof fakeAgent>[] = []
+  const templateInstalls: string[] = []
+  const adminOverviewCalls: number[] = []
+  const apiKeyCreates: { kind?: 'api' | 'scim'; name: string; agentIds?: string[]; expiresInDays: number }[] = []
   const audioCalls: { type: string; size: number }[] = []
   const speechCalls: string[] = []
   type MockServer = { id: string; name: string; status: string; auth: string; kind: string; url: string; hasToken?: boolean; catalogId?: string; tools: { name: string; title: string | null; access: string }[] }
@@ -222,7 +226,28 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     }
     if (key === 'GET /conversations') return json(route, { conversations })
     if (key === 'GET /projects') return json(route, { projects: [] })
-    if (key === 'GET /agents') return json(route, { agents: options.agents ?? [] })
+    if (key === 'GET /agents') return json(route, { agents: [...(options.agents ?? []), ...installedAgents] })
+    // Catalogue d'agents : le vrai (textes de l'API), installé comme un agent ordinaire.
+    if (key === 'GET /agent-templates') {
+      return json(route, {
+        templates: AGENT_TEMPLATES.map((template) => ({
+          id: template.id, category: template.category, name: template.name, tagline: template.tagline, capabilities: template.capabilities, limits: template.limits,
+          avatar: template.avatar, tools: template.tools, missingTools: [], knowledge: template.knowledge, starters: template.starters, team: [],
+          skills: template.skills.map((skill) => ({ name: skill.name, description: skill.description, scripts: 0 })),
+          connectors: template.connectors.map((id) => ({ id, name: CONNECTOR_CATALOG.find((item) => item.id === id)?.name ?? id, icon: null, color: null })),
+          evaluation: { cases: template.evaluation.cases.length, ...(template.evaluation.measured ? { measured: template.evaluation.measured } : {}) },
+        })),
+      })
+    }
+    const templateInstall = /^\/agent-templates\/([a-z0-9-]+)\/install$/.exec(path)
+    if (templateInstall && method === 'POST') {
+      const template = AGENT_TEMPLATES.find((item) => item.id === templateInstall[1])
+      if (!template) return json(route, { error: 'Not found' }, 404)
+      templateInstalls.push(template.id)
+      const agent = { ...fakeAgent(template.name, { mine: true, tools: template.tools }), id: id(), avatar: template.avatar, instructions: template.instructions }
+      installedAgents.push(agent)
+      return json(route, { agent: { id: agent.id, name: agent.name }, team: [], missingTools: [] }, 201)
+    }
     if (method === 'GET' && /^\/agents\/[^/]+\/knowledge$/.test(path)) {
       return json(route, { knowledge: { id: null, confidential: false, canManage: true, embeddingModel: null, linksEnabled: false, sources: [] } })
     }
@@ -348,6 +373,25 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'GET /models') {
       return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
     }
+    if (key === 'GET /admin/overview') {
+      // Comme l'API : administrateurs seulement ; des totaux, un agent à partir de 5 personnes.
+      if (role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
+      const days = Number(url.searchParams.get('days') ?? 30)
+      adminOverviewCalls.push(days)
+      const start = Date.UTC(2026, 9, 28) - (days - 1) * 86_400_000
+      return json(route, {
+        days,
+        members: { total: 42, active7: 18, active30: 27, activePeriod: days === 7 ? 18 : 27 },
+        activity: Array.from({ length: days }, (_, index) => ({ day: new Date(start + index * 86_400_000).toISOString().slice(0, 10), users: index % 7 > 4 ? 0 : 9, messages: index % 7 > 4 ? 0 : 30 + index })),
+        agents: [
+          { agentId: 'agent-rh', name: 'Assistant RH', messages: 412, users: 19, rating: { up: 38, total: 41 } },
+          { agentId: 'agent-prive', name: null, messages: 96, users: 6 },
+        ],
+        tokens: ['2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map((period, index) => ({ period, byProvider: { mistral: 200_000 * (index + 1) } })),
+        monthlyTokenLimit: 2_000_000,
+        tools: { web: 42, code: 7 },
+      })
+    }
     if (key === 'GET /usage') {
       return json(route, { usage: { period: '2026-10-01', total: { inputTokens: 1200, outputTokens: 300 }, byProvider: { mistral: { inputTokens: 1200, outputTokens: 300 } }, mine: { inputTokens: 800, outputTokens: 200 }, tools: { web: 42 } }, limits: { monthly: 100_000, providers: {}, tools: { web: 500 } } })
     }
@@ -408,10 +452,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     // Clés d'API : la clé complète n'est renvoyée qu'à la création (comme l'API).
     if (key === 'GET /organization/api-keys') return json(route, { keys: apiKeys })
     if (key === 'POST /organization/api-keys') {
-      const body = request.postDataJSON() as { name: string; agentIds: string[]; expiresInDays: number }
+      const body = request.postDataJSON() as { kind?: 'api' | 'scim'; name: string; agentIds?: string[]; expiresInDays: number }
       apiKeyCreates.push(body)
-      const secret = `snowfall_sk_${'Ab3'.repeat(15)}x`
-      const record = { id: id(), name: body.name, prefix: secret.slice(0, 18), createdBy: 'u-1', agentIds: body.agentIds, expiresAt: new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString(), lastUsedAt: null, revokedAt: null, createdAt: now }
+      const kind = body.kind ?? 'api'
+      const secret = `${kind === 'scim' ? 'snowfall_scim_' : 'snowfall_sk_'}${'Ab3'.repeat(15)}x`
+      const record = { id: id(), name: body.name, prefix: secret.slice(0, kind === 'scim' ? 20 : 18), createdBy: 'u-1', kind, agentIds: body.agentIds ?? [], expiresAt: new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString(), lastUsedAt: null, revokedAt: null, createdAt: now }
       apiKeys.unshift(record)
       return json(route, { key: secret, record }, 201)
     }
@@ -742,5 +787,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates }
+  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls }
 }

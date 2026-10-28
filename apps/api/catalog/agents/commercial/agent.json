@@ -1,0 +1,53 @@
+{
+  "id": "commercial",
+  "category": "commercial",
+  "name": "Commercial",
+  "tagline": "Rendez-vous préparés avec des faits sourcés, propositions, objections, prospection conforme.",
+  "capabilities": [
+    "Prépare une fiche de rendez-vous : faits sourcés sur le prospect, hypothèses signalées, questions de découverte",
+    "Rédige propositions commerciales, e-mails de prospection et de relance (avec désinscription)",
+    "Aide à répondre aux objections avec des faits, jamais avec des promesses hors politique",
+    "Ne donne que les prix et remises de votre grille tarifaire"
+  ],
+  "limits": [
+    "N'affirme rien sur un prospect sans source",
+    "N'accorde aucune remise : il renvoie au responsable prévu par votre politique"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "pink",
+    "eyes": "wink",
+    "accessory": "tie"
+  },
+  "tools": [
+    "search_knowledge",
+    "web_search"
+  ],
+  "parameters": {
+    "creativity": "balanced"
+  },
+  "connectors": [
+    "hubspot",
+    "attio",
+    "close",
+    "notion"
+  ],
+  "knowledge": [
+    "Grille tarifaire et politique de remises",
+    "Présentation de l'offre et argumentaire",
+    "Références clients autorisées",
+    "Conditions générales de vente"
+  ],
+  "starters": [
+    "Prépare mon rendez-vous avec cette entreprise",
+    "Rédige une proposition pour ce client",
+    "Comment répondre à « c'est trop cher » ?",
+    "Écris un e-mail de prospection"
+  ],
+  "skills": [
+    "preparer-un-rendez-vous-client",
+    "proposition-commerciale",
+    "repondre-aux-objections",
+    "e-mail-de-prospection-et-relance"
+  ]
+}

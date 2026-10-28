@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (873 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (899 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -1912,6 +1912,101 @@ html[data-theme="light"] {
 :root[data-theme="light"] .api-key-value code {
   background: rgba(255, 255, 255, 0.35);
   color: #111822;
+}
+
+:root[data-theme="light"] .template-head h3 {
+  color: #111822;
+}
+
+:root[data-theme="light"] .template-head p {
+  color: #526178;
+}
+
+:root[data-theme="light"] .template-quality {
+  background: rgba(31, 189, 107, 0.08);
+  color: #159d58;
+}
+
+:root[data-theme="light"] .template-quality.pending {
+  background: rgba(26, 26, 26, 0.04);
+  color: #445770;
+}
+
+:root[data-theme="light"] .template-block h4 {
+  color: #111822;
+}
+
+:root[data-theme="light"] .template-block li {
+  color: #192535;
+}
+
+:root[data-theme="light"] .template-block li > svg {
+  color: #159d58;
+}
+
+:root[data-theme="light"] .template-limits li {
+  color: #445770;
+}
+
+:root[data-theme="light"] .template-skills li {
+  border: 1px solid rgba(27, 40, 56, 0.08);
+}
+
+:root[data-theme="light"] .template-skills strong {
+  color: #111822;
+}
+
+:root[data-theme="light"] .template-skills small {
+  color: #5b6a82;
+}
+
+:root[data-theme="light"] .template-connectors span {
+  background: rgba(26, 26, 26, 0.04);
+  color: #192535;
+}
+
+:root[data-theme="light"] .admin-kpi small {
+  color: #52667f;
+}
+
+:root[data-theme="light"] .admin-kpi strong {
+  color: #111722;
+}
+
+:root[data-theme="light"] .admin-kpi span {
+  color: #708299;
+}
+
+:root[data-theme="light"] .admin-bars span {
+  background: linear-gradient(180deg, #0056a4, #282042);
+}
+
+:root[data-theme="light"] .admin-bars span.empty {
+  background: rgba(26, 26, 26, 0.06);
+}
+
+:root[data-theme="light"] .admin-axis {
+  color: #708299;
+}
+
+:root[data-theme="light"] .admin-agents strong {
+  color: #111822;
+}
+
+:root[data-theme="light"] .admin-agents strong.muted {
+  color: #52667f;
+}
+
+:root[data-theme="light"] .admin-agents small {
+  color: #708299;
+}
+
+:root[data-theme="light"] .admin-rating {
+  color: #238a54;
+}
+
+:root[data-theme="light"] .admin-line {
+  color: #334256;
 }
 
 :root[data-theme="light"] .studio-icon {

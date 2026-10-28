@@ -1,0 +1,7 @@
+DEVIS — StockNet SAS
+Logiciel de gestion des stocks, 50 utilisateurs.
+Abonnement : 13 000 € HT par an.
+Installation : 4 000 € HT (une fois).
+Formation : 1 500 € HT.
+Maintenance et support : 2 000 € HT par an.
+Durée d'engagement : 3 ans.

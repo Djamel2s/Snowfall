@@ -85,7 +85,9 @@ describe("Script de compétence : fichiers transmis au bac à sable", () => {
       },
     });
     const call = (files: unknown) => runTool(tools, { name: "run_skill_script", arguments: { skill: skill.id, script: script!.id, files } }, AbortSignal.timeout(5_000));
-    return { call, runs, asked };
+    // Appel libre : le modèle désigne le script comme il veut (identifiant, nom, ou rien).
+    const raw = (args: Record<string, unknown>) => runTool(tools, { name: "run_skill_script", arguments: { skill: skill.id, ...args } }, AbortSignal.timeout(5_000));
+    return { call, raw, runs, asked };
   }
 
   it("pièces jointes copiées sous inputs/ (noms rendus sûrs) ; jamais sous skill/ ni à la racine", async () => {
@@ -109,4 +111,16 @@ describe("Script de compétence : fichiers transmis au bac à sable", () => {
     assert.equal(tooMany.isError, true);
     assert.equal(runs.length, 1);
   });
+
+  it("script désigné par son nom, ou pas du tout s'il n'y en a qu'un ; sinon une erreur qui liste les scripts", async () => {
+    const { raw, runs } = await setup({});
+    assert.equal((await raw({ script: "fill.py" })).isError, false);
+    assert.equal((await raw({})).isError, false);
+    assert.equal(runs.length, 2);
+    const unknown = await raw({ script: "autre.py" });
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.content, /fill\.py/);
+    assert.equal(runs.length, 2);
+  });
 });
+

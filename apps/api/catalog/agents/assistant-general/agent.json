@@ -1,0 +1,48 @@
+{
+  "id": "assistant-general",
+  "category": "general",
+  "name": "Assistant général",
+  "tagline": "Le point d'entrée unique : répond au simple, confie le spécialisé à son équipe et fait la synthèse.",
+  "capabilities": [
+    "Répond lui-même aux demandes simples et cherche dans vos documents",
+    "Confie chaque question spécialisée au bon agent (RH, Juriste, DPO, Acheteur, Chef de projet)",
+    "Transmet au spécialiste une consigne complète, documents compris",
+    "Combine plusieurs avis en une synthèse fidèle, avec les divergences et les prochaines étapes"
+  ],
+  "limits": [
+    "Ne remplace pas les spécialistes : il les consulte et restitue leur avis",
+    "Installe son équipe avec lui (5 agents)"
+  ],
+  "avatar": {
+    "kind": "alien",
+    "color": "sky",
+    "eyes": "sparkle",
+    "accessory": "crown"
+  },
+  "tools": [
+    "search_knowledge"
+  ],
+  "parameters": {
+    "creativity": "balanced"
+  },
+  "connectors": [],
+  "knowledge": [
+    "Documents généraux de l'organisation (organigramme, contacts, procédures transverses)"
+  ],
+  "starters": [
+    "J'ai une question sur mes congés",
+    "Peux-tu vérifier ce contrat avec un prestataire ?",
+    "On choisit un prestataire de paie : qu'est-ce qu'on doit vérifier ?",
+    "Fais le compte rendu de cette réunion"
+  ],
+  "team": [
+    "assistant-rh",
+    "juriste-contrats",
+    "dpo-rgpd",
+    "acheteur",
+    "chef-de-projet"
+  ],
+  "skills": [
+    "traiter-une-demande-multi-domaines"
+  ]
+}

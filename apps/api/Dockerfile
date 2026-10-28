@@ -37,6 +37,8 @@ COPY --from=prune --chown=root:root /app/node_modules ./node_modules
 COPY --from=prune --chown=root:root /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=prune --chown=root:root /app/apps/api/package.json ./apps/api/package.json
 COPY --from=prune --chown=root:root /app/apps/api/dist ./apps/api/dist
+# Catalogue d'agents (données : fiches, prompts, compétences, jeux d'évaluation).
+COPY --from=prune --chown=root:root /app/apps/api/catalog ./apps/api/catalog
 # Code et dépendances en lecture seule pour le processus (utilisateur non root).
 USER node
 EXPOSE 3001

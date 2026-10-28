@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generatedFileMediaTypes, GENERATED_FILE_MAX_BYTES } from "../db/schema.js";
 import type { GeneratedFileMeta } from "../files/generated.js";
 import type { MalwareScanner } from "../security/antivirus.js";
+import { sandboxPath } from "../skills/scripts.js";
 import { defineTool } from "./tools.js";
 
 // Interpréteur de code : le code écrit par le modèle s'exécute dans le bac à
@@ -89,6 +90,45 @@ export type SandboxDeps = {
   runs: { count: number };
 };
 
+/** Fichiers copiés dans le bac à sable : sous sa limite (8 Mio, base64 compris). */
+export const SANDBOX_INPUT_BYTES = 7_500_000;
+/** Fichiers de l'utilisateur transmis à une exécution, au plus. */
+export const MAX_SCRIPT_INPUTS = 5;
+
+/** Fichiers de la conversation (pièces jointes), retrouvés par leur nom. */
+export type ScriptInputs = (names: string[]) => Promise<{ name: string; bytes: Buffer }[]>;
+
+/**
+ * Pièces jointes demandées, cherchées dans CETTE conversation seulement, copiées
+ * sous inputs/ (noms rendus sûrs ; un chemin déjà pris ou un total trop lourd :
+ * le fichier est signalé manquant). Ajoute aux `files` ; renvoie le nouveau total.
+ */
+export async function copyInputs(wanted: string[], inputs: ScriptInputs | undefined, files: SkillRunFile[], total: number) {
+  const copied: string[] = [];
+  const missing: string[] = [];
+  const free = (path: string) => !files.some((other) => other.path === path || other.path.startsWith(`${path}/`) || path.startsWith(`${other.path}/`));
+  const names = [...new Set(wanted)];
+  const found = names.length && inputs ? await inputs(names) : [];
+  for (const name of names) {
+    const input = found.find((item) => item.name === name);
+    const relative = sandboxPath(name.replace(/\//g, "_"));
+    const path = relative && `inputs/${relative}`;
+    const data = input?.bytes.toString("base64");
+    if (!input || !path || !free(path) || !data || total + data.length > SANDBOX_INPUT_BYTES) {
+      missing.push(name);
+      continue;
+    }
+    total += data.length;
+    files.push({ path, data });
+    copied.push(path);
+  }
+  const notes = [
+    ...(copied.length ? [`Pièces jointes copiées : ${copied.join(", ")}.`] : []),
+    ...(missing.length ? [`Pièces jointes introuvables dans la conversation (ou trop lourdes) : ${missing.join(", ")}.`] : []),
+  ];
+  return { total, copied: copied.length, note: notes.join("\n") };
+}
+
 export const RUNS_EXHAUSTED = "Limite d'exécutions atteinte pour cette réponse : conclus avec ce que tu as.";
 
 /**
@@ -129,11 +169,15 @@ export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, 
   };
 }
 
-export function codeTool(deps: SandboxDeps) {
+export function codeTool(deps: SandboxDeps & { inputs?: ScriptInputs | undefined }) {
   return defineTool({
     name: "run_code",
     description:
-      "Exécute du code Python 3.13 dans un bac à sable isolé, SANS accès au réseau ni aux fichiers de l'utilisateur. " +
+      "Exécute du code Python 3.13 dans un bac à sable isolé, SANS accès au réseau. " +
+      (deps.inputs
+        ? "Les pièces jointes de la conversation nommées dans « files » sont copiées dans inputs/ : lis-les depuis ce dossier " +
+          "(ex. pd.read_csv(\"inputs/ventes.csv\"), pd.read_excel(\"inputs/budget.xlsx\")) plutôt que de recopier leurs données dans le code. "
+        : "Il n'a pas accès aux fichiers de l'utilisateur. ") +
       "Bibliothèques : numpy, pandas, matplotlib, openpyxl (et la bibliothèque standard). Utilise-le pour calculer, analyser " +
       "des données, faire un graphique ou produire un fichier. Affiche les résultats avec print(). Pour donner un fichier à " +
       "l'utilisateur, enregistre-le dans le dossier courant (ex. plt.savefig(\"graphique.png\"), df.to_csv(\"donnees.csv\")) : " +
@@ -141,13 +185,29 @@ export function codeTool(deps: SandboxDeps) {
     parameters: z
       .object({
         code: z.string().min(1).max(50_000).describe("Programme Python complet."),
+        files: z
+          .array(z.string().min(1).max(120))
+          .max(MAX_SCRIPT_INPUTS)
+          .default([])
+          .describe("Noms exacts de pièces jointes de la conversation à copier dans inputs/."),
       })
       .strict(),
     access: "read",
-    async execute({ code }, { signal }) {
+    async execute({ code, files: wanted }, { signal }) {
       if (deps.runs.count >= MAX_RUNS) return { content: RUNS_EXHAUSTED, summary: "limite" };
+      if (!wanted.length) {
+        deps.runs.count++;
+        return deliverRun(await deps.sandbox.run(code, { timeoutSeconds: 30, signal }), deps);
+      }
+      // Avec des fichiers : même chemin que les scripts de compétence (code dans skill/,
+      // fichiers dans inputs/, jamais rendus comme résultats). Le bac à sable ne change pas.
+      const files: SkillRunFile[] = [{ path: "skill/main.py", content: code }];
+      const { note, copied } = await copyInputs(wanted, deps.inputs, files, Buffer.byteLength(code, "utf8"));
       deps.runs.count++;
-      return deliverRun(await deps.sandbox.run(code, { timeoutSeconds: 30, signal }), deps);
+      const result = await deliverRun(await deps.sandbox.run("", { timeoutSeconds: 30, signal, skill: { files, entry: "skill/main.py", args: [] } }), deps);
+      // `inputs` : la sortie dérive d'un fichier de l'utilisateur (non fiable ET privé), comme
+      // une pièce jointe — même si celle-ci n'est plus dans la fenêtre (règle de deux, exposure.ts).
+      return { ...result, content: `${note}\n\n${result.content}`, data: { ...result.data, inputs: copied } };
     },
   });
 }

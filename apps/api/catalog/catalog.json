@@ -1,0 +1,14 @@
+{
+  "agents": [
+    "assistant-general",
+    "assistant-rh",
+    "juriste-contrats",
+    "dpo-rgpd",
+    "acheteur",
+    "support-client",
+    "chef-de-projet",
+    "redacteur",
+    "commercial",
+    "analyste-donnees"
+  ]
+}

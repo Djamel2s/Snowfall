@@ -26,12 +26,15 @@ import {
   ArrowLeft,
   ArchiveRestore,
   Tag,
+  ShieldCheck,
 } from 'lucide-react'
 import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import AgentStudio from './AgentStudio'
+import AdminPanel from './AdminPanel'
 import SettingsPanel from './SettingsPanel'
 import AgentCatalog from './AgentCatalog'
+import AgentTemplates from './AgentTemplates'
 import AgentSchedules from './AgentSchedules'
 import PromptLibrary from './PromptLibrary'
 import SkillLibrary from './SkillLibrary'
@@ -39,7 +42,7 @@ import SkillLibrary from './SkillLibrary'
 const ConnectorsPanel = lazy(() => import('./ConnectorsPanel'))
 import KnowledgePanel from './KnowledgePanel'
 
-export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'skills' | 'connectors' | 'settings' | 'conversation'
+export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'skills' | 'connectors' | 'admin' | 'settings' | 'conversation'
 
 export type SidebarConversation = {
   id: string
@@ -92,6 +95,8 @@ type SidebarProps = {
   agentEditorNotice?: string
   onAgentEditorClose: () => void
   onAgentSaved: (agent: Agent, notice?: string, test?: boolean) => void
+  /** Agent installé depuis le catalogue : liste rechargée, studio ouvert. */
+  onTemplateInstalled: (agentId: string) => void
   onAgentDeleted: (id: string) => void
   onCreateAgent?: () => void
   onStartAgent: (agent: Agent) => void
@@ -186,6 +191,7 @@ export default function Sidebar(props: SidebarProps) {
   const { t } = useI18n()
   const [projectDraft, setProjectDraft] = useState(false)
   // Agent choisi pour planifier une tâche (formulaire ouvert dans la barre).
+  const [agentTab, setAgentTab] = useState<'mine' | 'catalog'>('mine')
   const [scheduling, setScheduling] = useState<Agent | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renamingProject, setRenamingProject] = useState<string | null>(null)
@@ -413,6 +419,24 @@ export default function Sidebar(props: SidebarProps) {
 
           <div className="rail-spacer" />
 
+          {/* Administration de l'organisation : administrateurs seulement (l'API refuse aussi). */}
+          {props.isAdmin && (
+            <button
+              className={`rail-action ${sidebarPanel === 'admin' ? 'rail-action-active' : ''}`}
+              title={t('sidebar.admin')}
+              aria-label={t('sidebar.admin')}
+              aria-current={sidebarPanel === 'admin' ? 'page' : undefined}
+              onClick={() => {
+                if (agentEditor !== undefined) props.onAgentEditorClose()
+                props.onSidebarPanelChange('admin')
+                props.onSidebarCollapsedChange(false)
+              }}
+            >
+              <ShieldCheck size={19} strokeWidth={1.8} />
+              <span className="rail-tooltip">{t('sidebar.admin')}</span>
+            </button>
+          )}
+
           <button
             className={`rail-action ${sidebarPanel === 'settings' ? 'rail-action-active' : ''}`}
             title={t('sidebar.settings')}
@@ -456,6 +480,8 @@ export default function Sidebar(props: SidebarProps) {
             <SkillLibrary canWrite={props.canWrite} />
           ) : sidebarPanel === 'prompts' ? (
             <PromptLibrary prompts={props.prompts} canWrite={props.canWrite} onChange={props.onPromptsChange} onUse={props.onUsePrompt} />
+          ) : sidebarPanel === 'admin' && props.isAdmin ? (
+            <AdminPanel />
           ) : sidebarPanel === 'settings' ? (
             <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onPreferencesSave={props.onPreferencesSave} onConversationsImported={props.onConversationsImported} />
           ) : (
@@ -690,7 +716,26 @@ export default function Sidebar(props: SidebarProps) {
                     )}
                   </div>
 
-                  {agents.length === 0 && !props.onCreateAgent ? (
+                  {/* Mes agents / Catalogue d'agents prêts à l'emploi. */}
+                  <div className="settings-segmented connector-tabs" role="tablist" aria-label={t('sidebar.agentsTitle')}>
+                    <button type="button" role="tab" aria-selected={agentTab === 'mine'} onClick={() => setAgentTab('mine')}>
+                      {t('templates.tabMine')}
+                    </button>
+                    <button type="button" role="tab" aria-selected={agentTab === 'catalog'} onClick={() => setAgentTab('catalog')}>
+                      {t('templates.tabCatalog')}
+                    </button>
+                  </div>
+
+                  {agentTab === 'catalog' ? (
+                    <AgentTemplates
+                      canInstall={Boolean(props.canWrite)}
+                      onError={props.onError}
+                      onInstalled={(id) => {
+                        setAgentTab('mine')
+                        props.onTemplateInstalled(id)
+                      }}
+                    />
+                  ) : agents.length === 0 && !props.onCreateAgent ? (
                     <div className="projects-empty">
                       <Bot size={22} />
                       <strong>{t('sidebar.firstAgent')}</strong>

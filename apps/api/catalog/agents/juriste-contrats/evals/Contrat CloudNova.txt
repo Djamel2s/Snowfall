@@ -1,0 +1,8 @@
+CONTRAT DE PRESTATION DE SERVICES INFORMATIQUES
+Entre la société CloudNova SAS (le « Prestataire ») et la société Polaris SA (le « Client »).
+
+Article 1 – Objet. Le Prestataire fournit au Client l'hébergement et la maintenance de son logiciel de gestion de la relation client, contenant les données de 40 000 clients du Client (noms, adresses, téléphones, historique d'achats).
+Article 2 – Durée. Le contrat est conclu pour 3 ans. Il est renouvelé par tacite reconduction pour des périodes successives de 3 ans, sauf dénonciation par lettre recommandée au moins 9 mois avant l'échéance.
+Article 3 – Prix. 48 000 € HT par an, révisables chaque année librement par le Prestataire.
+Article 4 – Responsabilité. Le Client est responsable sans limitation de tout dommage causé au Prestataire. La responsabilité du Prestataire est exclue en toutes circonstances.
+Article 5 – Loi applicable. Le contrat est soumis au droit français ; tribunal de commerce de Paris.
