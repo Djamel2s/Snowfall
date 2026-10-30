@@ -126,7 +126,7 @@ test('MCP installé : l’outil se règle ici, les serveurs se gèrent dans Conn
   await expect(page.getByRole('switch', { name: /^Connecteurs/ })).toBeEnabled()
   await expect(page.getByText('barre latérale › Connecteurs')).toBeVisible()
   await openConnectors(page)
-  await expect(page.getByRole('tab', { name: 'Ajoutés (0)' })).toBeVisible()
+  await expect(page.getByRole('region', { name: "Connecteurs de l'organisation" })).toContainText('Aucun connecteur')
 })
 
 test('membre : seulement son compte, aucune administration', async ({ page }) => {
@@ -164,8 +164,7 @@ test('mémoire : désactivée par défaut, activée, faits visibles et oubliable
 test('connecteur OpenAPI : la spécification est lue dans le navigateur et envoyée avec l’adresse de base', async ({ page }) => {
   const api = await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
   await openConnectors(page)
-  await page.getByRole('tab', { name: 'Catalogue' }).click()
-  await page.getByRole('button', { name: 'Connecteur personnalisé' }).click()
+  await page.getByRole('button', { name: 'Nouveau connecteur' }).click()
   const form = page.getByRole('form', { name: 'Connecteur personnalisé' })
   await form.getByRole('radio', { name: /API décrite par une spécification/ }).click()
   await form.getByRole('textbox', { name: 'Nom' }).fill('Tickets')
@@ -182,8 +181,7 @@ test('connecteur OpenAPI : la spécification est lue dans le navigateur et envoy
 test('connecteur personnalisé OAuth : rien d’obligatoire hormis l’adresse, puis connexion depuis la fiche', async ({ page }) => {
   const api = await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
   await openConnectors(page)
-  await page.getByRole('tab', { name: 'Catalogue' }).click()
-  await page.getByRole('button', { name: 'Connecteur personnalisé' }).click()
+  await page.getByRole('button', { name: 'Nouveau connecteur' }).click()
   const form = page.getByRole('form', { name: 'Connecteur personnalisé' })
   await expect(form.getByRole('radio', { name: /Chacun avec son compte/ })).toHaveAttribute('aria-checked', 'true')
   await form.getByRole('textbox', { name: 'Nom' }).fill('Wiki')

@@ -67,6 +67,7 @@ import { getPool } from "./db/pool.js";
 import { findSchemaDrift } from "./db/schema-check.js";
 import {
   PostgresConversationStore,
+  provisionalTitle,
   settingsOf,
   type ConversationStore,
   type ConversationSummary,
@@ -83,6 +84,7 @@ import {
   type Summarizer,
   type SummaryStore,
 } from "./conversations/compaction.js";
+import { createTitler, type Titler } from "./conversations/title.js";
 import { PostgresAttachmentStore, type AttachmentStore } from "./attachments/store.js";
 import { PostgresProjectStore, type ProjectStore } from "./projects/store.js";
 import { PostgresMemberStore, provisionIdentity, type MemberStore } from "./workspace/members.js";
@@ -140,6 +142,10 @@ import { PostgresApiKeyStore, type ApiKeyStore } from "./apikeys/store.js";
 import { registerScimRoutes } from "./routes/scim.js";
 import { registerTemplateRoutes } from "./routes/templates.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerBrandingRoutes } from "./routes/branding.js";
+import { registerSecurityRoutes } from "./routes/security.js";
+import { PostgresSecurityStore, type SecurityStore } from "./admin/security.js";
+import { PostgresBrandingStore, type BrandingStore } from "./branding/store.js";
 import { PostgresAdminOverviewStore, type AdminOverviewStore } from "./admin/overview.js";
 import { PostgresScimUserStore, type ScimUserStore } from "./scim/store.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
@@ -298,12 +304,18 @@ export type AppDependencies = {
   agentRatings?: AgentRatingStore;
   /** Pilotage des administrateurs (totaux de l'organisation). Absent : route désactivée. */
   adminOverview?: AdminOverviewStore;
+  /** Identité de l'organisation (logo, couleur). Absent : logo de Snowfall. */
+  branding?: BrandingStore;
+  /** Administration › Sécurité (conservation, journal d'audit). Absent : rubrique désactivée. */
+  security?: SecurityStore;
   /** Traces des agents (OpenTelemetry → Langfuse). Absent : aucune trace. */
   tracer?: RunTracer;
   /** Résumés de compaction des longues conversations. Absent : en mémoire. */
   summaries?: SummaryStore;
   /** Résumeur (compaction). Absent : pas de compaction, historique tronqué au budget. */
   summarize?: Summarizer;
+  /** Titre généré à la première demande (comme ChatGPT). Absent : début de la demande. */
+  title?: Titler;
   /** Durées des runs (tests : quelques millisecondes pour simuler une panne). */
   runTiming?: Partial<typeof RUN_TIMING>;
   /** Remplace le routage par modèle (tests). */
@@ -795,6 +807,16 @@ export function createAppServer(deps: AppDependencies) {
           return { status: response.statusCode, body };
         },
       });
+    }
+
+    // Administration › Sécurité : conservation des conversations, journal d'audit.
+    if (deps.security && deps.members) {
+      registerSecurityRoutes(api, kit, { store: deps.security, members: deps.members });
+    }
+
+    // Identité de l'organisation : logo et couleur, partout dans l'application.
+    if (deps.branding) {
+      registerBrandingRoutes(api, kit, { store: deps.branding, members: deps.members, scanner: deps.scanner });
     }
 
     // Administration › Pilotage : totaux de l'organisation, administrateurs seulement.
@@ -1990,6 +2012,15 @@ export function createAppServer(deps: AppDependencies) {
       }
     }
 
+    /** Titre généré : remplace le titre provisoire (jamais un titre choisi entre-temps). 8 s au plus. */
+    async function applyTitle(user: AuthenticatedUser, run: RunRecord, titling: ReturnType<Titler>) {
+      const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000).unref());
+      const result = await Promise.race([titling, timeout]);
+      if (!result) return;
+      await conversationStore.retitle?.(user, run.conversationId, result.title, provisionalTitle(run.request.content)).catch(() => false);
+      if (result.usage) await deps.settings?.record(user, run.request.provider, result.usage).catch(() => undefined);
+    }
+
     /** Arrêt demandé : la réponse partielle est gardée (comme avant), le run effacé. */
     async function cancelRun(request: FastifyRequest, user: AuthenticatedUser, run: RunRecord, text: string, plan?: KnowledgePlan) {
       for (const pending of run.progress.pending) {
@@ -2101,6 +2132,14 @@ export function createAppServer(deps: AppDependencies) {
           plan = await resumePlan(user, conversation, agent, selection, provider, earlier, permitted);
           input = { history: [], message: "", images: [] };
         }
+        // Première demande : le titre se prépare PENDANT la réponse (même modèle, mêmes règles).
+        const titling =
+          deps.title && mode.start && run.request.kind === "message" && !run.request.editMessageId && input.history.length === 0 && !conversation.temporary && run.request.content.trim()
+            ? deps.title({ selection, question: run.request.content, pseudonymize: await pseudonymizeFor(user, selection) }).catch((error: unknown) => {
+                request.log.warn({ err: error }, "Titre de la conversation impossible");
+                return null;
+              })
+            : null;
         // Une seule numérotation [n] pour la base et le web, sur toute la réponse.
         const citations = plan.mode === "agent" ? plan.citations : new CitationRegistry().seed(earlier);
         // Exécutions déjà faites (code du modèle et scripts de compétence) : même plafond à la reprise.
@@ -2241,6 +2280,8 @@ export function createAppServer(deps: AppDependencies) {
         // Fichiers produits par le code : rattachés à la réponse enregistrée.
         const fileIds = generatedFileIds(result.turns ?? []);
         if (payload && fileIds.length) await generatedFiles.attach(user, run.conversationId, payload.assistantMessage.id, fileIds);
+        // Titre généré, avant « done » : le client relit les titres à la fin de la réponse.
+        if (payload && titling) await applyTitle(user, run, titling);
         await runs.finish(user, run.id);
         await saver.deleteThread(run.id);
         emit(payload ? { type: "done", payload } : { type: "error", error: "Not found" });
@@ -2504,13 +2545,35 @@ export function createAppServer(deps: AppDependencies) {
       }
     }
 
+    /** Conservation : conversations sans activité depuis la durée choisie par leur organisation, effacées comme par leur auteur. */
+    async function purgeRetention() {
+      if (!deps.security) return;
+      const system = { ip: "system", id: "retention-purge", log: app.log } as unknown as FastifyRequest;
+      for (const expired of await deps.security.expired()) {
+        const owner = { organizationId: expired.organizationId, userId: expired.userId };
+        try {
+          if (!(await conversationStore.delete(owner, expired.conversationId))) continue;
+          await kit.record(system, { ...owner, role: "reader" }, {
+            eventType: "conversation.purge",
+            targetType: "conversation",
+            targetId: expired.conversationId,
+            details: { reason: "retention" },
+          });
+        } catch (error) {
+          app.log.error({ err: error, conversation: expired.conversationId }, "Purge de conservation impossible");
+        }
+      }
+    }
+
     api.addHook("onReady", async () => {
       recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
       purgeTemporary().catch((error: unknown) => app.log.error({ err: error }, "Purge des conversations temporaires impossible"));
+      purgeRetention().catch((error: unknown) => app.log.error({ err: error }, "Purge de conservation impossible"));
     });
     const recovery = setInterval(() => {
       recoverRuns().catch((error: unknown) => app.log.error({ err: error }, "Reprise des runs impossible"));
       purgeTemporary().catch((error: unknown) => app.log.error({ err: error }, "Purge des conversations temporaires impossible"));
+      purgeRetention().catch((error: unknown) => app.log.error({ err: error }, "Purge de conservation impossible"));
     }, RUN_RECOVERY_MS);
     recovery.unref();
     const scheduler = setInterval(() => {
@@ -3478,6 +3541,8 @@ export function createProductionServer() {
     memories: new PostgresUserMemoryStore(pool, keyring),
     agentRatings: new PostgresAgentRatingStore(pool),
     adminOverview: new PostgresAdminOverviewStore(pool),
+    branding: new PostgresBrandingStore(pool),
+    security: new PostgresSecurityStore(pool),
     quality: new PostgresQualityStore(pool, keyring),
     speech: new OpenAiCompatibleSpeech(config.speech.stt, config.speech.tts),
     ...(config.images ? { images: new OpenAiCompatibleImages(config.images) } : {}),
@@ -3490,6 +3555,7 @@ export function createProductionServer() {
     // Traces vers Langfuse auto-hébergé, si configuré.
     ...(config.tracing ? { tracer: createLangfuseTracer(config.tracing) } : {}),
     summarize: createSummarizer((selection) => models.runner(selection)),
+    title: createTitler((selection) => models.runner(selection)),
     checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
     settings: settingsStore,

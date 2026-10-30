@@ -125,6 +125,27 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const installedAgents: ReturnType<typeof fakeAgent>[] = []
   const templateInstalls: string[] = []
   const adminOverviewCalls: number[] = []
+  const branding: { color: string | null; version: number; logo: { bytes: Buffer; type: string } | null } = { color: null, version: 1, logo: null }
+  const brandingCalls: string[] = []
+  const securityCalls: string[] = []
+  const security = {
+    retention: null as number | null,
+    events: Array.from({ length: 60 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      occurredAt: new Date(Date.UTC(2026, 9, 30, 12, 0, 0) - index * 60_000).toISOString(),
+      eventType: index === 1 ? 'security.malware_detected' : index % 3 ? 'message.create' : 'auth.login',
+      outcome: index === 1 ? 'denied' : 'success',
+      actorUserId: 'u-1',
+      actorEmail: 'camille@polaris.example',
+      targetType: 'conversation',
+      targetId: `c-${index}`,
+      ip: '10.0.0.7',
+      details: index === 1 ? { signature: 'Eicar-Test-Signature' } : { model: 'mistral-small' },
+    })),
+  }
+  let conversationCreates = 0
+  // Créées par « Nouvelle conversation », rien d'envoyé encore.
+  const unwritten = new Set<string>()
   const apiKeyCreates: { kind?: 'api' | 'scim'; name: string; agentIds?: string[]; expiresInDays: number }[] = []
   const audioCalls: { type: string; size: number }[] = []
   const speechCalls: string[] = []
@@ -224,7 +245,8 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       savedPreferences.push(next)
       return json(route, { preferences: next })
     }
-    if (key === 'GET /conversations') return json(route, { conversations })
+    // Comme l'API : une conversation sans message n'est pas dans l'historique.
+    if (key === 'GET /conversations') return json(route, { conversations: conversations.filter((item) => !unwritten.has(item.id)) })
     if (key === 'GET /projects') return json(route, { projects: [] })
     if (key === 'GET /agents') return json(route, { agents: [...(options.agents ?? []), ...installedAgents] })
     // Catalogue d'agents : le vrai (textes de l'API), installé comme un agent ordinaire.
@@ -373,6 +395,50 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'GET /models') {
       return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
     }
+    // Sécurité : comme l'API (administrateurs ; journal de l'organisation, par pages, filtres).
+    if (key.startsWith('GET /admin/audit') || key.startsWith('GET /admin/security') || key === 'PUT /admin/security/retention') {
+      if (role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
+      if (key === 'GET /admin/security/retention') return json(route, { conversationDays: security.retention, choices: [30, 90, 180, 365, 730, 1095] })
+      if (key === 'PUT /admin/security/retention') {
+        security.retention = (request.postDataJSON() as { conversationDays: number | null }).conversationDays
+        securityCalls.push(`retention:${security.retention ?? 'none'}`)
+        return json(route, { conversationDays: security.retention })
+      }
+      const categories = url.searchParams.get('category')?.split(',') ?? []
+      const problems = url.searchParams.get('problems') === '1'
+      const shown = security.events.filter((event) => (!categories.length || categories.includes(event.eventType.split('.')[0]!)) && (!problems || event.outcome !== 'success'))
+      if (key === 'GET /admin/audit/export') {
+        securityCalls.push(`export:${categories.join('+') || 'all'}`)
+        return route.fulfill({ status: 200, contentType: 'text/csv; charset=utf-8', body: ['date,evenement', ...shown.map((event) => event.occurredAt + ',' + event.eventType)].join(String.fromCharCode(13, 10)) })
+      }
+      const before = url.searchParams.get('before')
+      const from = before ? shown.findIndex((event) => event.occurredAt === before) + 1 : 0
+      const page = shown.slice(from, from + 50)
+      return json(route, { events: page, next: from + 50 < shown.length ? { before: page.at(-1)!.occurredAt, beforeId: page.at(-1)!.id } : null })
+    }
+    // Identité : comme l'API (administrateurs pour changer ; PNG/JPEG reconnus par leur contenu).
+    if (key === 'GET /branding') return json(route, { name: 'Polaris', color: branding.color, logo: branding.logo ? { version: branding.version } : null })
+    if (key === 'GET /branding/logo') return branding.logo ? route.fulfill({ status: 200, contentType: branding.logo.type, body: branding.logo.bytes }) : json(route, { error: 'Not found' }, 404)
+    if (key === 'PUT /branding/logo' || key === 'DELETE /branding/logo' || key === 'PUT /branding/color') {
+      if (role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
+      branding.version += 1
+      if (key === 'PUT /branding/color') {
+        branding.color = (request.postDataJSON() as { color: string | null }).color
+        brandingCalls.push(`color:${branding.color ?? 'default'}`)
+        return json(route, { color: branding.color })
+      }
+      if (key === 'DELETE /branding/logo') {
+        branding.logo = null
+        brandingCalls.push('delete')
+        return route.fulfill({ status: 204 })
+      }
+      const bytes = request.postDataBuffer() ?? Buffer.alloc(0)
+      const type = bytes.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) ? 'image/png' : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'image/jpeg' : null
+      if (!type) return json(route, { error: 'Invalid logo' }, 415)
+      branding.logo = { bytes, type }
+      brandingCalls.push(`upload:${type}:${bytes.length}`)
+      return json(route, { branding: { color: branding.color, logo: { version: branding.version } } })
+    }
     if (key === 'GET /admin/overview') {
       // Comme l'API : administrateurs seulement ; des totaux, un agent à partir de 5 personnes.
       if (role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
@@ -499,9 +565,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       return json(route, { server }, 201)
     }
     if (key === 'POST /conversations') {
+      conversationCreates += 1
       const body = (request.postDataJSON() ?? {}) as { agentId?: string; temporary?: boolean }
       const conversation = { id: id(), title: 'Nouvelle conversation', agentId: body.agentId ?? null, model: null, projectId: null, knowledge: { agent: true, project: true }, createdAt: now, updatedAt: now }
       messages.set(conversation.id, [])
+      unwritten.add(conversation.id)
       // Comme le serveur : une temporaire n'apparaît jamais dans l'historique.
       if (body.temporary) {
         temporaryIds.add(conversation.id)
@@ -711,6 +779,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         return json(route, { conversation })
       }
       if (method === 'POST' && rest === '/messages') {
+        unwritten.delete(conversationId!)
         // Réponse en flux (SSE), comme le vrai serveur : jetons, puis « done ».
         const content = String((request.postDataJSON() as { content: string }).content)
         if (options.approval) {
@@ -787,5 +856,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls }
+  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, conversationCreates: () => conversationCreates }
 }

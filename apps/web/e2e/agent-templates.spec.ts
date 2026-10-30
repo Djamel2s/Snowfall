@@ -11,7 +11,8 @@ test('catalogue : fiche de l’Assistant RH, installation, studio ouvert pour se
   const menu = page.getByRole('button', { name: 'Ouvrir le menu' })
   if (await menu.isVisible().catch(() => false)) await menu.click()
   await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
-  await page.getByRole('tab', { name: 'Catalogue' }).click()
+  // Le catalogue est une section de la liste des agents, comme « Mes agents ».
+  await expect(page.getByRole('region', { name: 'Catalogue' })).toBeVisible()
 
   await expect(page.getByRole('button', { name: 'Voir Juriste contrats' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Voir DPO / RGPD' })).toBeVisible()

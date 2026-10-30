@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ArrowLeft, ChevronRight, ExternalLink, Link2, Plus, Search, Settings2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Link2, Plus } from 'lucide-react'
 import { api, type CatalogConnector, type McpConnection, type McpServer } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import ConnectorLogo from './ConnectorLogo'
 import ConnectorDetail from './connectors/ConnectorDetail'
 import CustomConnector from './connectors/CustomConnector'
+import { ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch } from './ui/List'
 
 type Props = {
   isAdmin: boolean
@@ -28,7 +29,6 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
   const [servers, setServers] = useState<McpServer[]>([])
   const [connections, setConnections] = useState<McpConnection[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [tab, setTab] = useState<'added' | 'catalog'>('added')
   const [view, setView] = useState<View>(returnedServerId ? { kind: 'server', id: returnedServerId } : { kind: 'list' })
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<(typeof categories)[number]>('all')
@@ -129,95 +129,68 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
   }
 
   // ---- Liste ----------------------------------------------------------------
+  const addedShown = listed.filter((server) => !needle || `${server.name} ${server.catalogId ? (byId.get(server.catalogId)?.description ?? '') : ''}`.toLowerCase().includes(needle))
   return (
-    <div className="settings-panel connectors-panel">
-      <div className="sidebar-section-label">{t('connectors.title').toUpperCase()}</div>
+    <div className="list-panel connectors-panel">
+      {isAdmin && <PanelNew label={t('connectors.new')} onClick={() => setView({ kind: 'custom' })} />}
+      <PanelSearch value={query} onChange={setQuery} placeholder={t('connectors.search')} />
       {notice && <p className="settings-hint" role="status">{notice}</p>}
 
+      <ListSection label={t('connectors.addedTitle')} ariaLabel={t('connectors.mine')}>
+        {addedShown.length ? (
+          <ListRows>
+            {addedShown.map((server) => {
+              const entry = server.catalogId ? byId.get(server.catalogId) : undefined
+              const chip = status(server)
+              return (
+                <ListRow
+                  key={server.id}
+                  icon={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={20} />}
+                  title={server.name}
+                  subtitle={entry?.description}
+                  label={t('connectors.open', { name: server.name })}
+                  onClick={() => setView({ kind: 'server', id: server.id })}
+                  trailing={<span className={`list-row-chip ${chip.tone}`}>{chip.label}</span>}
+                />
+              )
+            })}
+          </ListRows>
+        ) : (
+          <ListEmpty>{needle ? t('connectors.noMatch') : isAdmin ? t('connectors.emptyAdmin') : t('connectors.empty')}</ListEmpty>
+        )}
+      </ListSection>
+
       {isAdmin && (
-        <div className="settings-segmented connector-tabs" role="tablist" aria-label={t('connectors.title')}>
-          <button type="button" role="tab" aria-selected={tab === 'added'} onClick={() => setTab('added')}>
-            {t('connectors.tab.added', { count: servers.length })}
-          </button>
-          <button type="button" role="tab" aria-selected={tab === 'catalog'} onClick={() => setTab('catalog')}>
-            {t('connectors.tab.catalog')}
-          </button>
-        </div>
-      )}
-
-      {(!isAdmin || tab === 'added') && (
-        <section className="settings-card" aria-label={t('connectors.mine')}>
-          {listed.length === 0 ? (
-            <div className="connector-empty">
-              <p>{isAdmin ? t('connectors.emptyAdmin') : t('connectors.empty')}</p>
-              {isAdmin && (
-                <button type="button" className="settings-save" onClick={() => setTab('catalog')}>
-                  <Plus size={13} />
-                  {t('connectors.browse')}
-                </button>
-              )}
-            </div>
-          ) : (
-            <ul className="connector-list">
-              {listed.map((server) => {
-                const entry = server.catalogId ? byId.get(server.catalogId) : undefined
-                const chip = status(server)
-                return (
-                  <li key={server.id}>
-                    <button type="button" className="connector-tile" aria-label={t('connectors.open', { name: server.name })} onClick={() => setView({ kind: 'server', id: server.id })}>
-                      <ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} />
-                      <span className="connector-name">
-                        {server.name}
-                        <small>{entry?.description ?? ''}</small>
-                      </span>
-                      <span className={`connector-chip connector-chip-${chip.tone}`}>{chip.label}</span>
-                      <ChevronRight size={14} className="connector-chevron" />
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          <p className="settings-hint">{t('connectors.hint')}</p>
-        </section>
-      )}
-
-      {isAdmin && tab === 'catalog' && (
-        <section className="settings-card" aria-label={t('connectors.catalog')}>
-          <label className="search-box connector-search">
-            <Search size={14} />
-            <input aria-label={t('connectors.search')} placeholder={t('connectors.search')} value={query} onChange={(event) => setQuery(event.target.value)} />
-          </label>
-          <div className="sidebar-tags connector-categories" role="group" aria-label={t('connectors.categories')}>
+        <ListSection label={t('connectors.catalog')}>
+          <div className="sidebar-tags connector-categories list-filters" role="group" aria-label={t('connectors.categories')}>
             {categories.map((value) => (
               <button key={value} type="button" className="sidebar-tag" aria-pressed={category === value} onClick={() => setCategory(value)}>
                 {t(`connectors.category.${value}`)}
               </button>
             ))}
           </div>
-          <ul className="connector-catalog">
-            {shown.map((item) => {
-              const added = servers.find((server) => server.catalogId === item.id)
-              return (
-                <li key={item.id}>
-                  <button type="button" className="connector-tile" onClick={() => setView(added ? { kind: 'server', id: added.id } : { kind: 'catalog', id: item.id })}>
-                    <ConnectorLogo icon={item.icon} color={item.color} name={item.name} />
-                    <span className="connector-name">
-                      {item.name}
-                      <small>{item.description}</small>
-                    </span>
-                    {added ? <span className="connector-chip connector-chip-ok">{t('connectors.added')}</span> : <ChevronRight size={14} className="connector-chevron" />}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-          <button type="button" className="settings-secondary connector-custom" onClick={() => setView({ kind: 'custom' })}>
-            <Settings2 size={13} />
-            {t('connectors.custom')}
-          </button>
-        </section>
+          {shown.length ? (
+            <ListRows>
+              {shown.map((item) => {
+                const added = servers.find((server) => server.catalogId === item.id)
+                return (
+                  <ListRow
+                    key={item.id}
+                    icon={<ConnectorLogo icon={item.icon} color={item.color} name={item.name} size={20} />}
+                    title={item.name}
+                    subtitle={item.description}
+                    onClick={() => setView(added ? { kind: 'server', id: added.id } : { kind: 'catalog', id: item.id })}
+                    trailing={added ? <span className="list-row-chip ok">{t('connectors.added')}</span> : undefined}
+                  />
+                )
+              })}
+            </ListRows>
+          ) : (
+            <ListEmpty>{t('connectors.noMatch')}</ListEmpty>
+          )}
+        </ListSection>
       )}
+      <p className="settings-hint">{t('connectors.hint')}</p>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import MyDataSettings from './MyDataSettings'
 import MemorySettings from './MemorySettings'
+import { useBranding } from '../lib/branding'
 
 // Réglages personnels (« Mon compte »). L'organisation se règle dans
 // Administration (administrateurs), jamais ici.
@@ -70,6 +71,7 @@ function InstructionsSettings({ value, onSave, saved }: { value: string; onSave:
 
 export default function SettingsPanel({ preferences, onPreferencesChange, onPreferencesSave, onConversationsImported }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
+  const brand = useBranding()
   const session = getSession()
   const name = session.profile.name ?? session.profile.username ?? session.profile.email ?? ''
 
@@ -128,7 +130,7 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onPref
       <section className="settings-card" aria-label={t('settings.profile')}>
         <div className="settings-profile">
           <div className="user-avatar">
-            <img src="/logo.png" alt="" className="user-avatar-logo" />
+            <img src={brand.logo} alt="" className="user-avatar-logo" />
           </div>
           <div>
             <strong>{name}</strong>

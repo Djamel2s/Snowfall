@@ -37,6 +37,7 @@ describe("Conversations temporaires : PostgreSQL (échéance, purge, contraintes
   it("hors historique et recherche, échéance à 24 h, purge puis disparition de la file", async () => {
     const temporary = await store.create(a, "Brouillon", undefined, undefined, undefined, { temporary: true });
     const kept = await store.create(a, "Gardée");
+    await store.appendExchange(a, kept.id, "Bonjour", "Bonjour !");
     assert.equal(temporary.temporary, true);
     assert.equal(kept.temporary, undefined);
     await store.appendExchange(a, temporary.id, "Code porte 4512 ?", "Voir l'accueil.");

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Check, FileCode, FileText, FileUp, GraduationCap, Lock, Paperclip, Pencil, Plus, Share2, Trash2, Users, X } from 'lucide-react'
+import { Check, FileCode, FileText, FileUp, GraduationCap, Lock, Paperclip, Pencil, Share2, Trash2, Users, X } from 'lucide-react'
 import { api, type Skill, type SkillInput } from '../lib/api'
 import { formatSize } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 import SharePanel from './SharePanel'
+import { ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch, RowAction, SectionAction } from './ui/List'
 
 type Draft = SkillInput & { id?: string }
 
@@ -28,6 +29,7 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
   const [importing, setImporting] = useState(false)
   const [importConfidential, setImportConfidential] = useState(false)
   const [importNote, setImportNote] = useState('')
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -41,6 +43,8 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
   }, [])
 
   const fail = (cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause))
+  const needle = query.trim().toLocaleLowerCase()
+  const shown = needle ? skills.filter((skill) => `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(needle)) : skills
   const replace = (skill: Skill) => setSkills((current) => current.map((item) => (item.id === skill.id ? skill : item)))
 
   async function save(event: FormEvent) {
@@ -108,20 +112,9 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
   }
 
   return (
-    <div className="prompt-library skill-library">
-      <div className="sidebar-section-label projects-heading">
-        <span>{t('skills.title').toUpperCase()}</span>
-        {canWrite && !draft && (
-          <span className="skill-header-actions">
-            <button className="projects-add-button" type="button" aria-label={t('skills.import')} title={t('skills.import')} aria-expanded={importing} onClick={() => setImporting(!importing)}>
-              <FileUp size={15} />
-            </button>
-            <button className="projects-add-button" type="button" aria-label={t('skills.new')} title={t('skills.new')} onClick={() => setDraft({ ...empty })}>
-              <Plus size={15} />
-            </button>
-          </span>
-        )}
-      </div>
+    <div className="list-panel prompt-library skill-library">
+      {canWrite && <PanelNew label={t('skills.new')} disabled={Boolean(draft)} onClick={() => setDraft({ ...empty })} />}
+      <PanelSearch value={query} onChange={setQuery} placeholder={t('skills.search')} />
       {error && <p className="settings-error" role="alert">{error}</p>}
       {importNote && <p className="settings-hint" role="status">{importNote}</p>}
       {importing && (
@@ -163,89 +156,109 @@ export default function SkillLibrary({ canWrite }: { canWrite: boolean }) {
         </form>
       )}
 
-      {skills.length === 0 && !draft ? (
-        <div className="projects-empty">
-          <GraduationCap size={22} />
-          <strong>{t('skills.empty')}</strong>
-        </div>
-      ) : (
-        <ul className="prompt-list">
-          {skills.map((skill) => (
-            <li key={skill.id}>
-              <button type="button" className="prompt-item-main" aria-expanded={open === skill.id} onClick={() => setOpen(open === skill.id ? null : skill.id)}>
-                <span>
-                  <strong>
+      <ListSection
+        label={t('skills.title')}
+        actions={
+          canWrite && !draft ? (
+            <SectionAction label={t('skills.import')} pressed={importing} onClick={() => setImporting(!importing)}>
+              <FileUp size={14} />
+            </SectionAction>
+          ) : undefined
+        }
+      >
+        {skills.length === 0 && !draft ? (
+          <ListEmpty>{t('skills.empty')}</ListEmpty>
+        ) : shown.length === 0 ? (
+          <ListEmpty>{t('skills.noMatch')}</ListEmpty>
+        ) : (
+          <ListRows>
+            {shown.map((skill) => (
+              <ListRow
+                key={skill.id}
+                icon={<GraduationCap size={15} />}
+                title={
+                  <>
                     {skill.name}
                     {skill.confidential && <Lock size={11} aria-label={t('skills.confidential')} />}
                     {skill.shared && <Users size={11} aria-label={t('prompts.shared')} />}
                     <small className="skill-version">v{skill.version}</small>
-                  </strong>
-                  <small>{skill.description}</small>
-                </span>
-              </button>
-              {skill.canEdit && canWrite && (
-                <div className="prompt-item-actions">
-                  <button type="button" aria-label={t('skills.editNamed', { name: skill.name })} title={t('common.edit')} onClick={() => setDraft({ id: skill.id, name: skill.name, description: skill.description, instructions: skill.instructions, confidential: skill.confidential })}>
-                    <Pencil size={12} />
-                  </button>
-                  {skill.mine && (
-                    <button type="button" aria-label={t('share.openNamed', { name: skill.name })} title={t('share.access')} aria-expanded={sharing === skill.id} onClick={() => setSharing(sharing === skill.id ? null : skill.id)}>
-                      <Share2 size={12} />
-                    </button>
-                  )}
-                  {skill.mine && (
-                    <button
-                      type="button"
-                      className={armed === skill.id ? 'armed' : ''}
-                      aria-label={t('skills.delete', { name: skill.name })}
-                      title={armed === skill.id ? t('prompts.deleteConfirm') : t('common.delete')}
-                      onBlur={() => setArmed(null)}
-                      onClick={() => void remove(skill)}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  )}
-                </div>
-              )}
-              {open === skill.id && (
-                <section className="skill-detail" aria-label={t('skills.files', { name: skill.name })}>
-                  <ul className="file-list">
-                    {skill.files.map((file) => (
-                      <li key={file.id}>
-                        {file.mediaType === 'text/x-python' ? <FileCode size={13} /> : <FileText size={13} />}
-                        <span className="file-name" title={file.name}>
-                          {file.name}
-                          {/* Script : exécuté dans le bac à sable, si l'agent peut exécuter du code. */}
-                          <small>
-                            {file.mediaType === 'text/x-python' ? `${t('skills.script')} · ` : file.hasOriginal ? `${t('skills.template')} · ` : ''}
-                            {formatSize(file.size)}
-                          </small>
-                        </span>
-                        {skill.canEdit && canWrite && (
-                          <button type="button" className="icon-button" aria-label={t('skills.removeFile', { name: file.name })} title={t('common.delete')} onClick={() => void removeFile(skill, file.id)}>
-                            <X size={12} />
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {skill.files.length === 0 && <p className="settings-hint">{t('skills.noFiles')}</p>}
-                  {skill.canEdit && canWrite && skill.files.length < 10 && (
+                  </>
+                }
+                subtitle={skill.description}
+                tooltip={skill.description}
+                expanded={open === skill.id}
+                selected={open === skill.id}
+                onClick={() => setOpen(open === skill.id ? null : skill.id)}
+                actions={
+                  skill.canEdit && canWrite ? (
                     <>
-                      <input ref={fileInput} type="file" hidden accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.txt,.md,.csv,.json,.py" aria-label={t('skills.addFile')} onChange={(event) => void upload(skill, event.target.files)} />
-                      <button type="button" className="settings-secondary" onClick={() => fileInput.current?.click()}>
-                        <Paperclip size={13} />
-                        {t('skills.addFile')}
-                      </button>
+                      <RowAction label={t('skills.editNamed', { name: skill.name })} title={t('common.edit')} onClick={() => setDraft({ id: skill.id, name: skill.name, description: skill.description, instructions: skill.instructions, confidential: skill.confidential })}>
+                        <Pencil size={12} />
+                      </RowAction>
+                      {skill.mine && (
+                        <RowAction label={t('share.openNamed', { name: skill.name })} title={t('share.access')} expanded={sharing === skill.id} onClick={() => setSharing(sharing === skill.id ? null : skill.id)}>
+                          <Share2 size={12} />
+                        </RowAction>
+                      )}
+                      {skill.mine && (
+                        <RowAction
+                          label={t('skills.delete', { name: skill.name })}
+                          title={armed === skill.id ? t('prompts.deleteConfirm') : t('common.delete')}
+                          armed={armed === skill.id}
+                          onBlur={() => setArmed(null)}
+                          onClick={() => void remove(skill)}
+                        >
+                          <Trash2 size={12} />
+                        </RowAction>
+                      )}
                     </>
-                  )}
-                </section>
-              )}
-              {sharing === skill.id && <SharePanel resource={{ type: 'skill', id: skill.id, name: skill.name }} onError={setError} />}
-            </li>
-          ))}
-        </ul>
-      )}
+                  ) : undefined
+                }
+              >
+                {open === skill.id && (
+                  <section className="skill-detail list-row-expanded" aria-label={t('skills.files', { name: skill.name })}>
+                    <ul className="file-list">
+                      {skill.files.map((file) => (
+                        <li key={file.id}>
+                          {file.mediaType === 'text/x-python' ? <FileCode size={13} /> : <FileText size={13} />}
+                          <span className="file-name" title={file.name}>
+                            {file.name}
+                            {/* Script : exécuté dans le bac à sable, si l'agent peut exécuter du code. */}
+                            <small>
+                              {file.mediaType === 'text/x-python' ? `${t('skills.script')} · ` : file.hasOriginal ? `${t('skills.template')} · ` : ''}
+                              {formatSize(file.size)}
+                            </small>
+                          </span>
+                          {skill.canEdit && canWrite && (
+                            <button type="button" className="icon-button" aria-label={t('skills.removeFile', { name: file.name })} title={t('common.delete')} onClick={() => void removeFile(skill, file.id)}>
+                              <X size={12} />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {skill.files.length === 0 && <p className="settings-hint">{t('skills.noFiles')}</p>}
+                    {skill.canEdit && canWrite && skill.files.length < 10 && (
+                      <>
+                        <input ref={fileInput} type="file" hidden accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.txt,.md,.csv,.json,.py" aria-label={t('skills.addFile')} onChange={(event) => void upload(skill, event.target.files)} />
+                        <button type="button" className="settings-secondary" onClick={() => fileInput.current?.click()}>
+                          <Paperclip size={13} />
+                          {t('skills.addFile')}
+                        </button>
+                      </>
+                    )}
+                  </section>
+                )}
+                {sharing === skill.id && (
+                  <div className="list-row-expanded">
+                    <SharePanel resource={{ type: 'skill', id: skill.id, name: skill.name }} onError={setError} />
+                  </div>
+                )}
+              </ListRow>
+            ))}
+          </ListRows>
+        )}
+      </ListSection>
       <p className="settings-hint prompt-library-hint">{t('skills.hint')}</p>
     </div>
   )

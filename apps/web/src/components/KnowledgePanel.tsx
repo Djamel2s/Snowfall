@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import {
   ArrowRight,
-  Download,
   FileText,
   Link2,
   LoaderCircle,
@@ -18,6 +17,7 @@ import { api, type KnowledgeBaseView, type KnowledgeOwnerKind, type KnowledgeSou
 import { formatNumber, useI18n } from '../lib/i18n'
 import { safeHref } from '../lib/markdown'
 import { draftLink, emptyKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
+import { ListEmpty, ListRow, ListRows, ListSection, RowAction, SectionAction } from './ui/List'
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const POLL_MS = 1_500
@@ -86,6 +86,7 @@ export default function KnowledgePanel(props: Props) {
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [linking, setLinking] = useState(false)
   const [armed, setArmed] = useState<string | null>(null)
   // Incrémentée pour recharger la base (après une action, pendant un import).
   const [version, setVersion] = useState(0)
@@ -174,6 +175,7 @@ export default function KnowledgePanel(props: Props) {
     void run(async () => {
       await api.addKnowledgeLink(kind, ownerId!, url)
       setLink('')
+      setLinking(false)
     })
   }
 
@@ -189,191 +191,180 @@ export default function KnowledgePanel(props: Props) {
   const confidential = draft ? draft.confidential : (view?.confidential ?? false)
   const sources = view?.sources ?? []
 
+  const lockLabel = draft && !props.confidentialAllowed ? t('knowledge.error.agentLocal') : t('knowledge.confidentialHint')
+  const statusOf = (source: KnowledgeSource) =>
+    source.status === 'pending'
+      ? t('knowledge.pending')
+      : source.status === 'processing'
+        ? t('knowledge.processing')
+        : source.status === 'error'
+          ? t(failureKey(source.errorCode))
+          : t('knowledge.chunks', { count: formatNumber(source.chunkCount) })
+
   return (
-    <section className="knowledge-panel" aria-label={t('knowledge.title')}>
-      <div className="knowledge-heading">
-        <span className="sidebar-section-label">{t('knowledge.title')}</span>
-        {(view || draft) && (
-          <button
-            type="button"
-            className={`knowledge-lock ${confidential ? 'on' : ''}`}
-            aria-pressed={confidential}
-            disabled={!canManage || busy || (!!draft && !confidential && !props.confidentialAllowed)}
-            title={draft && !props.confidentialAllowed ? t('knowledge.error.agentLocal') : t('knowledge.confidentialHint')}
-            onClick={() =>
-              draft
-                ? setDraft({ ...draft, confidential: !draft.confidential })
-                : void run(() => api.setKnowledgeConfidential(kind, ownerId!, !confidential))
-            }
-          >
-            {confidential ? <Lock size={12} /> : <LockOpen size={12} />}
-            {t('knowledge.confidential')}
-          </button>
-        )}
-      </div>
-
-      {canManage && (
-        <div
-          className={`knowledge-drop ${dragging ? 'dragging' : ''}`}
-          onDragOver={(event) => {
-            if (!event.dataTransfer.types.includes('Files')) return
-            event.preventDefault()
-            setDragging(true)
+    <div
+      className={`knowledge-panel${dragging ? ' dragging' : ''}`}
+      onDragOver={(event) => {
+        if (!canManage || !event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      <ListSection
+        label={t('knowledge.documents')}
+        ariaLabel={t('knowledge.title')}
+        actions={
+          (view || draft) && (
+            <>
+              <SectionAction
+                label={`${t('knowledge.confidential')} — ${lockLabel}`}
+                pressed={confidential}
+                disabled={!canManage || busy || (!!draft && !confidential && !props.confidentialAllowed)}
+                onClick={() => (draft ? setDraft({ ...draft, confidential: !draft.confidential }) : void run(() => api.setKnowledgeConfidential(kind, ownerId!, !confidential)))}
+              >
+                {confidential ? <Lock size={13} /> : <LockOpen size={13} />}
+              </SectionAction>
+              {canManage && linksEnabled && (
+                <SectionAction label={t('knowledge.addLinkShort')} pressed={linking} onClick={() => setLinking(!linking)}>
+                  <Link2 size={13} />
+                </SectionAction>
+              )}
+              {canManage && (
+                <SectionAction label={t('knowledge.addFile')} disabled={busy} onClick={() => fileRef.current?.click()}>
+                  <Upload size={13} />
+                </SectionAction>
+              )}
+            </>
+          )
+        }
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          multiple
+          aria-label={t('knowledge.addFile')}
+          onChange={(event) => {
+            addFiles([...(event.target.files ?? [])])
+            event.target.value = ''
           }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <button type="button" className="knowledge-upload" title={t('knowledge.formats')} disabled={busy} onClick={() => fileRef.current?.click()}>
-            <Upload size={14} />
-            {t('knowledge.addFile')}
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            hidden
-            multiple
-            onChange={(event) => {
-              addFiles([...(event.target.files ?? [])])
-              event.target.value = ''
-            }}
-          />
-          {linksEnabled && (
-            // Pas de <form> : le panneau peut vivre dans le formulaire du studio d'agent.
-            <div className="knowledge-link">
-              <Link2 size={13} />
-              <input
-                type="url"
-                inputMode="url"
-                placeholder={t('knowledge.linkPlaceholder')}
-                aria-label={t('knowledge.linkPlaceholder')}
-                value={link}
-                maxLength={2000}
-                onChange={(event) => setLink(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter') return
-                  event.preventDefault()
-                  addLink()
-                }}
-              />
-              <button type="button" aria-label={t('knowledge.addLink')} title={t('knowledge.addLink')} disabled={busy || !link.trim()} onClick={addLink}>
-                <ArrowRight size={13} />
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+        />
+        {confidential && (
+          <p className="knowledge-note">
+            <Lock size={11} /> {t('knowledge.confidentialHint')}
+          </p>
+        )}
+        {canManage && linksEnabled && linking && (
+          // Pas de <form> : le panneau peut vivre dans le formulaire du studio d'agent.
+          <div className="knowledge-link">
+            <Link2 size={13} />
+            <input
+              autoFocus
+              type="url"
+              inputMode="url"
+              placeholder={t('knowledge.linkPlaceholder')}
+              aria-label={t('knowledge.linkPlaceholder')}
+              value={link}
+              maxLength={2000}
+              onChange={(event) => setLink(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault()
+                addLink()
+              }}
+            />
+            <button type="button" aria-label={t('knowledge.addLink')} title={t('knowledge.addLink')} disabled={busy || !link.trim()} onClick={addLink}>
+              <ArrowRight size={13} />
+            </button>
+          </div>
+        )}
 
-      {error && (
-        <p className="knowledge-error" role="alert">
-          {error}
-        </p>
-      )}
+        {error && (
+          <p className="knowledge-error" role="alert">
+            {error}
+          </p>
+        )}
 
-      {draft ? (
-        draft.items.length > 0 ? (
-          <ul className="knowledge-sources">
-            {draft.items.map((item) => {
-              const Icon = item.kind === 'link' ? Link2 : FileText
-              return (
-                <li key={item.id} className="knowledge-source knowledge-queued">
-                  <Icon size={14} />
-                  <span className="knowledge-source-text">
-                    <span className="knowledge-source-name" title={item.kind === 'link' ? item.url : item.name}>
-                      {item.name}
-                    </span>
-                    <small>{t('knowledge.queued')}</small>
-                  </span>
-                  <span className="knowledge-source-actions">
-                    <button
-                      type="button"
-                      aria-label={t('knowledge.remove', { name: item.name })}
-                      title={t('knowledge.remove', { name: item.name })}
-                      onClick={() => setDraft({ ...draft, items: draft.items.filter((other) => other.id !== item.id) })}
-                    >
+        {draft ? (
+          draft.items.length > 0 ? (
+            <ListRows>
+              {draft.items.map((item) => (
+                <ListRow
+                  key={item.id}
+                  icon={item.kind === 'link' ? <Link2 size={14} /> : <FileText size={14} />}
+                  title={item.name}
+                  tooltip={item.kind === 'link' ? item.url : item.name}
+                  subtitle={t('knowledge.queued')}
+                  actions={
+                    <RowAction label={t('knowledge.remove', { name: item.name })} onClick={() => setDraft({ ...draft, items: draft.items.filter((other) => other.id !== item.id) })}>
                       <X size={12} />
-                    </button>
-                  </span>
-                </li>
+                    </RowAction>
+                  }
+                />
+              ))}
+            </ListRows>
+          ) : (
+            <ListEmpty>{t('knowledge.empty')}</ListEmpty>
+          )
+        ) : sources.length > 0 ? (
+          <ListRows>
+            {sources.map((source) => {
+              const href = source.kind === 'link' && source.url ? safeHref(source.url) : null
+              const loading = source.status === 'pending' || source.status === 'processing'
+              const Icon = source.status === 'error' ? TriangleAlert : source.kind === 'link' ? Link2 : FileText
+              const openable = Boolean(href) || (source.status === 'ready' && source.size > 0)
+              return (
+                <ListRow
+                  key={source.id}
+                  icon={loading ? <LoaderCircle size={14} className="spin" /> : <Icon size={14} className={source.status === 'error' ? 'knowledge-error-icon' : ''} />}
+                  title={source.name}
+                  tooltip={href ? (source.url ?? '') : source.name}
+                  subtitle={statusOf(source)}
+                  label={href ? source.name : openable ? t('knowledge.download', { name: source.name }) : source.name}
+                  onClick={openable ? () => (href ? void window.open(href, '_blank', 'noopener,noreferrer') : void download(source)) : undefined}
+                  actions={
+                    canManage ? (
+                      <>
+                        {source.status === 'error' && failureKey(source.errorCode) !== 'knowledge.failed.format' && (
+                          <RowAction label={t('knowledge.reindex')} onClick={() => void run(() => api.reindexKnowledgeSource(source.id))}>
+                            <RefreshCw size={12} />
+                          </RowAction>
+                        )}
+                        <RowAction
+                          label={armed === source.id ? t('common.confirm') : t('knowledge.remove', { name: source.name })}
+                          armed={armed === source.id}
+                          onBlur={() => setArmed(null)}
+                          onClick={() => {
+                            if (armed !== source.id) {
+                              setArmed(source.id)
+                              return
+                            }
+                            setArmed(null)
+                            void run(() => api.deleteKnowledgeSource(source.id))
+                          }}
+                        >
+                          <X size={12} />
+                        </RowAction>
+                      </>
+                    ) : undefined
+                  }
+                />
               )
             })}
-          </ul>
+          </ListRows>
         ) : (
-          <p className="knowledge-empty">{t('knowledge.empty')}</p>
-        )
-      ) : sources.length > 0 ? (
-        <ul className="knowledge-sources">
-          {sources.map((source) => {
-            const href = source.kind === 'link' && source.url ? safeHref(source.url) : null
-            const Icon = source.status === 'error' ? TriangleAlert : source.kind === 'link' ? Link2 : FileText
-            const loading = source.status === 'pending' || source.status === 'processing'
-            return (
-              <li key={source.id} className={`knowledge-source knowledge-${source.status}`}>
-                {loading ? <LoaderCircle size={14} className="spin" /> : <Icon size={14} />}
-                <span className="knowledge-source-text">
-                  {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer nofollow" title={source.url ?? ''}>
-                      {source.name}
-                    </a>
-                  ) : (
-                    <span className="knowledge-source-name" title={source.name}>
-                      {source.name}
-                    </span>
-                  )}
-                  <small>
-                    {source.status === 'pending'
-                      ? t('knowledge.pending')
-                      : source.status === 'processing'
-                        ? t('knowledge.processing')
-                        : source.status === 'error'
-                          ? t(failureKey(source.errorCode))
-                          : t('knowledge.chunks', { count: formatNumber(source.chunkCount) })}
-                  </small>
-                </span>
-                <span className="knowledge-source-actions">
-                  {source.status === 'ready' && source.size > 0 && (
-                    <button type="button" aria-label={t('knowledge.download', { name: source.name })} title={t('knowledge.download', { name: source.name })} onClick={() => void download(source)}>
-                      <Download size={12} />
-                    </button>
-                  )}
-                  {canManage && source.status === 'error' && failureKey(source.errorCode) !== 'knowledge.failed.format' && (
-                    <button type="button" aria-label={t('knowledge.reindex')} title={t('knowledge.reindex')} onClick={() => void run(() => api.reindexKnowledgeSource(source.id))}>
-                      <RefreshCw size={12} />
-                    </button>
-                  )}
-                  {canManage && (
-                    <button
-                      type="button"
-                      className={armed === source.id ? 'armed' : ''}
-                      aria-label={armed === source.id ? t('common.confirm') : t('knowledge.remove', { name: source.name })}
-                      title={armed === source.id ? t('common.confirm') : t('knowledge.remove', { name: source.name })}
-                      onBlur={() => setArmed(null)}
-                      onClick={() => {
-                        if (armed !== source.id) {
-                          setArmed(source.id)
-                          return
-                        }
-                        setArmed(null)
-                        void run(() => api.deleteKnowledgeSource(source.id))
-                      }}
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
-      ) : (
-        view && canManage && <p className="knowledge-empty">{t('knowledge.empty')}</p>
-      )}
+          view && <ListEmpty>{canManage ? t('knowledge.empty') : t('knowledge.none')}</ListEmpty>
+        )}
 
-      {view && sources.length > 0 && (
-        <p className="knowledge-mode">
-          {view.embeddingModel ? <Sparkles size={11} /> : <Search size={11} />}
-          {view.embeddingModel ? t('knowledge.semantic', { model: view.embeddingModel.split(':').slice(1).join(':') }) : t('knowledge.keywords')}
-        </p>
-      )}
-    </section>
+        {view && sources.length > 0 && (
+          <p className="knowledge-mode">
+            {view.embeddingModel ? <Sparkles size={11} /> : <Search size={11} />}
+            {view.embeddingModel ? t('knowledge.semantic', { model: view.embeddingModel.split(':').slice(1).join(':') }) : t('knowledge.keywords')}
+          </p>
+        )}
+      </ListSection>
+    </div>
   )
 }

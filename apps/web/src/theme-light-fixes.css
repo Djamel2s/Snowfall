@@ -18,3 +18,12 @@
 :root[data-theme="light"] .message-assistant .md-artifact-open { color: color-mix(in srgb, var(--accent) 55%, #000000); }
 :root[data-theme="light"] .message-assistant .md-link-unverified button { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: color-mix(in srgb, var(--accent) 50%, #000000); }
 :root[data-theme="light"] .message-assistant .md-link-unverified { text-decoration-color: color-mix(in srgb, var(--accent) 60%, #000000); }
+
+/* Avatar d'un message : sans cadre (comme en sombre). La règle d'origine qui le
+   retire n'a pas de couleur, donc pas d'équivalent généré : le fond de .message-avatar
+   du thème clair, de même priorité et chargé après, la remplaçait. */
+:root[data-theme="light"] .message .message-avatar:not(.message-avatar-alien) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}

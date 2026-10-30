@@ -238,6 +238,37 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Chiffres faussés (T) | Copie de conversation et import d'historique marqués dans la transaction : non comptés (le drapeau ne peut que retirer) ; un seul utilisateur ne fait pas apparaître un agent (seuil de personnes, pas de messages) | M : les tâches planifiées et l'API publique comptent comme activité de leur auteur | `admin.integration.test.ts` (copie et import) |
 | Conservation excessive de l'activité (conformité) | 400 jours (13 mois), purge à chaque écriture | F | migration `admin_overview` |
 
+### 3.4 quindecies Titres générés et conversations vides (28 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Titre qui fait sortir la demande vers un autre fournisseur (I) | Même modèle que la réponse (sélection du run : local si donnée sensible, pseudonymisation identique) ; aucune conversation temporaire ; rien dans les traces | F | `title.test.ts` (modèle de la conversation, pseudonymisation) |
+| Injection par la demande dans le titre (T) | Demande balisée et neutralisée (elle ne peut pas refermer sa balise) ; sortie nettoyée (une ligne, 60 caractères, sans décor), masquage des données sensibles, affichée comme du texte | F : au pire un titre étrange, dans la conversation de son auteur | `title.test.ts` |
+| Titre généré qui écrase celui choisi par l'utilisateur (T) | Remplacement seulement si le titre est encore le titre provisoire (comparaison sous verrou) | F | `runs.routes.test.ts`, `store.integration.test.ts` |
+| Purge des conversations vides qui efface autre chose (D) | Sous la RLS de l'auteur, seulement sans message, après 24 h, jamais celle d'une tâche planifiée | F | `store.integration.test.ts` (« historique ») |
+
+### 3.4 sedecies Identité de l'organisation : logo et couleur (29 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Logo piégé qui exécute du script (SVG, HTML déguisé, polyglotte) (T, E) | PNG ou JPEG seulement, reconnus par leur contenu (signature, en-tête IHDR/SOF), jamais par le nom ou le type annoncé ; contrainte en base sur l'en-tête ; servi avec son type exact, `nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` ; affiché seulement en `<img>` | F | `branding.test.ts` (SVG, HTML déguisé), `branding.integration.test.ts` (contrainte) |
+| Image démesurée (bombe de décompression, déni de service) (D) | 512 Ko au plus, 16 à 1 024 px de côté (lu dans l'en-tête avant tout stockage) ; redimensionnée dans le navigateur avant l'envoi ; antivirus | F | `branding.test.ts` |
+| Membre qui change l'identité de toute l'organisation (E) | Route réservée aux administrateurs (refus journalisé) ET RLS (écriture admin, `updated_by` = l'auteur) | F | `branding.test.ts`, `branding.integration.test.ts` |
+| Fuite entre organisations (I) | Lecture limitée à l'organisation du contexte (RLS) | F | `branding.integration.test.ts` |
+| Couleur injectée dans le style (T) | `#rrggbb` seulement (API et base) ; l'application n'en tire que deux nombres (décalage de teinte, facteur de saturation) posés en variables CSS, jamais la chaîne elle-même | F | `branding.test.ts` (« red; background:url(x) » refusée) |
+| Couleur choisie qui rend l'interface illisible ou trompeuse (T) | Luminosité d'origine gardée (contraste inchangé) ; facteur de saturation borné ; vert/orange/rouge (états, alertes) jamais recolorés | F | captures en rouge, vert, violet, thèmes sombre et clair |
+
+### 3.4 septdecies Administration › Sécurité : journal et conservation (30 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Lecture du journal d'une autre organisation, ou par un membre (I) | L'application n'a toujours QUE le droit d'écrire dans `audit_events` ; lecture par `snowfall_audit_log()` qui vérifie en base le rôle owner/admin et ne rend que l'organisation du contexte ; route réservée aux administrateurs, refus journalisés | F | `security.integration.test.ts` (membre, autre organisation, lecture directe refusée ; mutation vérifiée), `security.test.ts` |
+| Injection par les filtres du journal (T) | Catégories `^[a-z_]{1,40}$` (API et base), curseur daté + UUID, paramètres inconnus refusés | F | `security.test.ts`, `security.integration.test.ts` |
+| Export CSV piégé (formule exécutée à l'ouverture dans un tableur) (T) | Toute cellule commençant par `= + - @` (ou tabulation) est neutralisée ; export borné à 5 000 lignes et journalisé | F | `security.test.ts` (« =HYPERLINK… ») |
+| Effacement de traces par la conservation (R) | Changement de durée journalisé ; chaque conversation purgée journalisée (`conversation.purge`, raison `retention`) ; le journal lui-même est en ajout seul (trigger) et n'est jamais purgé par l'application | F | `security.test.ts` (purge journalisée) |
+| Purge qui lit ou efface au-delà de son périmètre (I, D) | File sans contenu (`conversation_activity`) tenue par trigger ; seules les organisations qui ont fixé une durée ; effacement sous la RLS de chaque auteur ; temporaires exclues (purge propre) | F | `security.integration.test.ts` |
+| Adresses IP des membres visibles des administrateurs (I) | Finalité : sécurité (connexions, refus) ; visibles dans le détail d'un événement et l'export seulement | M : donnée personnelle, à mentionner dans le registre des traitements | — |
+
 ### 3.5 Artifacts
 
 | Menace | Mesures | Résiduel | Preuve |

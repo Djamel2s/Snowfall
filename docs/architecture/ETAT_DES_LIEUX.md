@@ -5,6 +5,25 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **30 octobre — Administration › Sécurité** : journal d'audit consultable
+  (filtres, pages, détail, export CSV) et durée de conservation des
+  conversations (purge automatique journalisée) ; droits RGPD rappelés
+  (libre-service dans Mon compte). Correctif : cadre des avatars en thème clair.
+  Fiche 31.
+
+- **29 octobre — identité de l'organisation** : Administration › Identité.
+  Logo importé (remplace celui de Snowfall partout, onglet compris) ; couleur
+  de l'interface (tous les accents, nuances gardées, thèmes sombre et clair ;
+  le logo par défaut suit) ; nom de l'organisation à côté de Snowfall. Keycloak garde le logo Snowfall. Fiche 30.
+
+- **28 octobre — interface uniformisée** : Projets, Agents, Prompts, Compétences
+  et Connecteurs suivent le format de l'historique (bouton « Nouveau … »,
+  recherche, sections, lignes), avec des briques communes
+  (`components/ui/List.tsx`) ; documents (RAG) au même format ; le catalogue
+  d'agents et celui des connecteurs deviennent des sections de leur liste. Une
+  conversation n'entre dans l'historique qu'au premier message ; son titre est
+  une reformulation par le modèle ; naviguer referme le studio d'agent. Fiche 29.
+
 - **28 octobre — espace Administration et pilotage** : l'administration de
   l'organisation sort des Paramètres (qui ne gardent que « Mon compte ») vers
   une icône à part, pour les administrateurs : Pilotage, Membres et accès,
@@ -185,7 +204,7 @@ Réglages
      ├─ Connaissances          embeddings · import de liens
      ├─ Outils et intégrations outils activés · serveurs MCP · état des services
      ├─ Membres et accès       membres · invitations · SSO
-     └─ Sécurité               (plus tard : journal d'audit, rétention, export RGPD)
+     └─ Sécurité               journal d'audit, conservation (30 oct.)
 ```
 
 Règle pour la suite : **une fonction n'ajoute pas une carte**, elle s'insère dans

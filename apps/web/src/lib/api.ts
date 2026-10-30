@@ -289,6 +289,32 @@ export type UserMemory = { id: string; content: string; createdAt: string }
 
 export type UsageTotals = { inputTokens: number; outputTokens: number }
 
+/** Journal d'audit de l'organisation (Administration › Sécurité). */
+export type AuditEntry = {
+  id: string
+  occurredAt: string
+  eventType: string
+  outcome: 'success' | 'failure' | 'denied'
+  actorUserId: string | null
+  actorEmail: string | null
+  targetType: string | null
+  targetId: string | null
+  ip: string | null
+  details: Record<string, unknown>
+}
+export type AuditCursor = { before: string; beforeId: string }
+export type AuditFilter = { categories: string[]; problems: boolean }
+const auditParams = (filter: AuditFilter, cursor?: AuditCursor | null) => {
+  const params = new URLSearchParams()
+  if (filter.categories.length) params.set('category', filter.categories.join(','))
+  if (filter.problems) params.set('problems', '1')
+  if (cursor) {
+    params.set('before', cursor.before)
+    params.set('beforeId', cursor.beforeId)
+  }
+  return params.toString()
+}
+
 export const adminPeriods = [7, 30, 90] as const
 export type AdminPeriod = (typeof adminPeriods)[number]
 
@@ -1065,6 +1091,16 @@ export const api = {
   getUsage: () => request<Usage>('/usage'),
   /** Administration › Pilotage (administrateurs) : totaux de l'organisation. */
   getAdminOverview: (days: AdminPeriod) => request<AdminOverview>(`/admin/overview?days=${days}`),
+  /** Administration › Sécurité : conservation des conversations, journal d'audit (administrateurs). */
+  getRetention: () => request<{ conversationDays: number | null; choices: number[] }>('/admin/security/retention'),
+  setRetention: (conversationDays: number | null) => request<{ conversationDays: number | null }>('/admin/security/retention', { method: 'PUT', body: JSON.stringify({ conversationDays }), headers: { 'Content-Type': 'application/json' } }),
+  listAudit: (filter: AuditFilter, cursor?: AuditCursor | null) => request<{ events: AuditEntry[]; next: AuditCursor | null }>(`/admin/audit?${auditParams(filter, cursor)}`),
+  exportAudit: async (filter: AuditFilter) => (await send(`/admin/audit/export?${auditParams(filter)}`)).blob(),
+  /** Identité de l'organisation : nom, couleur du logo par défaut, logo importé (version). */
+  getBranding: () => request<{ name: string | null; color: string | null; logo: { version: number } | null }>('/branding'),
+  uploadLogo: (image: Blob) => request<{ branding: { color: string | null; logo: { version: number } | null } }>('/branding/logo', { method: 'PUT', body: image, headers: { 'Content-Type': 'application/octet-stream' } }),
+  deleteLogo: () => request<void>('/branding/logo', { method: 'DELETE' }),
+  setBrandColor: (color: string | null) => request<{ color: string | null }>('/branding/color', { method: 'PUT', body: JSON.stringify({ color }), headers: { 'Content-Type': 'application/json' } }),
   getOrganization: () => request<Organization>('/organization'),
   saveOrganizationSettings: async (settings: OrganizationSettings) =>
     (await request<{ settings: OrganizationSettings }>('/organization/settings', json('PUT', settings))).settings,

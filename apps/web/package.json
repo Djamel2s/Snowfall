@@ -9,8 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc -b",
-    "theme": "node scripts/generate-light-theme.mjs",
-    "test": "node scripts/generate-light-theme.mjs --check && tsx --test tests/markdown.test.ts tests/responder.test.ts tests/knowledge-draft.test.ts tests/artifacts.test.ts tests/prompts.test.ts tests/link-trust.test.ts tests/agent-graph.test.ts tests/highlight.test.ts tests/math.test.ts tests/export.test.ts",
+    "theme": "node scripts/generate-light-theme.mjs && node scripts/generate-accent-theme.mjs",
+    "test": "node scripts/generate-light-theme.mjs --check && node scripts/generate-accent-theme.mjs --check && tsx --test tests/markdown.test.ts tests/responder.test.ts tests/knowledge-draft.test.ts tests/artifacts.test.ts tests/prompts.test.ts tests/link-trust.test.ts tests/agent-graph.test.ts tests/highlight.test.ts tests/math.test.ts tests/export.test.ts",
     "e2e": "playwright test"
   },
   "dependencies": {

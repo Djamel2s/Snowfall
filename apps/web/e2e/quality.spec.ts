@@ -23,7 +23,7 @@ test('👎 sur la réponse d’un agent : partage seulement si coché', async ({
   const menu = page.getByRole('button', { name: 'Ouvrir le menu' })
   if (await menu.isVisible().catch(() => false)) await menu.click()
   await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
-  await page.locator('.agent-card-main', { hasText: 'Juriste' }).click()
+  await page.getByRole('region', { name: 'Mes agents' }).getByRole('button', { name: /^Juriste/ }).click()
   await page.getByPlaceholder(/Posez votre question/).fill('Combien de jours de congés ?')
   await page.keyboard.press('Enter')
   await expect(page.getByText('Vingt-cinq jours.')).toBeVisible()

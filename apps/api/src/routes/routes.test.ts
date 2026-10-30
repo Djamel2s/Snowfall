@@ -326,6 +326,9 @@ describe("Conversations : modifier, régénérer, arrêter, rechercher, renommer
     assert.equal(temporary.temporary, true);
     await store.appendExchange(member, temporary.id, "Mot de passe Wi-Fi ?", "Demandez à l'accueil.");
     const kept = await store.create(member, "Gardée");
+    await store.appendExchange(member, kept.id, "Bonjour", "Bonjour !");
+    // Ouverte puis laissée vide : pas dans l'historique non plus.
+    await store.create(member, "Vide");
 
     const list = (await app.inject({ ...post("/conversations"), method: "GET" as const })).json() as { id: string }[];
     assert.deepEqual(list.map((item) => item.id), [kept.id]);

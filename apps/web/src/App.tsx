@@ -25,6 +25,8 @@ import './workspace.css'
 // Thème clair : généré (scripts/generate-light-theme.mjs) puis retouché ; actif sous data-theme="light".
 import './theme-light.css'
 import './theme-light-fixes.css'
+// Couleur de l'interface choisie par l'organisation : générée (scripts/generate-accent-theme.mjs), active sous data-accent.
+import './theme-accent.css'
 import { ArrowUp, BookOpen, Check, Copy, GitFork, Hourglass, Menu, Paperclip, Pencil, RefreshCw, SlidersHorizontal, Square, StepForward, X } from 'lucide-react'
 import Sidebar, { type SidebarPanel } from './components/Sidebar'
 import { accentOf } from './lib/alien'
@@ -56,6 +58,7 @@ import { useGeneratedFiles } from './hooks/useGeneratedFiles'
 import { usePinnedConversations } from './hooks/usePinnedConversations'
 import { migrateLegacyProjects } from './lib/legacy-projects'
 import ResponderPicker, { type PickerControl } from './components/ResponderPicker'
+import { useBranding } from './lib/branding'
 import {
   authorOf,
   mentionAt,
@@ -82,6 +85,8 @@ type Conversation = {
   settings?: ConversationSettings
   archived?: boolean
   tags?: string[]
+  /** Ouverte, rien d'envoyé : pas dans l'historique (comme côté serveur). */
+  draft?: boolean
   messages: Message[]
   updatedAt: number
 }
@@ -164,6 +169,7 @@ const toConversation = (item: {
 
 function App() {
   const { t } = useI18n()
+  const brand = useBranding()
   // Retour d'une connexion OAuth à un outil externe (lu une fois, au chargement).
   const [mcpCallback] = useState(readMcpCallback)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -276,7 +282,7 @@ function App() {
     return ids
   }, [run.sending, run.agentSteps, activeConversation?.agentId, agents])
   const reduceMotion = preferences.reduceMotion === 'on' || (preferences.reduceMotion === 'system' && typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
-  const listedConversations = useMemo(() => conversations.filter((conversation) => !conversation.temporary), [conversations])
+  const listedConversations = useMemo(() => conversations.filter((conversation) => !conversation.temporary && !conversation.draft), [conversations])
   const temporaryShown = Boolean(activeConversation?.temporary || (!activeConversation && temporaryMode))
   const responder = resolveResponder(activeConversation, agents, catalog.providers, catalog.defaultModel)
   const activeAgent = responder.kind === 'agent' ? responder.agent : null
@@ -509,6 +515,14 @@ function App() {
   async function newChat(agent?: Agent, options: { keepInput?: boolean; temporary?: boolean } = {}): Promise<Conversation | null> {
     const temporary = options.temporary ?? temporaryMode
     if (creating) return null
+    // Déjà sur une conversation vide, au même endroit : on la reprend au lieu d'en ouvrir une autre.
+    const current = conversationsRef.current.conversations.find((item) => item.id === conversationsRef.current.activeId)
+    if (!agent && current?.draft && current.messages.length === 0 && Boolean(current.temporary) === temporary && current.projectId === (temporary ? null : activeProjectId)) {
+      if (!options.keepInput) setInput('')
+      setSidebarOpen(false)
+      requestAnimationFrame(() => inputRef.current?.focus())
+      return current
+    }
 
     run.detach()
     setError('')
@@ -538,7 +552,7 @@ function App() {
           if (agent || Object.keys(remembered).length === 0) throw cause
           return api.createConversation(base)
         })
-      const conversation = toConversation(created)
+      const conversation = { ...toConversation(created), draft: true }
       freshIds.current.add(conversation.id)
       setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)])
       setLoadedId(conversation.id)
@@ -795,12 +809,17 @@ function App() {
 
     setInput('')
     setPendingFiles((current) => current.filter((file) => file.conversationId !== conversationId))
-    updateConversation(conversationId, (current) => ({
-      ...current,
-      title: current.messages.length === 0 ? (message || attachments[0]?.name || current.title).slice(0, 80) : current.title,
-      messages: [...current.messages, optimistic],
-      updatedAt: Date.now(),
-    }))
+    updateConversation(conversationId, (current) => {
+      // Premier envoi : elle entre dans l'historique.
+      const next = { ...current }
+      delete next.draft
+      return {
+        ...next,
+        title: current.messages.length === 0 ? (message || attachments[0]?.name || current.title).slice(0, 80) : current.title,
+        messages: [...current.messages, optimistic],
+        updatedAt: Date.now(),
+      }
+    })
 
     await run.stream(
       conversationId,
@@ -1322,7 +1341,7 @@ function App() {
           {/* Logo en fond : centré à l'accueil, il « se couche » derrière le
               composer dès que la conversation commence. */}
           <img
-            src="/logo.png"
+            src={brand.logo}
             alt=""
             aria-hidden="true"
             className={`snowfall-sun ${conversationIsEmpty ? '' : 'snowfall-sun-set'}`}
@@ -1362,7 +1381,7 @@ function App() {
                       className={`message-avatar ${message.role === 'assistant' && whoAgent ? `message-avatar-agent message-avatar-${whoAgent.avatar.kind}` : ''}`}
                     >
                       {message.role === 'user' ? (
-                        <img src="/logo.png" alt="" className="message-user-logo" />
+                        <img src={brand.logo} alt="" className="message-user-logo" />
                       ) : whoAgent ? (
                         <MessageAgentAvatar avatar={whoAgent.avatar} />
                       ) : who.kind === 'model' ? (

@@ -1,6 +1,7 @@
 // Implémentations en mémoire pour les tests de routes (aucune base requise).
 import { activePath, latestLeaf } from "../conversations/branches.js";
 import type { MessageFeedback } from "../conversations/store.js";
+import { DEFAULT_CONVERSATION_TITLE, provisionalTitle } from "../conversations/store.js";
 import type { AttachmentMeta } from "../attachments/store.js";
 import type { SessionStore } from "../auth/session-store.js";
 import type { TenantContext } from "../db/tenant.js";
@@ -72,9 +73,17 @@ export function createFakeConversationStore(): ConversationStore & {
         .filter((item) => item.temporary && (item.expiresAt ?? Infinity) <= Date.now())
         .map((item) => ({ conversationId: item.id, ...item.owner })),
 
+    retitle: async (owner, conversationId, title, provisional) => {
+      const conversation = conversations.get(conversationId);
+      if (!conversation || !owns(owner, conversationId) || conversation.temporary || conversation.title !== provisional) return false;
+      conversation.title = title;
+      return true;
+    },
+
     list: async (owner) =>
       [...conversations.values()]
-        .filter((item) => owns(owner, item.id) && !item.temporary)
+        // Comme PostgreSQL : une conversation sans message n'est pas dans l'historique.
+        .filter((item) => owns(owner, item.id) && !item.temporary && (messages.get(item.id)?.length ?? 0) > 0)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map(summary),
 
@@ -213,6 +222,9 @@ export function createFakeConversationStore(): ConversationStore & {
         if (!edited) return null;
         parentId = edited.parentId;
       }
+      // Comme PostgreSQL : le premier échange pose le titre provisoire (début de la demande).
+      const conversation = conversations.get(id)!;
+      if (list.length === 0 && conversation.title === DEFAULT_CONVERSATION_TITLE && userContent) conversation.title = provisionalTitle(userContent);
       const userMessage = message("user", userContent, parentId);
       const attached = (options.attachmentIds ?? []).map((fileId) => files.get(fileId)).filter((file) => !!file);
       if (attached.length) userMessage.attachments = attached.map((file) => ({ ...file, messageId: userMessage.id }));

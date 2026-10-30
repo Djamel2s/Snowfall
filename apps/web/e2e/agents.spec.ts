@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test'
 import { fakeAgent, mockApi } from './mock-api'
 
-// Parcours : le catalogue d'agents. Cartes (avatar, nom, modèle, outils),
-// recherche, « les miens », dupliquer, démarrer une conversation.
+// Parcours : les agents, présentés comme l'historique des conversations
+// (sections, recherche), dupliquer, démarrer une conversation.
 
 const agents = [
   fakeAgent('Juriste', { mine: true, tools: ['search_knowledge', 'web_search'], color: 'lavender' }),
@@ -19,25 +19,27 @@ async function openAgents(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Agents', exact: true }).first().click()
 }
 
-test('catalogue : cartes, recherche, filtre « les miens »', async ({ page }, info) => {
+test('agents : les miens, ceux partagés avec moi, une recherche ; taux de 👍 sur la ligne', async ({ page }, info) => {
   const api = await mockApi(page, { agents })
   await openAgents(page)
-  const cards = page.locator('.agent-card:not(.agent-card-new)')
-  await expect(cards).toHaveCount(4)
-  // Nom et modèle sur chaque carte.
-  await expect(cards.first()).toContainText('Juriste')
-  await expect(cards.first()).toContainText('mistral-small')
+  const mine = page.getByRole('region', { name: 'Mes agents' })
+  const shared = page.getByRole('region', { name: 'Partagés avec moi' })
+  await expect(mine.getByRole('listitem')).toHaveCount(2)
+  await expect(shared.getByRole('listitem')).toHaveCount(2)
+  // Nom et modèle sur chaque ligne.
+  await expect(mine.getByRole('listitem').first()).toContainText('Juriste')
+  await expect(mine.getByRole('listitem').first()).toContainText('mistral-small')
   // Taux de réponses utiles : seulement l'agent noté (5 avis au moins côté serveur).
-  await expect(page.locator('.agent-card-rating')).toHaveCount(1)
-  await expect(cards.filter({ hasText: 'Support RH' }).locator('.agent-card-rating')).toHaveText('88 %')
-  await page.screenshot({ path: info.outputPath('catalogue.png') })
+  await expect(page.locator('.list-row-chip', { hasText: '%' })).toHaveCount(1)
+  await expect(shared.getByRole('listitem').filter({ hasText: 'Support RH' })).toContainText('88 %')
+  await page.screenshot({ path: info.outputPath('agents.png') })
 
-  await page.getByRole('radio', { name: 'Les miens' }).click()
-  await expect(cards).toHaveCount(2)
-  await page.getByRole('radio', { name: 'Tous' }).click()
-  await page.getByRole('searchbox', { name: 'Rechercher un agent' }).fill('veille')
-  await expect(cards).toHaveCount(1)
-  await expect(cards.first()).toContainText('Veille concurrentielle')
+  await page.getByRole('textbox', { name: 'Rechercher un agent' }).fill('veille')
+  await expect(mine).toContainText('Aucun agent trouvé.')
+  await expect(shared.getByRole('listitem')).toHaveCount(1)
+  await expect(shared).toContainText('Veille concurrentielle')
+  // Le catalogue est filtré aussi : aucun modèle ne parle de veille.
+  await expect(page.getByRole('region', { name: 'Catalogue' })).toHaveCount(0)
   expect(api.unknown).toEqual([])
 })
 
@@ -51,11 +53,11 @@ test('dupliquer l’agent d’un collègue : copie modifiable, ouverte dans le s
   await expect(page.getByLabel(/Nom/).first()).toHaveValue('Support RH (copie)')
 })
 
-test('cliquer une carte démarre une conversation avec l’agent', async ({ page }) => {
+test('cliquer un agent démarre une conversation avec lui', async ({ page }) => {
   await mockApi(page, { agents })
   await openAgents(page)
   const created = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/api/conversations'))
-  await page.locator('.agent-card-main', { hasText: 'Juriste' }).click()
+  await page.getByRole('region', { name: 'Mes agents' }).getByRole('button', { name: /^Juriste/ }).click()
   expect(((await created).postDataJSON() as { agentId: string }).agentId).toBe('agent-juriste')
 })
 

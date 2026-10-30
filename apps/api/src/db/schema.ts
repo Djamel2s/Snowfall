@@ -1610,3 +1610,44 @@ export const scimUsers = pgTable.withRLS(
     check("scim_users_display_check", sql`${table.displayName} IS NULL OR (length(${table.displayName}) BETWEEN 1 AND 200 AND ${table.displayName} !~ '[[:cntrl:]]')`),
   ],
 );
+
+// Identité de l'organisation (Administration › Identité) : son logo, qui
+// remplace celui de Snowfall partout dans l'application, et la couleur du logo
+// par défaut. Lisible par les membres, modifiable par les administrateurs (RLS).
+export const organizationBranding = pgTable.withRLS(
+  "organization_branding",
+  {
+    organizationId: uuid("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    // PNG ou JPEG redimensionné dans le navigateur, vérifié par l'API (base64).
+    logo: text("logo"),
+    logoType: text("logo_type"),
+    // Teinte du logo par défaut (#rrggbb) ; NULL : bleu Snowfall.
+    color: text("color"),
+    version: integer("version").notNull().default(1),
+    updatedBy: uuid("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("organization_branding_logo_check", sql`(${table.logo} IS NULL AND ${table.logoType} IS NULL) OR (${table.logoType} IN ('image/png', 'image/jpeg') AND length(${table.logo}) BETWEEN 1 AND 700000)`),
+    check("organization_branding_color_check", sql`${table.color} IS NULL OR ${table.color} ~ '^#[0-9a-f]{6}$'`),
+  ],
+);
+
+// Conservation des données de l'organisation (Administration › Sécurité) : les
+// conversations sans activité depuis `conversation_days` jours sont effacées,
+// pour tous ses membres. NULL : conservées sans limite. Lue par la purge
+// (fonction SECURITY DEFINER) : la RLS n'y est donc pas imposée au propriétaire.
+export const organizationRetention = pgTable.withRLS(
+  "organization_retention",
+  {
+    organizationId: uuid("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    conversationDays: integer("conversation_days"),
+    updatedBy: uuid("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [check("organization_retention_days_check", sql`${table.conversationDays} IS NULL OR ${table.conversationDays} BETWEEN 30 AND 3650`)],
+);

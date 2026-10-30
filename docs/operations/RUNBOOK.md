@@ -479,6 +479,46 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Données : totaux seulement ; ne jamais ajouter de vue par personne sans
   analyse d'impact et information du CSE (surveillance des salariés).
 
+## 36. Titres et conversations vides
+
+- Aucune migration. Le titre vient du modèle de la conversation pendant la
+  réponse (8 s au plus) ; en cas d'échec (quota, panne), le début de la demande
+  reste comme titre, sans erreur pour l'utilisateur (log « Titre de la
+  conversation impossible »).
+- Une conversation ouverte sans message n'apparaît pas dans l'historique et
+  s'efface après 24 h (`EMPTY_CONVERSATION_HOURS`), à l'affichage suivant de
+  l'historique de son auteur.
+
+## 37. Identité de l'organisation (logo, couleur)
+
+- Migrations `branding` et `branding_enforcement` (`npm run db:migrate`).
+- Administration › Identité (administrateurs) : importer un logo (PNG/JPEG,
+  redimensionné dans le navigateur), revenir au logo Snowfall, couleur de
+  l'interface (le logo par défaut la suit).
+- Après toute modification d'une feuille de style : `npm run theme -w
+  @snowfall/web` régénère le thème clair ET `theme-accent.css` (la couleur de
+  l'interface) ; `npm test` échoue si l'un des deux est périmé. Audit : `branding.logo_update`, `branding.logo_delete`,
+  `branding.color_update` (refus : outcome `denied`).
+- Logo refusé : 415 (pas PNG/JPEG, ou dimensions hors 16–1 024 px), 413 (plus de
+  512 Ko), 422 (antivirus).
+- La page de connexion Keycloak garde le logo Snowfall (affichée avant que
+  l'organisation soit connue) : thème `infra/keycloak/themes/snowfall`.
+
+## 38. Administration › Sécurité (journal, conservation)
+
+- Migrations `security_center` et `security_center_enforcement`
+  (`npm run db:migrate`) : table `organization_retention`, file
+  `conversation_activity` (reprise de l'existant à la migration), fonctions
+  `snowfall_retention_expired()` et `snowfall_audit_log(…)`.
+- Journal : Administration › Sécurité. Export CSV de 5 000 lignes au plus ;
+  pour davantage (contrôle, enquête), interroger `audit_events` avec le compte
+  de migration, ou utiliser la copie SIEM.
+- Conservation : la purge tourne avec la reprise des runs ; 200 conversations
+  par passage. Audit : `security.retention_update`, puis `conversation.purge`
+  (raison `retention`) pour chaque conversation effacée. Effacement définitif
+  (messages, fichiers, partages) : prévenir les membres avant d'activer une
+  durée courte.
+
 ## 30. Compétences des agents
 
 - Migrations : `skills`, `skills_enforcement` (`npm run db:migrate`, droits

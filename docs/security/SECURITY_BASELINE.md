@@ -403,6 +403,53 @@ adversarial code reviews whose findings were all fixed and covered by tests
   activity; no cost in euros yet (tokens only, no price table); no audit-log
   viewer in Administration yet (the log is insert-only for the application).
 
+### Conversation titles and empty conversations (2026-10-28)
+
+- A conversation enters the history at its first message. An empty one is
+  hidden, then deleted after 24 hours when its author lists the history
+  (under the author's RLS; a scheduled task's conversation is kept).
+- The title is a short rephrasing of the first request, produced during the
+  answer by the same model and rules (sensitive data stays local,
+  pseudonymization unchanged, temporary conversations excluded, nothing
+  traced). The request is tagged as data, the output cleaned to one plain line
+  of 60 characters and redacted. It only replaces the provisional title, never
+  a title the user chose meanwhile. Its tokens count toward the quota.
+
+### Organization identity (2026-10-29)
+
+- Administration › Identity: an admin uploads the organization's logo, which
+  replaces the Snowfall logo everywhere (background, sidebar, avatars, browser
+  tab); without one, the Snowfall logo. The organization may also choose the
+  interface color: every blue or lavender of the stylesheets (accents, but
+  also the navy backgrounds, panels and slate texts, so the whole look follows)
+  is re-expressed from two variables (hue shift, saturation factor) in a
+  generated stylesheet (`theme-accent.css`, checked by `npm test`), lightness
+  kept so text contrast is unchanged; status colors (green, orange, red) and
+  agent colors stay. The default logo follows the same color. The
+  organization's name is shown next to Snowfall.
+- Upload: PNG or JPEG recognized by content, 512 KB and 16–1024 px at most,
+  antivirus, admin-only (route and RLS), audited (`branding.*`). Served with
+  its exact type, `nosniff` and a sandbox CSP. Never SVG.
+- The Keycloak login page keeps the Snowfall logo: it is shown before the
+  organization is known.
+
+### Administration › Security (2026-10-30)
+
+- Audit log viewer for admins: their organization only, newest first, 50 per
+  page, filters by family and "denials and failures only", event detail, CSV
+  export (5,000 rows max, formula cells neutralized, export audited). The
+  application role still has INSERT only on `audit_events`; reads go through
+  `snowfall_audit_log()`, which checks the admin role in the database.
+- Conversation retention: 30 days to 3 years, or unlimited (default). A
+  background job deletes conversations inactive for that long, for every
+  member, under each author's RLS, and audits each deletion
+  (`conversation.purge`, reason `retention`). It reads only a content-free
+  queue (`conversation_activity`) maintained by trigger.
+- GDPR data subject rights stay self-service (Settings › My account): admins
+  cannot read members' conversations by design.
+- Known gaps: an inactive scheduled task's conversation is purged with its
+  task; the audit log itself has no retention setting (kept, append-only).
+
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 
 - A fork does not copy attachments: the copy's model no longer sees their content.

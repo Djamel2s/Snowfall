@@ -20,6 +20,7 @@ import { defaultSettings, type OrganizationSettings, type SettingsStore } from "
 import { defaultAgentTools, type ToolId } from "./catalog.js";
 import { MemoryRunStore } from "./runs.js";
 import { MemorySummaryStore, type Summarizer } from "../conversations/compaction.js";
+import type { Titler } from "../conversations/title.js";
 import type { CodeSandbox } from "./code-tool.js";
 import { MemoryMcpServerStore } from "../mcp/store.js";
 import type { McpDependencies } from "../routes/mcp.js";
@@ -113,6 +114,7 @@ async function instance(
     model?: ChatModel;
     timing?: Parameters<typeof createAppServer>[0]["runTiming"];
     summarize?: Summarizer;
+    title?: Titler;
     sandbox?: CodeSandbox;
     mcp?: McpDependencies;
     tracer?: RunTracer;
@@ -154,6 +156,7 @@ async function instance(
     checkpointer: () => db.checkpoints,
     summaries: db.summaries,
     ...(options.summarize ? { summarize: options.summarize } : {}),
+    ...(options.title ? { title: options.title } : {}),
     ...(options.sandbox ? { sandbox: options.sandbox } : {}),
     ...(options.mcp ? { mcp: options.mcp } : {}),
     ...(options.tracer ? { tracer: options.tracer } : {}),
@@ -447,6 +450,48 @@ describe("Exécution durable : runs", () => {
     const messages = (await db.conversations.getMessages(alice, conversationId))!;
     const covered = messages.findIndex((message) => message.id === summary.uptoMessageId) + 1;
     assert.equal(last.history!.length, messages.length - 2 - covered);
+  });
+
+  it("titre : reformulé par le modèle à la première demande, prêt à la fin de la réponse ; jamais par-dessus un titre choisi", async (t) => {
+    const db = sharedDatabase();
+    const asked: { question: string; selection?: unknown }[] = [];
+    const title: Titler = async ({ question, selection }) => {
+      asked.push({ question, selection });
+      return { title: "Plafond des notes de frais", model: "fake", usage: { inputTokens: 30, outputTokens: 5 } };
+    };
+    const api = await instance(db, { runChat: async () => ({ content: "Le plafond est de 25 € par repas.", model: "fake" }), title });
+    t.after(() => api.close());
+    const titleOf = async (id: string) => ((await (await api.get("/conversations")).json()) as { id: string; title: string }[]).find((item) => item.id === id)?.title;
+
+    const { conversationId } = await agentConversation(api, []);
+    await (await api.post(`/conversations/${conversationId}/messages`, { content: "c'est combien le max qu'on peut se faire rembourser pour un resto le midi ?" })).text();
+    // Le titre est déjà là quand la réponse se termine (le client relit les titres à ce moment).
+    assert.equal(await titleOf(conversationId), "Plafond des notes de frais");
+    assert.equal(asked.length, 1);
+    // Deuxième demande : pas de nouveau titre.
+    await (await api.post(`/conversations/${conversationId}/messages`, { content: "Et le soir ?" })).text();
+    assert.equal(asked.length, 1);
+
+    // Renommée par l'utilisateur pendant la réponse : son titre reste.
+    let release = () => {};
+    const slow: Titler = () => new Promise((resolve) => (release = () => resolve({ title: "Titre du modèle", model: "fake" })));
+    const second = await instance(db, { runChat: async () => ({ content: "ok", model: "fake" }), title: slow });
+    t.after(() => second.close());
+    const { conversationId: renamed } = await agentConversation(second, []);
+    const answer = second.post(`/conversations/${renamed}/messages`, { content: "Prépare l'ordre du jour du comité" }).then((response) => response.text());
+    await until(async () => (await db.conversations.getMessages(alice, renamed))!.length === 2);
+    await db.conversations.update(alice, renamed, { title: "Comité de novembre" });
+    release();
+    await answer;
+    assert.equal(await titleOf(renamed), "Comité de novembre");
+
+    // Échec du titreur : le titre provisoire (début de la demande) reste, la réponse n'est pas touchée.
+    const broken = await instance(db, { runChat: async () => ({ content: "ok", model: "fake" }), title: async () => { throw new Error("PROVIDER_RATE_LIMITED"); } });
+    t.after(() => broken.close());
+    const { conversationId: failed } = await agentConversation(broken, []);
+    const response = await broken.post(`/conversations/${failed}/messages`, { content: "Liste des fournisseurs agréés" });
+    assert.ok((await events(response)).some((event) => event.event === "done"));
+    assert.equal(await titleOf(failed), "Liste des fournisseurs agréés");
   });
 
   it("réflexion : diffusée en direct (événement « reasoning »), jamais enregistrée avec la réponse", async (t) => {

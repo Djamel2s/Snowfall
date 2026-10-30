@@ -2153,3 +2153,75 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 .admin-agents small { color: #66788f; font-size: 10px; }
 .admin-rating { display: inline-flex; flex: none; align-items: center; gap: 4px; color: #9ee6c0; font-size: 10px; }
 .admin-line { display: flex; justify-content: space-between; gap: 8px; color: #a9b8cc; font-size: 11px; }
+
+/* ---- Panneaux standard de la barre latérale (components/ui/List.tsx) ---- */
+.list-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #63738b transparent; }
+.list-panel > .search-box { flex-shrink: 0; }
+.list-section-head { justify-content: space-between; gap: 6px; }
+.list-section-actions { display: inline-flex; align-items: center; gap: 2px; letter-spacing: 0; }
+.projects-add-button.on { background: var(--sidebar-active); color: #ffffff; }
+.list-rows { display: grid; gap: 2px; margin: 0; padding: 0 0 4px; list-style: none; }
+.list-row-wrap { min-width: 0; }
+.list-row { padding-right: 4px; }
+.list-row .conversation-select { gap: 10px; }
+.list-row-icon { display: grid; flex: none; width: 22px; height: 22px; place-items: center; color: #8d9db4; }
+.list-row-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.list-row-text .conversation-title { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.list-row-text small { overflow: hidden; color: #66788f; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.list-row-actions { display: inline-flex; flex: none; align-items: center; }
+.list-row:hover .conversation-delete, .list-row:focus-within .conversation-delete { opacity: 1; }
+.list-row .conversation-delete { width: 24px; height: 24px; }
+.list-row .conversation-delete.armed { opacity: 1; background: rgba(248, 142, 142, .16); color: #ff8a86; }
+.list-row-chip { flex: none; padding: 1px 6px; border-radius: 999px; background: rgba(255, 255, 255, .06); color: #a9b8cc; font-size: 9.5px; white-space: nowrap; }
+.list-row-chip.ok { background: rgba(110, 220, 160, .12); color: #9ee6c0; }
+.list-row-chip.warn { background: rgba(255, 211, 110, .12); color: #ffd36e; }
+.list-row-chip.muted { color: #66788f; }
+.list-row-expanded { margin: 2px 0 8px 34px; }
+.panel-back { margin: 0 0 10px; }
+.list-filters { margin: -2px 0 8px; }
+
+/* Page d'un projet, et section Documents (RAG) au format des listes. */
+.project-view-head { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px 9px; color: #dfe9f7; }
+.project-view-head strong { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.projects-add-button.armed { background: rgba(248, 142, 142, .16); color: #ff8a86; }
+.knowledge-panel { gap: 0; margin-top: 0; border-radius: 10px; transition: background .15s, box-shadow .15s; }
+.knowledge-panel.dragging { background: rgba(158, 202, 255, .06); box-shadow: inset 0 0 0 1px rgba(158, 202, 255, .45); }
+.knowledge-panel .list-section-head { margin-top: 18px; }
+.knowledge-note { display: flex; align-items: center; gap: 5px; margin: -4px 9px 6px; color: #9ee6c0; font-size: 10px; }
+.knowledge-panel .knowledge-link { margin: 0 4px 6px; }
+.knowledge-panel .knowledge-mode { margin: 4px 9px 0; }
+.knowledge-panel .knowledge-error { margin: 0 4px 6px; }
+.knowledge-error-icon { color: #ff8a86; }
+
+/* Nom de l'organisation, à côté de « Snowfall » (Administration › Identité). */
+.sidebar-panel-header .brand { align-items: baseline; gap: 8px; width: auto; min-width: 0; max-width: 100%; }
+.sidebar-panel-header .brand-word { flex: none; }
+.brand-org { -webkit-text-fill-color: currentColor; flex: 0 1 auto; min-width: 3ch; overflow: hidden; max-width: 120px; padding-left: 8px; border-left: 1px solid rgba(183, 210, 244, .18); color: #8094ad; font-size: 11px; font-weight: 600; letter-spacing: .4px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+
+/* Administration › Identité */
+.branding-logo { display: flex; align-items: center; gap: 14px; }
+.branding-logo > img { width: 64px; height: 64px; flex: none; padding: 6px; border: 1px solid rgba(183, 210, 244, .12); border-radius: 14px; background: rgba(255, 255, 255, .03); object-fit: contain; }
+.branding-logo-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.settings-secondary.armed { border-color: rgba(248, 142, 142, .35); color: #ff8a86; }
+.branding-colors { display: flex; flex-wrap: wrap; gap: 6px; }
+.branding-colors button, .branding-custom { position: relative; display: grid; width: 38px; height: 38px; place-items: center; padding: 4px; border: 1px solid rgba(183, 210, 244, .12); border-radius: 10px; background: rgba(255, 255, 255, .03); cursor: pointer; }
+.branding-colors button[aria-checked="true"] { border-color: rgba(158, 202, 255, .7); background: rgba(158, 202, 255, .1); }
+.branding-colors img { width: 100%; height: 100%; object-fit: contain; }
+.branding-check { position: absolute; right: -3px; bottom: -3px; padding: 1px; border-radius: 999px; background: #8ec9ff; color: #0b1220; }
+.branding-custom input { width: 26px; height: 26px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.branding-swatch { width: 22px; height: 22px; border-radius: 999px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18); }
+
+/* Administration › Sécurité : journal d'audit */
+.security-audit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.audit-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; margin: 0; padding: 0; list-style: none; }
+.audit-list li { min-width: 0; }
+.audit-list li > button { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 4px; border: 0; border-radius: 7px; background: transparent; color: #a9b8cc; text-align: left; cursor: pointer; }
+.audit-list li > button:hover { background: rgba(166, 203, 250, .07); }
+.audit-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.audit-main code { overflow: hidden; color: #dfe9f7; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.audit-main small { overflow: hidden; color: #66788f; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.audit-problem .audit-main code { color: #ffd36e; }
+.audit-details { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; margin: 0 4px 6px 22px; color: #8094ad; font-size: 10px; }
+.audit-details dt { color: #66788f; }
+.audit-details dd { margin: 0; overflow-wrap: anywhere; color: #a9b8cc; }
+.audit-detail { display: contents; }

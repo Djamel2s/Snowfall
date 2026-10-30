@@ -5,7 +5,9 @@ import { Pool } from "pg";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
 import { withTenant } from "../db/tenant.js";
-import { PostgresConversationStore } from "./store.js";
+import { PostgresAgentStore } from "../agents/store.js";
+import { PostgresScheduleStore } from "../schedules/store.js";
+import { PostgresConversationStore, provisionalTitle } from "./store.js";
 
 // TEST_DATABASE_URL : rôle applicatif (soumis à RLS et aux droits minimaux).
 // TEST_DATABASE_MIGRATION_URL : propriétaire du schéma, pour les fixtures.
@@ -19,6 +21,7 @@ describe(
     let pool: Pool;
     let owner: Pool;
     let store: PostgresConversationStore;
+    let keyring: OrganizationKeyring;
     const orgA = randomUUID();
     const orgB = randomUUID();
     const alice = randomUUID();
@@ -29,10 +32,8 @@ describe(
     before(async () => {
       pool = new Pool({ connectionString: appUrl });
       owner = new Pool({ connectionString: ownerUrl });
-      store = new PostgresConversationStore(
-        pool,
-        new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32))),
-      );
+      keyring = new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32)));
+      store = new PostgresConversationStore(pool, keyring);
       await owner.query(
         "INSERT INTO organizations (id, name) VALUES ($1, 'A'), ($2, 'B')",
         [orgA, orgB],
@@ -283,6 +284,49 @@ describe(
         owner.query("DELETE FROM audit_events WHERE event_type = 'test.event'"),
         /ajout seul/,
       );
+    });
+    it("historique : une conversation sans message n'y est pas ; vide depuis plus d'un jour, effacée (sauf tâche planifiée)", async () => {
+      const empty = await store.create(a);
+      const used = await store.create(a);
+      await store.appendExchange(a, used.id, "Question", "Réponse");
+      let ids = (await store.list(a)).map((item) => item.id);
+      assert.ok(ids.includes(used.id));
+      assert.equal(ids.includes(empty.id), false);
+      // Toujours ouvrable (on peut y écrire).
+      assert.ok(await store.get(a, empty.id));
+
+      // Vide depuis 25 h : effacée au prochain affichage de l'historique ; celle d'une tâche planifiée reste.
+      const agent = await new PostgresAgentStore(pool, keyring).create(a, { name: "Veille", avatar: { kind: "alien", color: "sky", eyes: "classic", accessory: "none" }, instructions: "", provider: "mistral", model: "mistral-small-latest" });
+      const scheduled = await store.create(a, "Veille", agent.id);
+      await new PostgresScheduleStore(pool, keyring).create(a, { agentId: agent.id, conversationId: scheduled.id, name: "Veille", prompt: "Surveille.", kind: "schedule", rule: { cadence: "daily", hour: 7 }, timezone: "Europe/Paris", nextRunAt: new Date(Date.now() + 3_600_000) });
+      // RLS imposée au propriétaire aussi : on vieillit les conversations dans le contexte d'Alice.
+      const age = (ids: string[]) => withTenant(pool, a, (client) => client.query("UPDATE conversations SET created_at = now() - interval '25 hours' WHERE id = ANY($1)", [ids]));
+      await age([empty.id, scheduled.id, used.id]);
+      ids = (await store.list(a)).map((item) => item.id);
+      assert.equal(await store.get(a, empty.id), null);
+      assert.ok(await store.get(a, scheduled.id));
+      assert.ok(ids.includes(used.id));
+      // Un autre utilisateur ne fait pas le ménage chez Alice.
+      const other = await store.create(a);
+      await age([other.id]);
+      await store.list(b);
+      assert.ok(await store.get(a, other.id));
+    });
+
+    it("titre généré : remplace le titre provisoire, jamais un titre choisi ; chiffré", async () => {
+      const conversation = await store.create(a);
+      const question = "c'est combien le max pour un resto le midi ?";
+      await store.appendExchange(a, conversation.id, question, "25 €.");
+      assert.equal(await store.retitle(a, conversation.id, "Plafond repas du midi", provisionalTitle(question)), true);
+      assert.equal((await store.get(a, conversation.id))!.title, "Plafond repas du midi");
+      const raw = await withTenant(pool, a, (client) => client.query("SELECT title FROM conversations WHERE id = $1", [conversation.id]));
+      assert.ok(!String(raw.rows[0]!.title).includes("Plafond"));
+      // Renommée entre-temps : le titre de l'utilisateur reste.
+      await store.update(a, conversation.id, { title: "Mes frais" });
+      assert.equal(await store.retitle(a, conversation.id, "Autre", "Plafond repas du midi"), false);
+      assert.equal((await store.get(a, conversation.id))!.title, "Mes frais");
+      // Un autre tenant ne retitre rien.
+      assert.equal(await store.retitle(b, conversation.id, "Piraté", "Mes frais"), false);
     });
   },
 );

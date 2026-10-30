@@ -80,6 +80,11 @@ const privileges: Record<string, string[]> = {
   // api_key_index : aucun droit, lue seulement via snowfall_api_key_lookup().
   // Comptes poussés par l'annuaire (SCIM) : gérés par les administrateurs (RLS).
   scim_users: ["SELECT", "INSERT", "UPDATE (external_id, user_name, display_name, active, updated_at)", "DELETE"],
+  // Identité (logo, couleur) : lue par les membres, modifiée par les administrateurs (RLS).
+  organization_branding: ["SELECT", "INSERT", "UPDATE (logo, logo_type, color, version, updated_by, updated_at)"],
+  // Conservation : lue par les membres, modifiée par les administrateurs (RLS).
+  organization_retention: ["SELECT", "INSERT", "UPDATE (conversation_days, updated_by, updated_at)"],
+  // conversation_activity : aucun droit, lue seulement via snowfall_retention_expired().
 };
 
 // Opérations sensibles hors RLS (membres, provisioning, SSO) : uniquement via
@@ -95,6 +100,9 @@ const functions = [
   "snowfall_agent_ratings()",
   // member_activity : aucun droit, lue seulement via snowfall_admin_overview() (totaux, administrateurs).
   "snowfall_admin_overview(integer)",
+  "snowfall_retention_expired()",
+  // audit_events : écriture seule ; lecture des administrateurs via cette fonction.
+  "snowfall_audit_log(timestamptz, uuid, integer, text[], boolean)",
   "snowfall_claim_schedules(interval, integer)",
   "snowfall_api_key_lookup(text)",
   // Contrôles de droits appelés par la RLS (SECURITY INVOKER : la RLS s'applique dedans).

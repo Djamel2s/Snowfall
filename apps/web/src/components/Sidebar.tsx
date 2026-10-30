@@ -1,7 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  Plus,
-  Search,
   MessageSquare,
   Trash2,
   LogOut,
@@ -11,9 +9,7 @@ import {
   Bot,
   Settings,
   Pin,
-  ChevronDown,
   ChevronRight,
-  CornerDownRight,
   Pencil,
   Check,
   MoreHorizontal,
@@ -21,7 +17,6 @@ import {
   ScrollText,
   GraduationCap,
   Plug,
-  Waypoints,
   Archive,
   ArrowLeft,
   ArchiveRestore,
@@ -33,8 +28,9 @@ import { useI18n } from '../lib/i18n'
 import AgentStudio from './AgentStudio'
 import AdminPanel from './AdminPanel'
 import SettingsPanel from './SettingsPanel'
-import AgentCatalog from './AgentCatalog'
-import AgentTemplates from './AgentTemplates'
+import AgentsPanel from './AgentsPanel'
+import { useBranding } from '../lib/branding'
+import { ListEmpty, ListRow, ListRows, ListSection, PanelBack, PanelNew, PanelSearch, SectionAction } from './ui/List'
 import AgentSchedules from './AgentSchedules'
 import PromptLibrary from './PromptLibrary'
 import SkillLibrary from './SkillLibrary'
@@ -189,9 +185,10 @@ export default function Sidebar(props: SidebarProps) {
     agentEditor,
   } = props
   const { t } = useI18n()
+  const brand = useBranding()
   const [projectDraft, setProjectDraft] = useState(false)
   // Agent choisi pour planifier une tâche (formulaire ouvert dans la barre).
-  const [agentTab, setAgentTab] = useState<'mine' | 'catalog'>('mine')
+  const [projectQuery, setProjectQuery] = useState('')
   const [scheduling, setScheduling] = useState<Agent | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renamingProject, setRenamingProject] = useState<string | null>(null)
@@ -240,6 +237,110 @@ export default function Sidebar(props: SidebarProps) {
     setMenuFor(null)
     setMovingFor(null)
     setArmed(null)
+  }
+
+  /** Projets : la liste (comme l'historique), puis la page d'un projet (ses conversations, ses documents). */
+  function projectsPanel() {
+    const project = projects.find((item) => item.id === activeProjectId)
+    if (project) {
+      return (
+        <div className="list-panel project-view">
+          <PanelBack label={t('sidebar.projectsBack')} onClick={() => props.onProjectSelect(null)} />
+          {renamingProject === project.id ? (
+            <InlineEdit
+              initial={project.name}
+              label={t('common.rename')}
+              icon={<Folder size={14} />}
+              onSubmit={(name) => {
+                props.onRenameProject(project.id, name)
+                setRenamingProject(null)
+              }}
+              onCancel={() => setRenamingProject(null)}
+            />
+          ) : (
+            <div className="project-view-head">
+              <Folder size={16} />
+              <strong title={project.name} onDoubleClick={() => setRenamingProject(project.id)}>
+                {project.name}
+              </strong>
+              <span className="list-section-actions">
+                <SectionAction label={t('common.rename')} onClick={() => setRenamingProject(project.id)}>
+                  <Pencil size={13} />
+                </SectionAction>
+                <button
+                  type="button"
+                  className={`projects-add-button${armed === project.id ? ' armed' : ''}`}
+                  aria-label={t('sidebar.deleteProject')}
+                  title={armed === project.id ? t('common.confirm') : t('sidebar.deleteProject')}
+                  onBlur={() => setArmed(null)}
+                  onClick={() => {
+                    if (armed !== project.id) {
+                      setArmed(project.id)
+                      return
+                    }
+                    setArmed(null)
+                    props.onDeleteProject(project.id)
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            </div>
+          )}
+          <PanelNew label={creating ? t('sidebar.creating') : t('sidebar.newChat')} onClick={props.onNewChat} disabled={creating} />
+          <PanelSearch value={search} onChange={props.onSearchChange} placeholder={t('sidebar.search')} label={t('sidebar.searchLabel')} />
+          <ListSection label={t('sidebar.projectConversations')}>
+            <div className="conversation-list">
+              {filteredConversations.map((conversation) => conversationRow(conversation, <MessageSquare size={16} className="conversation-symbol" />))}
+            </div>
+            {!historyLoading && filteredConversations.length === 0 && <ListEmpty>{search ? t('sidebar.noResult') : t('sidebar.emptyProject')}</ListEmpty>}
+          </ListSection>
+          <KnowledgePanel kind="projects" ownerId={project.id} />
+        </div>
+      )
+    }
+
+    const needle = projectQuery.trim().toLocaleLowerCase()
+    const shownProjects = needle ? projects.filter((item) => item.name.toLocaleLowerCase().includes(needle)) : projects
+    return (
+      <div className="list-panel">
+        <PanelNew label={t('sidebar.newProject')} onClick={() => setProjectDraft(true)} />
+        <PanelSearch value={projectQuery} onChange={setProjectQuery} placeholder={t('sidebar.searchProjects')} />
+        {projectDraft && (
+          <InlineEdit
+            initial=""
+            label={t('sidebar.projectName')}
+            icon={<Folder size={14} />}
+            onSubmit={(name) => {
+              props.onCreateProject(name)
+              setProjectDraft(false)
+            }}
+            onCancel={() => setProjectDraft(false)}
+          />
+        )}
+        <ListSection label={t('sidebar.projectsTitle')}>
+          {shownProjects.length ? (
+            <ListRows>
+              {shownProjects.map((item) => {
+                const count = conversations.filter((conversation) => conversation.projectId === item.id).length
+                return (
+                  <ListRow
+                    key={item.id}
+                    icon={<Folder size={15} />}
+                    title={item.name}
+                    tooltip={item.name}
+                    onClick={() => props.onProjectSelect(item.id)}
+                    trailing={<span className="list-row-chip muted">{count}</span>}
+                  />
+                )
+              })}
+            </ListRows>
+          ) : (
+            <ListEmpty>{needle ? t('sidebar.noResult') : t('sidebar.firstProject')}</ListEmpty>
+          )}
+        </ListSection>
+      </div>
+    )
   }
 
   function conversationRow(conversation: SidebarConversation, icon: ReactNode, child = false) {
@@ -383,7 +484,7 @@ export default function Sidebar(props: SidebarProps) {
             }}
           >
             <span className="brand-icon">
-              <img src="/logo.png" alt="Snowfall" className="snowfall-logo" />
+              <img src={brand.logo} alt="Snowfall" className="snowfall-logo" />
             </span>
           </button>
 
@@ -406,8 +507,8 @@ export default function Sidebar(props: SidebarProps) {
               aria-label={label}
               aria-current={sidebarPanel === id ? 'page' : undefined}
               onClick={() => {
-                // Changer de section ferme le créateur d'agent resté ouvert.
-                if (agentEditor !== undefined && id !== sidebarPanel) props.onAgentEditorClose()
+                // Naviguer ferme le studio d'agent resté ouvert, même vers la section d'où il s'est ouvert.
+                if (agentEditor !== undefined) props.onAgentEditorClose()
                 // Le tiroir reste ouvert (mobile) : on veut voir la section choisie.
                 props.onSidebarPanelChange(id)
               }}
@@ -457,6 +558,12 @@ export default function Sidebar(props: SidebarProps) {
           <header className="sidebar-panel-header">
             <a className="brand" href="#" onClick={(event) => event.preventDefault()}>
               <span className="brand-word">Snowfall</span>
+              {/* Organisation : discrète, à côté du produit. */}
+              {brand.name && (
+                <span className="brand-org" title={brand.name}>
+                  {brand.name}
+                </span>
+              )}
             </a>
           </header>
 
@@ -484,153 +591,30 @@ export default function Sidebar(props: SidebarProps) {
             <AdminPanel />
           ) : sidebarPanel === 'settings' ? (
             <SettingsPanel preferences={props.preferences} onPreferencesChange={props.onPreferencesChange} onPreferencesSave={props.onPreferencesSave} onConversationsImported={props.onConversationsImported} />
+          ) : sidebarPanel === 'agents' ? (
+            <AgentsPanel
+              agents={agents}
+              activeAgentId={activeAgentId}
+              currentUserId={props.currentUserId}
+              modelLabel={props.agentModelLabel}
+              canWrite={props.canWrite}
+              onStart={props.onStartAgent}
+              onEdit={props.onEditAgent}
+              onDuplicate={props.onDuplicateAgent}
+              onCreate={props.onCreateAgent}
+              onSchedule={props.canWrite ? setScheduling : undefined}
+              onOpenGraph={props.onOpenGraph}
+              onTemplateInstalled={props.onTemplateInstalled}
+              onError={props.onError}
+              schedules={<AgentSchedules agents={agents} scheduling={scheduling} onCloseForm={() => setScheduling(null)} onOpen={props.onOpenSchedule} onError={props.onError} />}
+            />
+          ) : sidebarPanel === 'projects' ? (
+            projectsPanel()
           ) : (
             <>
-              <button className="new-chat-button" onClick={props.onNewChat} disabled={creating}>
-                <Plus size={17} />
-                <span>{creating ? t('sidebar.creating') : t('sidebar.newChat')}</span>
-              </button>
+              <PanelNew label={creating ? t('sidebar.creating') : t('sidebar.newChat')} onClick={props.onNewChat} disabled={creating} />
+              <PanelSearch value={search} onChange={props.onSearchChange} placeholder={t('sidebar.search')} label={t('sidebar.searchLabel')} />
 
-              <label className="search-box">
-                <Search size={16} />
-                <input
-                  aria-label={t('sidebar.searchLabel')}
-                  placeholder={t('sidebar.search')}
-                  value={search}
-                  onChange={(event) => props.onSearchChange(event.target.value)}
-                />
-                {search && (
-                  <button
-                    className="search-clear"
-                    type="button"
-                    aria-label={t('sidebar.searchClear')}
-                    onClick={() => props.onSearchChange('')}
-                  >
-                    ×
-                  </button>
-                )}
-              </label>
-
-              {sidebarPanel === 'projects' ? (
-                <div className="projects-panel">
-                  <div className="sidebar-section-label projects-heading">
-                    <span>{t('sidebar.projectsTitle')}</span>
-                    <button
-                      className="projects-add-button"
-                      type="button"
-                      onClick={() => setProjectDraft(true)}
-                      aria-label={t('sidebar.createProject')}
-                      title={t('sidebar.createProject')}
-                    >
-                      <Plus size={15} />
-                    </button>
-                  </div>
-
-                  {projectDraft && (
-                    <InlineEdit
-                      initial=""
-                      label={t('sidebar.projectName')}
-                      icon={<Folder size={14} />}
-                      onSubmit={(name) => {
-                        props.onCreateProject(name)
-                        setProjectDraft(false)
-                      }}
-                      onCancel={() => setProjectDraft(false)}
-                    />
-                  )}
-
-                  <div className="project-tree">
-                    {projects.map((project) => {
-                      const isActive = activeProjectId === project.id
-                      const count = conversations.filter((item) => item.projectId === project.id).length
-
-                      return (
-                        <div className={`project-node ${isActive ? 'expanded' : ''}`} key={project.id}>
-                          {renamingProject === project.id ? (
-                            <InlineEdit
-                              initial={project.name}
-                              label={t('common.rename')}
-                              icon={<Folder size={14} />}
-                              onSubmit={(name) => {
-                                props.onRenameProject(project.id, name)
-                                setRenamingProject(null)
-                              }}
-                              onCancel={() => setRenamingProject(null)}
-                            />
-                          ) : (
-                            <div className="project-row">
-                              <button
-                                className={`project-item ${isActive ? 'selected' : ''}`}
-                                type="button"
-                                aria-expanded={isActive}
-                                onClick={() => props.onProjectSelect(isActive ? null : project.id)}
-                                onDoubleClick={() => setRenamingProject(project.id)}
-                              >
-                                {isActive ? (
-                                  <ChevronDown size={14} className="project-chevron" />
-                                ) : (
-                                  <ChevronRight size={14} className="project-chevron" />
-                                )}
-                                <Folder size={15} />
-                                <span className="project-name">{project.name}</span>
-                                <small>{count}</small>
-                              </button>
-                              {isActive && (
-                                <div className="project-actions">
-                                  <button
-                                    type="button"
-                                    aria-label={t('common.rename')}
-                                    title={t('common.rename')}
-                                    onClick={() => setRenamingProject(project.id)}
-                                  >
-                                    <Pencil size={13} />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={armed === project.id ? 'armed' : ''}
-                                    aria-label={t('sidebar.deleteProject')}
-                                    title={armed === project.id ? t('common.confirm') : t('sidebar.deleteProject')}
-                                    onBlur={() => setArmed(null)}
-                                    onClick={() => {
-                                      if (armed !== project.id) {
-                                        setArmed(project.id)
-                                        return
-                                      }
-                                      setArmed(null)
-                                      props.onDeleteProject(project.id)
-                                    }}
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {isActive && (
-                            <div className="project-children">
-                              {filteredConversations.map((conversation) =>
-                                conversationRow(conversation, <CornerDownRight size={14} className="conversation-symbol" />, true),
-                              )}
-                              {!historyLoading && filteredConversations.length === 0 && (
-                                <p className="empty-search child">{t('sidebar.emptyProject')}</p>
-                              )}
-                              <KnowledgePanel kind="projects" ownerId={project.id} />
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  {projects.length === 0 && !projectDraft && (
-                    <div className="projects-empty">
-                      <Folder size={22} />
-                      <strong>{t('sidebar.firstProject')}</strong>
-                    </div>
-                  )}
-                </div>
-              ) : sidebarPanel === 'chats' || sidebarPanel === 'pinned' ? (
                 <>
                   {sidebarPanel === 'chats' && !search && tags.length > 0 && !archivedView && (
                     <div className="sidebar-tags" role="group" aria-label={t('tags.filter')}>
@@ -705,66 +689,13 @@ export default function Sidebar(props: SidebarProps) {
                     )}
                   </div>
                 </>
-              ) : (
-                <div className="projects-panel">
-                  <div className="sidebar-section-label projects-heading">
-                    <span>{t('sidebar.agentsTitle')}</span>
-                    {agents.length > 0 && (
-                      <button className="projects-add-button" type="button" aria-label={t('graph.open')} title={t('graph.open')} onClick={props.onOpenGraph}>
-                        <Waypoints size={15} />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Mes agents / Catalogue d'agents prêts à l'emploi. */}
-                  <div className="settings-segmented connector-tabs" role="tablist" aria-label={t('sidebar.agentsTitle')}>
-                    <button type="button" role="tab" aria-selected={agentTab === 'mine'} onClick={() => setAgentTab('mine')}>
-                      {t('templates.tabMine')}
-                    </button>
-                    <button type="button" role="tab" aria-selected={agentTab === 'catalog'} onClick={() => setAgentTab('catalog')}>
-                      {t('templates.tabCatalog')}
-                    </button>
-                  </div>
-
-                  {agentTab === 'catalog' ? (
-                    <AgentTemplates
-                      canInstall={Boolean(props.canWrite)}
-                      onError={props.onError}
-                      onInstalled={(id) => {
-                        setAgentTab('mine')
-                        props.onTemplateInstalled(id)
-                      }}
-                    />
-                  ) : agents.length === 0 && !props.onCreateAgent ? (
-                    <div className="projects-empty">
-                      <Bot size={22} />
-                      <strong>{t('sidebar.firstAgent')}</strong>
-                    </div>
-                  ) : (
-                    <>
-                    <AgentSchedules agents={agents} scheduling={scheduling} onCloseForm={() => setScheduling(null)} onOpen={props.onOpenSchedule} onError={props.onError} />
-                    <AgentCatalog
-                      agents={agents}
-                      activeAgentId={activeAgentId}
-                      currentUserId={props.currentUserId}
-                      modelLabel={props.agentModelLabel}
-                      onStart={props.onStartAgent}
-                      onEdit={props.onEditAgent}
-                      onDuplicate={props.onDuplicateAgent}
-                      onCreate={props.onCreateAgent}
-                      onSchedule={props.canWrite ? setScheduling : undefined}
-                    />
-                    </>
-                  )}
-                </div>
-              )}
             </>
           )}
 
           <footer className="sidebar-bottom">
             <div className="account-row">
               <div className="user-avatar">
-                <img src="/logo.png" alt="" className="user-avatar-logo" />
+                <img src={brand.logo} alt="" className="user-avatar-logo" />
               </div>
 
               <div className="account-info">

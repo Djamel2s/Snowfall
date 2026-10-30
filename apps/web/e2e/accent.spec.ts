@@ -28,6 +28,7 @@ test('agent rose : liens et puces à sa couleur ; modèle : bleu du logo', async
   await page.screenshot({ path: info.outputPath('agent-rose.png') })
 
   // Nouvelle conversation, sans agent : c'est le modèle par défaut qui répond.
+  await page.getByRole('button', { name: 'Conversations', exact: true }).first().click()
   await page.getByRole('button', { name: 'Nouvelle conversation' }).first().click()
   const blue = await ask(page)
   await page.screenshot({ path: info.outputPath('modele-bleu.png') })

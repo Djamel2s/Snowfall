@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { Check, CornerDownLeft, Pencil, Plus, ScrollText, Share2, Trash2, Users, X } from 'lucide-react'
+import { Check, Pencil, ScrollText, Share2, Trash2, Users, X } from 'lucide-react'
 import SharePanel from './SharePanel'
 import { api, type Prompt } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { promptVariables } from '../lib/prompts'
+import { ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch, RowAction } from './ui/List'
 
 type Draft = { id?: string; name: string; content: string }
 
@@ -16,7 +17,7 @@ type Props = {
 
 /**
  * Bibliothèque de prompts (barre latérale) : les miens et ceux partagés par
- * l'organisation. Créer, modifier, partager ; « Utiliser » remplit la zone de
+ * l'organisation. Créer, modifier, partager ; cliquer remplit la zone de
  * saisie. Dans la conversation, « / » les propose aussi.
  */
 export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Props) {
@@ -24,8 +25,12 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
   const [draft, setDraft] = useState<Draft | null>(null)
   const [armed, setArmed] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
   // Partage ouvert sous ce prompt (un seul à la fois).
   const [sharing, setSharing] = useState<string | null>(null)
+
+  const needle = query.trim().toLocaleLowerCase()
+  const shown = needle ? prompts.filter((prompt) => `${prompt.name} ${prompt.content}`.toLocaleLowerCase().includes(needle)) : prompts
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -52,15 +57,9 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
   }
 
   return (
-    <div className="prompt-library">
-      <div className="sidebar-section-label projects-heading">
-        <span>{t('prompts.title').toUpperCase()}</span>
-        {canWrite && !draft && (
-          <button className="projects-add-button" type="button" aria-label={t('prompts.new')} title={t('prompts.new')} onClick={() => setDraft({ name: '', content: '' })}>
-            <Plus size={15} />
-          </button>
-        )}
-      </div>
+    <div className="list-panel prompt-library">
+      {canWrite && <PanelNew label={t('prompts.new')} disabled={Boolean(draft)} onClick={() => setDraft({ name: '', content: '' })} />}
+      <PanelSearch value={query} onChange={setQuery} placeholder={t('prompts.search')} />
       {error && <p className="settings-error" role="alert">{error}</p>}
 
       {draft && (
@@ -83,54 +82,62 @@ export default function PromptLibrary({ prompts, canWrite, onChange, onUse }: Pr
         </form>
       )}
 
-      {prompts.length === 0 && !draft ? (
-        <div className="projects-empty">
-          <ScrollText size={22} />
-          <strong>{t('prompts.empty')}</strong>
-        </div>
-      ) : (
-        <ul className="prompt-list">
-          {prompts.map((prompt) => (
-            <li key={prompt.id}>
-              <button type="button" className="prompt-item-main" title={t('prompts.use')} onClick={() => onUse(prompt)}>
-                <span>
-                  <strong>
+      <ListSection label={t('prompts.title')}>
+        {prompts.length === 0 && !draft ? (
+          <ListEmpty>{t('prompts.empty')}</ListEmpty>
+        ) : shown.length === 0 ? (
+          <ListEmpty>{t('prompts.noMatch')}</ListEmpty>
+        ) : (
+          <ListRows>
+            {shown.map((prompt) => (
+              <ListRow
+                key={prompt.id}
+                icon={<ScrollText size={15} />}
+                title={
+                  <>
                     {prompt.name}
                     {prompt.shared && <Users size={11} aria-label={t('prompts.shared')} />}
-                  </strong>
-                  <small>{prompt.content.replace(/\s+/g, ' ').slice(0, 80)}</small>
-                </span>
-                <CornerDownLeft size={13} />
-              </button>
-              {prompt.canEdit && canWrite && (
-                <div className="prompt-item-actions">
-                  <button type="button" aria-label={t('prompts.editNamed', { name: prompt.name })} title={t('common.edit')} onClick={() => setDraft({ id: prompt.id, name: prompt.name, content: prompt.content })}>
-                    <Pencil size={12} />
-                  </button>
-                  {prompt.mine && (
-                    <button type="button" aria-label={t('share.openNamed', { name: prompt.name })} title={t('share.access')} aria-expanded={sharing === prompt.id} onClick={() => setSharing(sharing === prompt.id ? null : prompt.id)}>
-                      <Share2 size={12} />
-                    </button>
-                  )}
-                  {prompt.mine && (
-                  <button
-                    type="button"
-                    className={armed === prompt.id ? 'armed' : ''}
-                    aria-label={t('prompts.delete', { name: prompt.name })}
-                    title={armed === prompt.id ? t('prompts.deleteConfirm') : t('common.delete')}
-                    onBlur={() => setArmed(null)}
-                    onClick={() => void remove(prompt)}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  )}
-                </div>
-              )}
-              {sharing === prompt.id && <SharePanel resource={{ type: 'prompt', id: prompt.id, name: prompt.name }} onError={setError} />}
-            </li>
-          ))}
-        </ul>
-      )}
+                  </>
+                }
+                subtitle={prompt.content.replace(/\s+/g, ' ').slice(0, 80)}
+                tooltip={t('prompts.use')}
+                onClick={() => onUse(prompt)}
+                actions={
+                  prompt.canEdit && canWrite ? (
+                    <>
+                      <RowAction label={t('prompts.editNamed', { name: prompt.name })} title={t('common.edit')} onClick={() => setDraft({ id: prompt.id, name: prompt.name, content: prompt.content })}>
+                        <Pencil size={12} />
+                      </RowAction>
+                      {prompt.mine && (
+                        <RowAction label={t('share.openNamed', { name: prompt.name })} title={t('share.access')} expanded={sharing === prompt.id} onClick={() => setSharing(sharing === prompt.id ? null : prompt.id)}>
+                          <Share2 size={12} />
+                        </RowAction>
+                      )}
+                      {prompt.mine && (
+                        <RowAction
+                          label={t('prompts.delete', { name: prompt.name })}
+                          title={armed === prompt.id ? t('prompts.deleteConfirm') : t('common.delete')}
+                          armed={armed === prompt.id}
+                          onBlur={() => setArmed(null)}
+                          onClick={() => void remove(prompt)}
+                        >
+                          <Trash2 size={12} />
+                        </RowAction>
+                      )}
+                    </>
+                  ) : undefined
+                }
+              >
+                {sharing === prompt.id && (
+                  <div className="list-row-expanded">
+                    <SharePanel resource={{ type: 'prompt', id: prompt.id, name: prompt.name }} onError={setError} />
+                  </div>
+                )}
+              </ListRow>
+            ))}
+          </ListRows>
+        )}
+      </ListSection>
       <p className="settings-hint prompt-library-hint">{t('prompts.slashHint')}</p>
     </div>
   )

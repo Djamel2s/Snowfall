@@ -19,7 +19,8 @@ export const LOGO_BLUE = '#0097fe'
 /** Couleur d'accent d'une réponse : celle de l'agent (son avatar), sinon le bleu du logo. */
 export function accentOf(avatar: { kind: string; color?: string } | null | undefined) {
   if (avatar?.kind === 'alien' && avatar.color && avatar.color in alienPalette) return alienPalette[avatar.color as AlienAvatar['color']].base
-  return LOGO_BLUE
+  // Couleur de l'interface choisie par l'organisation (lib/branding.ts), sinon le bleu du logo.
+  return `var(--logo-blue, ${LOGO_BLUE})`
 }
 
 export const defaultAlien: AlienAvatar = { kind: 'alien', color: 'sky', eyes: 'classic', accessory: 'none' }

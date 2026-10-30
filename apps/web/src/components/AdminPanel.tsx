@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { BookOpen, Check, Cpu, LayoutDashboard, Trash2, UserPlus, Users, Wrench, X } from 'lucide-react'
+import { BookOpen, Check, Cpu, LayoutDashboard, Lock, Palette, Trash2, UserPlus, Users, Wrench, X } from 'lucide-react'
 import { getSession } from '../auth/session'
 import {
   api,
@@ -23,6 +23,8 @@ import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
 import DecisionWorkshop from './DecisionWorkshop'
 import AdminOverview from './AdminOverview'
+import BrandingSettings from './BrandingSettings'
+import SecuritySettings from './SecuritySettings'
 
 // Administration de l'organisation (administrateurs) : un espace à part des
 // réglages personnels. Une fonction s'insère dans une rubrique, elle n'en crée
@@ -36,6 +38,8 @@ const sections = [
   { id: 'models', icon: Cpu },
   { id: 'knowledge', icon: BookOpen },
   { id: 'tools', icon: Wrench },
+  { id: 'security', icon: Lock },
+  { id: 'identity', icon: Palette },
 ] as const
 type Section = (typeof sections)[number]['id']
 
@@ -192,8 +196,10 @@ export default function AdminPanel() {
       </nav>
 
       {section === 'overview' && <AdminOverview onError={setError} />}
+      {section === 'identity' && <BrandingSettings onError={setError} />}
+      {section === 'security' && <SecuritySettings onError={setError} />}
 
-      {section !== 'overview' && !draft && <p className="settings-hint">{t('common.loading')}</p>}
+      {!['overview', 'identity', 'security'].includes(section) && !draft && <p className="settings-hint">{t('common.loading')}</p>}
 
       {section === 'models' && draft && (
         <section className="settings-card" aria-label={t('settings.providers')}>

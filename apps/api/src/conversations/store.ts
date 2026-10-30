@@ -140,6 +140,11 @@ export interface ConversationStore {
   expiredTemporary?(): Promise<ExpiredConversation[]>;
   /** Donnée sensible détectée : la conversation reste sur un modèle local (définitif). */
   markSensitive(owner: ConversationOwner, conversationId: string): Promise<void>;
+  /**
+   * Titre généré (reformulation de la première demande) : remplace le titre
+   * provisoire `provisional`, jamais un titre choisi par l'utilisateur entre-temps.
+   */
+  retitle?(owner: ConversationOwner, conversationId: string, title: string, provisional: string): Promise<boolean>;
   /** Agent ou modèle : changeable à tout moment (le contrôle « local à vie » est fait par la route). */
   update(
     owner: ConversationOwner,
@@ -307,6 +312,12 @@ function snippet(text: string, index: number, length: number) {
  * Le compteur du pilotage (trigger messages_activity_count) les ignore pour
  * cette transaction seulement.
  */
+/** Titre provisoire (début de la première demande), en attendant le titre généré. */
+export const provisionalTitle = (text: string) => redactSensitive(text).slice(0, 80);
+
+/** Conversation restée vide (aucun message) : effacée après ce délai. */
+export const EMPTY_CONVERSATION_HOURS = 24;
+
 const notActivity = (client: PoolClient) => client.query("SELECT set_config('app.copy', 'on', true)");
 
 export class PostgresConversationStore implements ConversationStore {
@@ -392,6 +403,8 @@ export class PostgresConversationStore implements ConversationStore {
       `SELECT ${SUMMARY_COLUMNS}
        FROM conversations
        WHERE user_id = $1 AND organization_id = $2 AND NOT temporary
+         -- Pas encore de message : pas dans l'historique (« Nouvelle conversation » sans rien écrire).
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id)
        ORDER BY updated_at DESC
        LIMIT 200`,
       [owner.userId, owner.organizationId],
@@ -405,7 +418,19 @@ export class PostgresConversationStore implements ConversationStore {
   }
 
   async list(owner: ConversationOwner): Promise<ConversationSummary[]> {
-    return withTenant(this.pool, owner, (client) => this.summaries(client, owner));
+    return withTenant(this.pool, owner, async (client) => {
+      // Ménage : conversations ouvertes puis laissées vides depuis plus d'un jour (sauf
+      // celle d'une tâche planifiée, qui attend son premier passage). Sous la RLS de l'auteur.
+      await client.query(
+        `DELETE FROM conversations c
+         WHERE c.user_id = $1 AND c.organization_id = $2 AND NOT c.temporary
+           AND c.created_at < now() - interval '${EMPTY_CONVERSATION_HOURS} hours'
+           AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM agent_schedules s WHERE s.conversation_id = c.id)`,
+        [owner.userId, owner.organizationId],
+      );
+      return this.summaries(client, owner);
+    });
   }
 
   /** Échéances tenues par trigger hors RLS forcée : seuls les identifiants sortent. */
@@ -499,6 +524,23 @@ export class PostgresConversationStore implements ConversationStore {
   markSensitive(owner: ConversationOwner, conversationId: string) {
     return withTenant(this.pool, owner, async (client) => {
       await client.query("UPDATE conversations SET sensitive = true WHERE id = $1 AND user_id = $2 AND organization_id = $3", [conversationId, owner.userId, owner.organizationId]);
+    });
+  }
+
+  async retitle(owner: ConversationOwner, conversationId: string, title: string, provisional: string) {
+    return withTenant(this.pool, owner, async (client) => {
+      const row = (
+        await client.query<{ title: string | null }>(
+          "SELECT title FROM conversations WHERE id = $1 AND user_id = $2 AND organization_id = $3 AND NOT temporary FOR UPDATE",
+          [conversationId, owner.userId, owner.organizationId],
+        )
+      ).rows[0];
+      if (!row?.title) return false;
+      const current = await this.keyring.decrypt(client, owner.organizationId, row.title, titleAad(owner, conversationId));
+      if (current !== provisional) return false;
+      const encrypted = await this.keyring.encrypt(client, owner.organizationId, redactSensitive(title).slice(0, 80), titleAad(owner, conversationId));
+      await client.query("UPDATE conversations SET title = $4 WHERE id = $1 AND user_id = $2 AND organization_id = $3", [conversationId, owner.userId, owner.organizationId, encrypted]);
+      return true;
     });
   }
 
@@ -827,7 +869,7 @@ export class PostgresConversationStore implements ConversationStore {
         client,
         owner.organizationId,
         // Titre visible partout (liste, recherche) : jamais d'identifiant sensible en clair.
-        redactSensitive(userContent || userMessage.attachments?.[0]?.name || DEFAULT_CONVERSATION_TITLE).slice(0, 80),
+        provisionalTitle(userContent || userMessage.attachments?.[0]?.name || DEFAULT_CONVERSATION_TITLE),
         titleAad(owner, conversationId),
       );
 

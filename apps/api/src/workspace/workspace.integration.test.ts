@@ -333,6 +333,7 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
     it("réglages, archive et étiquettes d'une conversation : chiffrés, bornés par la base", async () => {
       const conversations = new PostgresConversationStore(pool, keyring);
       const conversation = await conversations.create(tenant(memberA), "Dossier");
+      await conversations.appendExchange(tenant(memberA), conversation.id, "Question", "Réponse");
       const filed = await conversations.update(tenant(memberA), conversation.id, {
         settings: { creativity: "precise", length: "concise", instructions: "Cite les articles du Code civil." },
         archived: true,

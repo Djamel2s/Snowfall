@@ -12,6 +12,7 @@ import {
   type ResponderOption,
 } from '../lib/responder'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
+import { useBranding } from '../lib/branding'
 
 /** Contrôle clavier depuis le champ de message (mention « @ »). */
 export type PickerControl = { handleKey: (event: KeyboardEvent) => boolean }
@@ -39,6 +40,7 @@ const responderKey = (current: Responder) =>
  */
 export default function ResponderPicker({ current, agents, providers, open, mention, onOpenChange, onPick, controlRef, variant = 'peek' }: Props) {
   const { t } = useI18n()
+  const brand = useBranding()
   const [query, setQuery] = useState('')
   const [activeKey, setActiveKey] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -142,7 +144,7 @@ export default function ResponderPicker({ current, agents, providers, open, ment
               {current.label}
             </>
           ) : (
-            <img src="/logo.png" alt="" width={18} height={18} />
+            <img src={brand.logo} alt="" width={18} height={18} />
           )}
           <ChevronDown size={13} aria-hidden="true" />
         </button>
@@ -167,7 +169,7 @@ export default function ResponderPicker({ current, agents, providers, open, ment
             {current.kind === 'model' ? (
               <ProviderLogo provider={current.provider} size={24} />
             ) : (
-              <img src="/logo.png" alt="" width={26} height={26} />
+              <img src={brand.logo} alt="" width={26} height={26} />
             )}
           </span>
         )}
