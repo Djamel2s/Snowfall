@@ -27,3 +27,90 @@
   background: transparent;
   box-shadow: none;
 }
+
+/* ---- Palette claire (30 oct.) --------------------------------------------
+   L'inverse du sombre, pensé et non calculé : là où le sombre est bleu nuit et
+   noir, le clair est blanc et bleu ciel très pâle ; les accents restent bleus,
+   les textes bleu nuit. L'inversion automatique donnait du lavande (le bleu nuit
+   « rgba(0, 0, 20) » inversé) et des gris ardoise sur les boutons. */
+:root[data-theme="light"] {
+  --bg: #f4f7fc;
+  --panel: rgba(255, 255, 255, .94);
+  --panel-soft: rgba(31, 84, 160, .03);
+  --line: rgba(31, 84, 160, .1);
+  --text: #0f1b2d;
+  --muted: #4f6079;
+  --faint: #7d8ca3;
+  --ice: #0d2a52;
+}
+
+:root[data-theme="light"] .snowfall-app {
+  background:
+    radial-gradient(ellipse at 62% 40%, rgba(77, 150, 240, .1), transparent 48%),
+    radial-gradient(ellipse at 20% 100%, rgba(77, 150, 240, .07), transparent 40%),
+    var(--bg);
+}
+
+:root[data-theme="light"] .sidebar {
+  --sidebar-bg: #ffffff;
+  --sidebar-panel-bg: #f8fafe;
+  --sidebar-hover: #edf3fc;
+  --sidebar-active: #e1ecfc;
+  --sidebar-border: #e1e9f4;
+}
+
+:root[data-theme="light"] .new-chat-button {
+  border-color: #cfe0f8;
+  background: #e8f1fe;
+  color: #0d3a75;
+}
+:root[data-theme="light"] .new-chat-button:hover:not(:disabled) {
+  border-color: #b5d0f5;
+  background: #dbe9fd;
+}
+
+:root[data-theme="light"] .search-box {
+  border-color: #e1e9f4;
+  background: #ffffff;
+  color: #5b6b82;
+}
+:root[data-theme="light"] .search-box:focus-within { border-color: #8cb8ee; }
+
+:root[data-theme="light"] .conversation-item:hover,
+:root[data-theme="light"] .conversation-project-item:hover {
+  background: var(--sidebar-hover);
+  color: #0f1b2d;
+}
+:root[data-theme="light"] .conversation-item.selected,
+:root[data-theme="light"] .conversation-project-item.selected {
+  background: var(--sidebar-active);
+  color: #0b2a52;
+}
+
+:root[data-theme="light"] .composer {
+  border-color: #d3e0f1;
+  background: rgba(255, 255, 255, .95);
+  box-shadow: 0 8px 30px rgba(31, 84, 160, .08);
+}
+:root[data-theme="light"] .composer:focus-within {
+  border-color: #8cb8ee;
+  box-shadow: 0 8px 30px rgba(31, 84, 160, .1), 0 0 0 3px rgba(61, 140, 240, .12);
+}
+
+/* Avatar d'un agent : sans cadre (même conflit de priorité que l'avatar de message). */
+:root[data-theme="light"] .message-avatar.message-avatar-agent {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Bande d'icônes : blanche (le noir bleuté « rgb(0, 0, 20) » inversé donnait du lavande). */
+:root[data-theme="light"] .sidebar-rail { background: #ffffff; border-right-color: #e9eff8; }
+
+/* Bouton principal : bleu, texte blanc (en sombre, c'est un bouton clair sur fond nuit ;
+   inversé, il devenait presque noir). */
+:root[data-theme="light"] .settings-save {
+  background: linear-gradient(145deg, #3d8cf0, #2a6fd0);
+  color: #ffffff;
+}
+:root[data-theme="light"] .settings-save:hover:not(:disabled) { background: linear-gradient(145deg, #4a96f3, #2f78db); }

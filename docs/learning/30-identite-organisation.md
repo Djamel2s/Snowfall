@@ -83,6 +83,29 @@ elles aussi : c'était l'origine d'un halo bleu resté au centre de l'écran.
 Le même défaut de cascade existe d'ailleurs dans le générateur du thème clair,
 d'avant ce travail : il est visible en bleu clair, autour des avatars.
 
+## 3 ter. Le thème clair : une palette pensée, pas une inversion
+
+Le thème clair est généré en inversant la luminosité du thème sombre. Ça
+marche pour la plupart des couleurs, mais pas pour toutes. Trois échecs,
+signalés sur une capture :
+
+1. **Du lavande au lieu du blanc.** Le bleu nuit presque noir de la barre
+   (`rgb(0, 0, 20)`) gardait sa teinte une fois inversé : il devenait lavande
+   pâle.
+2. **Du gris au lieu du bleu ciel.** Les états « sélectionné » sont, en sombre,
+   des voiles bleu clair transparents. Le générateur les traitait comme du
+   texte clair et les rendait gris foncé. Règle corrigée : un voile clair coloré
+   reste un voile de la même teinte.
+3. **Des rectangles au lieu du titre.** C'est le même piège que celui de la
+   couleur de l'interface : `background` annule `background-clip: text`. Le
+   générateur réapplique maintenant le découpage.
+
+Pour les surfaces principales (fonds, barre, bouton « Nouvelle conversation »,
+recherche, sélection, zone de saisie, bouton principal), la palette est
+choisie à la main dans `theme-light-fixes.css`. Leçon : un générateur fait 90 %
+du travail ; les 10 % qui se voient le plus se décident à l'œil, captures à
+l'appui.
+
 ## 4. Une image importée est une entrée hostile
 
 Accepter un fichier d'un utilisateur et l'afficher à tous est une surface

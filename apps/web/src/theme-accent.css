@@ -1,4 +1,4 @@
-/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1363 déclarations) : ne pas modifier à la main.
+/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1390 déclarations) : ne pas modifier à la main.
    Active seulement sous :root[data-accent] (couleur choisie par l'organisation). */
 
 :root[data-accent][data-theme="dark"] {
@@ -3306,7 +3306,8 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .snowfall-app {
   --bg: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(51.5% * var(--accent-saturation, 1))) 93.5%);
   --panel: hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(48% * var(--accent-saturation, 1))) 90.2% / 0.86);
-  --line: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.09);
+  --panel-soft: rgba(26, 26, 26, 0.025);
+  --line: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.09);
   --text: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
   --muted: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 41.4%);
   --faint: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.3% * var(--accent-saturation, 1))) 57.3%);
@@ -3327,14 +3328,14 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .new-chat-button {
-  border: 1px solid hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.1% * var(--accent-saturation, 1))) 16.1% / 0.17);
-  background: linear-gradient(110deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(76.2% * var(--accent-saturation, 1))) 36.3% / 0.13), rgba(26, 26, 26, 0.035));
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(87.5% * var(--accent-saturation, 1))) 50% / 0.17);
+  background: linear-gradient(110deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(76.5% * var(--accent-saturation, 1))) 50% / 0.13), rgba(26, 26, 26, 0.035));
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .new-chat-button:hover {
-  border-color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.1% * var(--accent-saturation, 1))) 16.1% / 0.36);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(83.5% * var(--accent-saturation, 1))) 35.7% / 0.15);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(87.5% * var(--accent-saturation, 1))) 50% / 0.36);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(83.5% * var(--accent-saturation, 1))) 50% / 0.15);
 }
 
 :root[data-accent][data-theme="light"] .shortcut,
@@ -3348,7 +3349,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .search-box:focus-within {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(88.6% * var(--accent-saturation, 1))) 31% / 0.28);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(89% * var(--accent-saturation, 1))) 50% / 0.28);
 }
 
 :root[data-accent][data-theme="light"] .search-box input::placeholder {
@@ -3368,17 +3369,17 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .conversation-item.selected,
 :root[data-accent][data-theme="light"] .conversation-project-item:hover,
 :root[data-accent][data-theme="light"] .conversation-project-item.selected {
-  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.07);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(89% * var(--accent-saturation, 1))) 50% / 0.07);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .conversation-item.selected {
-  border-color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.1% * var(--accent-saturation, 1))) 17.3% / 0.08);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(84.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .privacy-card {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(35.5% * var(--accent-saturation, 1))) 18.2% / 0.09);
-  background: linear-gradient(135deg, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(69.6% * var(--accent-saturation, 1))) 37.5% / 0.075), rgba(26, 26, 26, 0.015));
+  border: 1px solid hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(82.7% * var(--accent-saturation, 1))) 50% / 0.09);
+  background: linear-gradient(135deg, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(70.2% * var(--accent-saturation, 1))) 50% / 0.075), rgba(26, 26, 26, 0.015));
 }
 
 :root[data-accent][data-theme="light"] .privacy-icon {
@@ -3401,8 +3402,8 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .user-avatar,
 :root[data-accent][data-theme="light"] .message-avatar {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.1% * var(--accent-saturation, 1))) 17.8% / 0.17);
-  background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.8% * var(--accent-saturation, 1))) 35.9% / 0.18), rgba(26, 26, 26, 0.045));
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(84.3% * var(--accent-saturation, 1))) 50% / 0.17);
+  background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(74.1% * var(--accent-saturation, 1))) 50% / 0.18), rgba(26, 26, 26, 0.045));
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3442,7 +3443,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .language-flag {
-  border: 1px solid hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.9% / 0.28);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(81.2% * var(--accent-saturation, 1))) 50% / 0.28);
   box-shadow: 0 0 0 3px hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.05);
 }
 
@@ -3454,7 +3455,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .language-menu {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(48.1% * var(--accent-saturation, 1))) 89.4% / 0.96);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.171);
 }
@@ -3468,16 +3469,16 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .orbit {
-  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.19);
+  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.19);
 }
 
 :root[data-accent][data-theme="light"] .orbit-two {
-  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.12);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
 }
 
 :root[data-accent][data-theme="light"] .orbit-core {
-  border: 1px solid hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(35.2% * var(--accent-saturation, 1))) 13.9% / 0.26);
-  background: linear-gradient(145deg, hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.18), hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(42.1% * var(--accent-saturation, 1))) 58% / 0.06));
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.26);
+  background: linear-gradient(145deg, hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.18), hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(42.1% * var(--accent-saturation, 1))) 58% / 0.06));
   box-shadow: 0 0 42px hsl(calc(211deg + var(--accent-shift, 0deg)) min(100%, calc(72.2% * var(--accent-saturation, 1))) 45.1% / 0.13), inset 0 1px rgba(26, 26, 26, 0.1);
   color: hsl(calc(210deg + var(--accent-shift, 0deg)) min(100%, calc(35.7% * var(--accent-saturation, 1))) 11%);
 }
@@ -3498,14 +3499,20 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .welcome h1 {
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
   background: linear-gradient(100deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(57.7% * var(--accent-saturation, 1))) 41.8%) 30%, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 19.2%) 50%, hsl(calc(235deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.9%) 80%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 :root[data-accent][data-theme="light"] .welcome h1 > span {
   background: linear-gradient(100deg, hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%) 5%, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 19.2%) 56%, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(57.7% * var(--accent-saturation, 1))) 41.8%) 100%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 :root[data-accent][data-theme="light"] .welcome h1 > .welcome-brand {
   background: linear-gradient(100deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(57.7% * var(--accent-saturation, 1))) 41.8%) 0%, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 19.2%) 50%, hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(21.5% * var(--accent-saturation, 1))) 52.5%) 100%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 :root[data-accent][data-theme="light"] .welcome-description {
@@ -3513,19 +3520,19 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .suggestion-card {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(35.5% * var(--accent-saturation, 1))) 18.2% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(70.2% * var(--accent-saturation, 1))) 50% / 0.1);
   background: linear-gradient(125deg, rgba(26, 26, 26, 0.038), rgba(26, 26, 26, 0.012));
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .suggestion-card:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 18.6% / 0.3);
-  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(83.5% * var(--accent-saturation, 1))) 35.7% / 0.075);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(83.5% * var(--accent-saturation, 1))) 50% / 0.075);
 }
 
 :root[data-accent][data-theme="light"] .suggestion-icon {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 19.6% / 0.13);
-  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(85.6% * var(--accent-saturation, 1))) 32.7% / 0.07);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(85.9% * var(--accent-saturation, 1))) 50% / 0.13);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(85.9% * var(--accent-saturation, 1))) 50% / 0.07);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 18.6%);
 }
 
@@ -3554,7 +3561,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .copy-message:focus-visible {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.4);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
 }
 
 :root[data-accent][data-theme="light"] .copy-message:hover {
@@ -3567,13 +3574,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .composer {
-  border: 1px solid hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.9% / 0.17);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(81.2% * var(--accent-saturation, 1))) 50% / 0.17);
   background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(48.1% * var(--accent-saturation, 1))) 89.4% / 0.86);
   box-shadow: 0 10px 45px rgba(0, 0, 0, 0.054), inset 0 1px rgba(26, 26, 26, 0.035);
 }
 
 :root[data-accent][data-theme="light"] .composer:focus-within {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.38);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.38);
   box-shadow: 0 10px 45px rgba(0, 0, 0, 0.068), 0 0 0 3px hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(76.8% * var(--accent-saturation, 1))) 38.8% / 0.035);
 }
 
@@ -3594,7 +3601,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .attachment-button:hover {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3603,7 +3610,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .send-button {
-  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10% / 0.35);
+  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
   background: linear-gradient(145deg, hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%), hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4%));
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(58.6% * var(--accent-saturation, 1))) 88.6%);
 }
@@ -3613,7 +3620,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .error-notice {
-  border: 1px solid rgba(161, 10, 10, 0.22);
+  border: 1px solid rgba(240, 15, 15, 0.22);
   background: rgba(220, 150, 158, 0.2);
   color: #2a1414;
 }
@@ -3655,6 +3662,8 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .sidebar-panel-header {
   background: linear-gradient(100deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(57.7% * var(--accent-saturation, 1))) 41.8%) 5%, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34.7% * var(--accent-saturation, 1))) 19.2%) 20%, #ffffff 50%);
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 :root[data-accent][data-theme="light"] .sidebar-panel-header .brand-word > span {
@@ -3773,7 +3782,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .conversation-menu {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(220deg + var(--accent-shift, 0deg)) min(100%, calc(46.2% * var(--accent-saturation, 1))) 89.8%);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.225);
 }
@@ -3783,7 +3792,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .conversation-menu button:hover {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.08);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3805,7 +3814,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .project-actions button:hover {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.08);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3820,7 +3829,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .search-hit:hover,
 :root[data-accent][data-theme="light"] .search-hit.selected {
-  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.07);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(89% * var(--accent-saturation, 1))) 50% / 0.07);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3829,7 +3838,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-card {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.025);
 }
 
@@ -3851,7 +3860,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-tag {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.12);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -3873,7 +3882,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-segmented {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.03);
 }
 
@@ -3882,14 +3891,14 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-segmented button[aria-checked="true"] {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.15);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.15);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.18);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.18);
   background: rgba(26, 26, 26, 0.06);
 }
 
@@ -3903,7 +3912,7 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
-  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.35);
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
 }
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
@@ -3947,7 +3956,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-error {
-  border: 1px solid rgba(161, 10, 10, 0.22);
+  border: 1px solid rgba(240, 15, 15, 0.22);
   background: rgba(220, 150, 158, 0.2);
   color: #2a1414;
 }
@@ -3966,14 +3975,14 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .settings-members select,
 :root[data-accent][data-theme="light"] .settings-invite input,
 :root[data-accent][data-theme="light"] .settings-invite select {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-field input:focus,
 :root[data-accent][data-theme="light"] .settings-invite input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .settings-panel select option {
@@ -4004,7 +4013,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-icon:hover {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.08);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4014,12 +4023,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-invite button {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.14);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .attachment-chip {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: rgba(26, 26, 26, 0.035);
 }
 
@@ -4032,7 +4041,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .attachment-open > svg {
-  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.1);
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4%);
 }
 
@@ -4054,7 +4063,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .attachment-error {
-  border-color: rgba(161, 10, 10, 0.35);
+  border-color: rgba(240, 15, 15, 0.35);
 }
 
 :root[data-accent][data-theme="light"] .attachment-error .attachment-open > svg {
@@ -4063,7 +4072,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .drop-overlay {
-  border: 2px dashed hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.45);
+  border: 2px dashed hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(51.5% * var(--accent-saturation, 1))) 93.5% / 0.75);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
@@ -4074,13 +4083,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .message-edit textarea {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.4);
+  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
   background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(48.1% * var(--accent-saturation, 1))) 89.4% / 0.86);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .message-edit-actions button {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(29.9% * var(--accent-saturation, 1))) 22.9%);
 }
 
@@ -4091,7 +4100,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .stop-button {
   background: rgba(26, 26, 26, 0.08);
-  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10% / 0.25);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.25);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4100,56 +4109,56 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-field textarea {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-field textarea:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-lock {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-lock:hover:not(:disabled) {
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.3);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-lock.on {
-  border-color: rgba(186, 105, 0, 0.45);
-  background: rgba(186, 105, 0, 0.1);
+  border-color: rgba(255, 144, 0, 0.45);
+  background: rgba(255, 144, 0, 0.1);
   color: #3f311f;
 }
 
 :root[data-accent][data-theme="light"] .knowledge-drop {
-  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.18);
+  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.18);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-drop.dragging {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.6);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.06);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.06);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-upload {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.08);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-upload:hover:not(:disabled) {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.14);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-link {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-link:focus-within {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.4);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
 }
 
 :root[data-accent][data-theme="light"] .knowledge-link input {
@@ -4161,7 +4170,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .knowledge-link button {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.12);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4212,7 +4221,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .knowledge-source-actions button.armed {
-  background: rgba(186, 0, 0, 0.16);
+  background: rgba(255, 0, 0, 0.16);
   color: #331818;
 }
 
@@ -4221,7 +4230,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .knowledge-toggle {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
 }
 
@@ -4230,24 +4239,24 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .knowledge-toggle.on {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.35);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .message-source {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.025);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 29.6%);
 }
 
 :root[data-accent][data-theme="light"] .message-source:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.4);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .message-source-number {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.16);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.16);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4256,7 +4265,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-step-line {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.025);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
 }
@@ -4279,8 +4288,8 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .approval-card {
-  border: 1px solid rgba(186, 105, 0, 0.35);
-  background: rgba(186, 105, 0, 0.06);
+  border: 1px solid rgba(255, 144, 0, 0.35);
+  background: rgba(255, 144, 0, 0.06);
 }
 
 :root[data-accent][data-theme="light"] .approval-title {
@@ -4301,23 +4310,23 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .approval-actions button {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.16);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
 }
 
 :root[data-accent][data-theme="light"] .approval-deny:hover:not(:disabled) {
-  border-color: rgba(47, 23, 24, 0.45);
+  border-color: rgba(255, 0, 15, 0.45);
   color: #2f1718;
 }
 
 :root[data-accent][data-theme="light"] .approval-approve {
-  border-color: rgba(34, 155, 92, 0.45) !important;
-  background: rgba(34, 155, 92, 0.1) !important;
+  border-color: rgba(46, 209, 124, 0.45) !important;
+  background: rgba(46, 209, 124, 0.1) !important;
   color: #1b3928 !important;
 }
 
 :root[data-accent][data-theme="light"] .approval-approve:hover:not(:disabled) {
-  background: rgba(34, 155, 92, 0.18) !important;
+  background: rgba(46, 209, 124, 0.18) !important;
 }
 
 :root[data-accent][data-theme="light"] .studio-section-head span {
@@ -4333,16 +4342,16 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-capability {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .studio-capability:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.26);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.26);
 }
 
 :root[data-accent][data-theme="light"] .studio-capability.on {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.38);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.07);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.38);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.07);
 }
 
 :root[data-accent][data-theme="light"] .studio-capability-icon {
@@ -4366,36 +4375,36 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-test {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.16);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .studio-test:hover:not(:disabled) {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.4);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
 }
 
 :root[data-accent][data-theme="light"] .reasoning-toggle {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
 }
 
 :root[data-accent][data-theme="light"] .reasoning-toggle:hover {
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.25);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.25);
 }
 
 :root[data-accent][data-theme="light"] .reasoning-text {
-  border-left: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.2);
+  border-left: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.2);
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%) !important;
 }
 
 :root[data-accent][data-theme="light"] .artifact-panel {
-  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 92.2% / 0.96);
 }
 
 :root[data-accent][data-theme="light"] .artifact-header {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .artifact-header strong {
@@ -4404,13 +4413,13 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .artifact-modes button,
 :root[data-accent][data-theme="light"] .artifact-close {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
 }
 
 :root[data-accent][data-theme="light"] .artifact-modes button[aria-selected="true"] {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.45);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4428,12 +4437,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .artifact-note {
-  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
   color: #3f311f;
 }
 
 :root[data-accent][data-theme="light"] .message-file-figure {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.02);
 }
 
@@ -4451,7 +4460,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .message-file-figure figcaption button,
 :root[data-accent][data-theme="light"] .message-file {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
 }
 
@@ -4461,12 +4470,12 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .message-file:hover,
 :root[data-accent][data-theme="light"] .message-file-figure figcaption button:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.3);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-sections button {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.02);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
 }
@@ -4476,13 +4485,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-sections button[aria-selected="true"] {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.4);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.09);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.09);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-tabs button[aria-selected="true"] {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.15);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.15);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4496,22 +4505,22 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .feedback-button.on {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.12);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19%);
 }
 
 :root[data-accent][data-theme="light"] .feedback-button.on svg {
-  fill: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.25);
+  fill: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.25);
 }
 
 :root[data-accent][data-theme="light"] .feedback-comment input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .feedback-comment input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .feedback-share {
@@ -4523,7 +4532,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .feedback-comment button {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.14);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4533,7 +4542,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .chat-actions-panel {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(46.9% * var(--accent-saturation, 1))) 90.4%);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.203);
 }
@@ -4543,12 +4552,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .chat-actions-item {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(34.4% * var(--accent-saturation, 1))) 12.5%);
 }
 
 :root[data-accent][data-theme="light"] .chat-actions-item:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.35);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
   color: #1a1a1a;
 }
 
@@ -4567,7 +4576,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .shared-banner {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.22);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.22);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(46.9% * var(--accent-saturation, 1))) 90.4% / 0.96);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19%);
 }
@@ -4589,20 +4598,20 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .prompt-form {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.02);
 }
 
 :root[data-accent][data-theme="light"] .prompt-form input,
 :root[data-accent][data-theme="light"] .prompt-form textarea {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .prompt-form input:focus,
 :root[data-accent][data-theme="light"] .prompt-form textarea:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .prompt-item-main {
@@ -4629,7 +4638,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .prompt-picker,
 :root[data-accent][data-theme="light"] .prompt-variables {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(46.9% * var(--accent-saturation, 1))) 90.4%);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.203);
 }
@@ -4639,7 +4648,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .prompt-picker button.active {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .prompt-picker small {
@@ -4659,7 +4668,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .prompt-variables input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
@@ -4670,13 +4679,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .chat-temporary-toggle.active {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.14);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
   box-shadow: inset 0 0 0 1px hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.3);
 }
 
 :root[data-accent][data-theme="light"] .chat-temporary-badge {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
 }
 
@@ -4729,12 +4738,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-step-agent {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
 }
 
 :root[data-accent][data-theme="light"] .agent-step-nested {
-  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.18);
+  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.18);
 }
 
 :root[data-accent][data-theme="light"] .approval-behalf {
@@ -4746,13 +4755,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .settings-workshop-input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-workshop-input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .settings-workshop-text {
@@ -4777,23 +4786,23 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .preset-apply {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .preset-apply:hover:not(:disabled) {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.35);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
 }
 
 :root[data-accent][data-theme="light"] .preset-form input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .preset-form input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .icon-button.has-settings::after {
@@ -4801,28 +4810,28 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .sidebar-tag {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(31.5% * var(--accent-saturation, 1))) 21.2%);
 }
 
 :root[data-accent][data-theme="light"] button.sidebar-tag:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.35);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
 }
 
 :root[data-accent][data-theme="light"] .sidebar-tag[aria-pressed="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.55);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.14);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-secondary {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.16);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.1% * var(--accent-saturation, 1))) 15.1%);
 }
 
 :root[data-accent][data-theme="light"] .settings-secondary:hover:not(:disabled) {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.4);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.4);
 }
 
 :root[data-accent][data-theme="light"] .sidebar-archived-toggle {
@@ -4851,12 +4860,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .file-delete.armed {
-  background: rgba(199, 0, 0, 0.16);
+  background: rgba(255, 0, 0, 0.16);
   color: #331818;
 }
 
 :root[data-accent][data-theme="light"] .compare-menu-list {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(47.8% * var(--accent-saturation, 1))) 91%);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.203);
 }
@@ -4871,7 +4880,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .compare-column {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.02);
 }
 
@@ -4888,7 +4897,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .share-add {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
@@ -4928,27 +4937,27 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .connector-tile:hover,
 :root[data-accent][data-theme="light"] .connector-tile:focus-visible {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
 }
 
 :root[data-accent][data-theme="light"] .connector-form input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .connector-form input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .settings-icon.active {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.12);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .connector-tabs button[aria-selected="true"] {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.15);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.15);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -4957,17 +4966,17 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .connector-chip {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.12);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(35% * var(--accent-saturation, 1))) 15.7%);
 }
 
 :root[data-accent][data-theme="light"] .connector-chip-ok {
-  background: rgba(31, 189, 107, 0.14);
+  background: rgba(36, 219, 124, 0.14);
   color: #159d58;
 }
 
 :root[data-accent][data-theme="light"] .connector-chip-warn {
-  background: rgba(219, 142, 0, 0.15);
+  background: rgba(255, 165, 0, 0.15);
   color: #a86c00;
 }
 
@@ -5001,7 +5010,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .connector-steps li > span {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.16);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
 }
 
 :root[data-accent][data-theme="light"] .connector-steps li.done {
@@ -5009,7 +5018,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .connector-steps li.done > span {
-  background: rgba(31, 189, 107, 0.16);
+  background: rgba(36, 219, 124, 0.16);
 }
 
 :root[data-accent][data-theme="light"] .connector-steps li.current {
@@ -5018,11 +5027,11 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .connector-steps li.current > span {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.7);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.14);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
 }
 
 :root[data-accent][data-theme="light"] .connector-action {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.025);
 }
 
@@ -5043,7 +5052,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .connector-admin {
-  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .connector-delete {
@@ -5052,7 +5061,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .connector-delete.armed {
   border-color: rgba(186, 0, 21, 0.55);
-  background: rgba(186, 0, 21, 0.14);
+  background: rgba(255, 0, 28, 0.14);
   color: #221113;
 }
 
@@ -5065,7 +5074,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .tool-modes button {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(24.4% * var(--accent-saturation, 1))) 35.3%);
 }
 
@@ -5078,17 +5087,17 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .tool-modes button:hover:not(:disabled) {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.3);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
 }
 
 :root[data-accent][data-theme="light"] .tool-modes button[aria-checked="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.7);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7%);
 }
 
 :root[data-accent][data-theme="light"] .tool-list > li {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .tool-line label {
@@ -5096,7 +5105,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .tool-line select {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
@@ -5126,7 +5135,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .tool-included li {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5143,7 +5152,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .api-key-list li {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .api-key-list li > svg {
@@ -5163,7 +5172,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .api-key-form fieldset {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .api-key-form legend {
@@ -5171,20 +5180,20 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .api-key-form > input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .api-key-form select {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .api-key-fresh {
-  border: 1px solid rgba(31, 189, 107, 0.3);
-  background: rgba(31, 189, 107, 0.06);
+  border: 1px solid rgba(36, 219, 124, 0.3);
+  background: rgba(36, 219, 124, 0.06);
 }
 
 :root[data-accent][data-theme="light"] .api-key-fresh strong {
@@ -5209,7 +5218,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .template-quality {
-  background: rgba(31, 189, 107, 0.08);
+  background: rgba(36, 219, 124, 0.08);
   color: #159d58;
 }
 
@@ -5235,7 +5244,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .template-skills li {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .template-skills strong {
@@ -5312,7 +5321,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .list-row .conversation-delete.armed {
-  background: rgba(161, 10, 10, 0.16);
+  background: rgba(240, 15, 15, 0.16);
   color: #ac0600;
 }
 
@@ -5322,12 +5331,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .list-row-chip.ok {
-  background: rgba(45, 186, 109, 0.12);
+  background: rgba(50, 205, 120, 0.12);
   color: #238a54;
 }
 
 :root[data-accent][data-theme="light"] .list-row-chip.warn {
-  background: rgba(196, 137, 0, 0.12);
+  background: rgba(255, 178, 0, 0.12);
   color: #c48900;
 }
 
@@ -5340,12 +5349,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .projects-add-button.armed {
-  background: rgba(161, 10, 10, 0.16);
+  background: rgba(240, 15, 15, 0.16);
   color: #ac0600;
 }
 
 :root[data-accent][data-theme="light"] .knowledge-panel.dragging {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.06);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.06);
   box-shadow: inset 0 0 0 1px hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.45);
 }
 
@@ -5358,29 +5367,29 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .brand-org {
-  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.18);
+  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.18);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(21.5% * var(--accent-saturation, 1))) 41%);
 }
 
 :root[data-accent][data-theme="light"] .branding-logo > img {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
 }
 
 :root[data-accent][data-theme="light"] .settings-secondary.armed {
-  border-color: rgba(161, 10, 10, 0.35);
+  border-color: rgba(240, 15, 15, 0.35);
   color: #ac0600;
 }
 
 :root[data-accent][data-theme="light"] .branding-colors button,
 :root[data-accent][data-theme="light"] .branding-custom {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
 }
 
 :root[data-accent][data-theme="light"] .branding-colors button[aria-checked="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.7);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.1);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .branding-check {
@@ -5397,7 +5406,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .audit-list li > button:hover {
-  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 18.4% / 0.07);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(89% * var(--accent-saturation, 1))) 50% / 0.07);
 }
 
 :root[data-accent][data-theme="light"] .audit-main code {
@@ -5442,11 +5451,11 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-halo {
-  background: radial-gradient(circle, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.22), transparent 70%);
+  background: radial-gradient(circle, hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.22), transparent 70%);
 }
 
 :root[data-accent][data-theme="light"] .studio-mode {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.03);
 }
 
@@ -5455,7 +5464,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-mode button[aria-selected="true"] {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.15);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.15);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5477,11 +5486,11 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .variant[aria-checked="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.1);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .studio-name {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   color: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5494,34 +5503,34 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .provider-tile {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.025);
 }
 
 :root[data-accent][data-theme="light"] .provider-tile:hover:not(:disabled) {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.3);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
 }
 
 :root[data-accent][data-theme="light"] .provider-tile[aria-checked="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.6);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.09);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.09);
   box-shadow: 0 0 0 3px hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.07), 0 8px 22px hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(67.1% * var(--accent-saturation, 1))) 50% / 0.16);
 }
 
 :root[data-accent][data-theme="light"] .model-select-trigger {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .model-select-trigger:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.3);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
 }
 
 :root[data-accent][data-theme="light"] .model-select-trigger:focus-visible,
 :root[data-accent][data-theme="light"] .model-select-trigger[aria-expanded="true"] {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.06);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.06);
 }
 
 :root[data-accent][data-theme="light"] .model-select-chevron {
@@ -5529,13 +5538,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .model-select-popover {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(220deg + var(--accent-shift, 0deg)) min(100%, calc(46.2% * var(--accent-saturation, 1))) 89.8%);
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.225), 0 0 0 1px rgba(0, 0, 0, 0.09);
 }
 
 :root[data-accent][data-theme="light"] .model-select-search {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(23.7% * var(--accent-saturation, 1))) 40.6%);
 }
 
@@ -5552,7 +5561,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .model-select-popover li.active {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.09);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.09);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5569,13 +5578,13 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-instructions {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .studio-instructions:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .studio-instructions::placeholder {
@@ -5593,7 +5602,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .project-draft {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.35);
+  border: 1px solid hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
   background: rgba(26, 26, 26, 0.04);
 }
 
@@ -5619,7 +5628,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .composer-peek-halo {
-  background: radial-gradient(ellipse, hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32.2% / 0.24) 0%, hsl(calc(222deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 36.5% / 0.08) 45%, transparent 70%);
+  background: radial-gradient(ellipse, hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.24) 0%, hsl(calc(222deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08) 45%, transparent 70%);
 }
 
 :root[data-accent][data-theme="light"] .composer-peek-button:focus-visible {
@@ -5627,7 +5636,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .responder-popover {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(220deg + var(--accent-shift, 0deg)) min(100%, calc(46.2% * var(--accent-saturation, 1))) 89.8%);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.248), 0 0 0 1px rgba(0, 0, 0, 0.09);
 }
@@ -5641,7 +5650,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .responder-option.active {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.09);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.09);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5658,18 +5667,18 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .welcome-agent-model {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 41.4%);
 }
 
 :root[data-accent][data-theme="light"] .message-badge {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.1% * var(--accent-saturation, 1))) 17.8% / 0.17);
-  background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.8% * var(--accent-saturation, 1))) 35.9% / 0.18), rgba(26, 26, 26, 0.045));
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(84.3% * var(--accent-saturation, 1))) 50% / 0.17);
+  background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(74.1% * var(--accent-saturation, 1))) 50% / 0.18), rgba(26, 26, 26, 0.045));
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7%);
 }
 
 :root[data-accent][data-theme="light"] .agent-catalog-search {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
 }
@@ -5679,18 +5688,18 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-card {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.07);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.07);
   background: rgba(26, 26, 26, 0.025);
 }
 
 :root[data-accent][data-theme="light"] .agent-card:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.22);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.05);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.22);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.05);
 }
 
 :root[data-accent][data-theme="light"] .agent-card.active {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.45);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.08);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .agent-card-main,
@@ -5716,17 +5725,17 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-card.agent-card-new {
-  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.22);
+  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.22);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
 }
 
 :root[data-accent][data-theme="light"] .agent-card.agent-card-new:hover {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.45);
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .agent-card-plus {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.08);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19%);
 }
 
@@ -5748,12 +5757,12 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-cases li {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: rgba(26, 26, 26, 0.02);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-cases li.proposed {
-  border-color: rgba(48, 32, 68, 0.3);
+  border-color: rgba(110, 0, 255, 0.3);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-question {
@@ -5780,25 +5789,25 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-quality input {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality input:focus {
-  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.45);
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-row button,
 :root[data-accent][data-theme="light"] .studio-quality-progress button,
 :root[data-accent][data-theme="light"] .studio-quality-versions button {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.12);
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-improve {
-  border: 1px solid rgba(48, 32, 68, 0.35);
-  background: linear-gradient(135deg, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 35.1% / 0.14), rgba(48, 32, 68, 0.14));
+  border: 1px solid rgba(110, 0, 255, 0.35);
+  background: linear-gradient(135deg, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14), rgba(110, 0, 255, 0.14));
   color: hsl(calc(222deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
@@ -5816,7 +5825,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-result.rejected {
-  border: 1px solid rgba(47, 23, 24, 0.25);
+  border: 1px solid rgba(255, 0, 15, 0.25);
 }
 
 :root[data-accent][data-theme="light"] .studio-quality-proposal {
@@ -5862,7 +5871,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-schedule-form {
-  border: 1px solid rgba(48, 32, 68, 0.3);
+  border: 1px solid rgba(110, 0, 255, 0.3);
   background: rgba(26, 26, 26, 0.02);
 }
 
@@ -5873,7 +5882,7 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .agent-schedule-form input,
 :root[data-accent][data-theme="light"] .agent-schedule-form textarea,
 :root[data-accent][data-theme="light"] .agent-schedule-form select {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: rgba(26, 26, 26, 0.03);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
@@ -5889,17 +5898,17 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .agent-graph {
   background: radial-gradient(1px 1px at 12% 18%, rgba(26, 26, 26, 0.5), transparent),
     radial-gradient(1px 1px at 72% 26%, rgba(26, 26, 26, 0.35), transparent),
-    radial-gradient(1.5px 1.5px at 38% 72%, hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(34.5% * var(--accent-saturation, 1))) 10.8% / 0.45), transparent),
+    radial-gradient(1.5px 1.5px at 38% 72%, hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45), transparent),
     radial-gradient(1px 1px at 86% 78%, rgba(26, 26, 26, 0.3), transparent),
-    radial-gradient(1px 1px at 55% 48%, hsl(calc(262deg + var(--accent-shift, 0deg)) min(100%, calc(34.5% * var(--accent-saturation, 1))) 10.8% / 0.35), transparent),
+    radial-gradient(1px 1px at 55% 48%, hsl(calc(262deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35), transparent),
     radial-gradient(1px 1px at 22% 88%, rgba(26, 26, 26, 0.25), transparent),
-    radial-gradient(900px 640px at 30% 35%, hsl(calc(226deg + var(--accent-shift, 0deg)) min(100%, calc(64.9% * var(--accent-saturation, 1))) 49.2% / 0.16), transparent 70%),
-    radial-gradient(800px 600px at 75% 70%, rgba(110, 33, 188, 0.12), transparent 70%),
+    radial-gradient(900px 640px at 30% 35%, hsl(calc(226deg + var(--accent-shift, 0deg)) min(100%, calc(64.7% * var(--accent-saturation, 1))) 50% / 0.16), transparent 70%),
+    radial-gradient(800px 600px at 75% 70%, rgba(127, 38, 218, 0.12), transparent 70%),
     hsl(calc(222deg + var(--accent-shift, 0deg)) min(100%, calc(56.5% * var(--accent-saturation, 1))) 95.5%);
 }
 
 :root[data-accent][data-theme="light"] .agent-graph-bar {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.08);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.08);
 }
 
 :root[data-accent][data-theme="light"] .agent-graph-bar strong {
@@ -5911,7 +5920,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .graph-link {
-  stroke: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(59.5% * var(--accent-saturation, 1))) 33.9% / 0.18);
+  stroke: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(60% * var(--accent-saturation, 1))) 50% / 0.18);
 }
 
 :root[data-accent][data-theme="light"] .graph-link-team.live {
@@ -5924,7 +5933,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .graph-node-core {
   fill: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(50.8% * var(--accent-saturation, 1))) 88%);
-  stroke: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.45);
+  stroke: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
 }
 
 :root[data-accent][data-theme="light"] .graph-node-agent .graph-node-core {
@@ -5942,11 +5951,11 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .graph-node-ring {
-  stroke: rgba(48, 32, 68, 0);
+  stroke: rgba(110, 0, 255, 0);
 }
 
 :root[data-accent][data-theme="light"] .graph-node:hover .graph-node-ring {
-  stroke: rgba(48, 32, 68, 0.35);
+  stroke: rgba(110, 0, 255, 0.35);
 }
 
 :root[data-accent][data-theme="light"] .graph-node.selected .graph-node-core {
@@ -5971,7 +5980,7 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .agent-graph-card {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.14);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 92.2% / 0.94);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.203);
 }
@@ -6027,7 +6036,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .markdown a {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4%);
-  text-decoration-color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.35);
+  text-decoration-color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
 }
 
 :root[data-accent][data-theme="light"] .markdown li::marker {
@@ -6035,26 +6044,26 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .markdown blockquote {
-  border-left: 3px solid hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.3);
+  border-left: 3px solid hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 29.6%);
 }
 
 :root[data-accent][data-theme="light"] .markdown hr {
-  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
 }
 
 :root[data-accent][data-theme="light"] .markdown :not(pre) > code {
-  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.1);
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .md-code {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   background: hsl(calc(220deg + var(--accent-shift, 0deg)) min(100%, calc(48.8% * var(--accent-saturation, 1))) 91.6%);
 }
 
 :root[data-accent][data-theme="light"] .md-code-header {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.07);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.07);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(23.7% * var(--accent-saturation, 1))) 40.6%);
 }
 
@@ -6159,22 +6168,22 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .md-table {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .md-table th,
 :root[data-accent][data-theme="light"] .md-table td {
-  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.07);
+  border-bottom: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.07);
 }
 
 :root[data-accent][data-theme="light"] .md-table th {
-  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4% / 0.06);
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.06);
   color: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .md-artifact {
-  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.12);
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.04);
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.04);
 }
 
 :root[data-accent][data-theme="light"] .md-artifact-open {
@@ -6190,11 +6199,11 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .md-artifact-open:hover {
-  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19% / 0.07);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.07);
 }
 
 :root[data-accent][data-theme="light"] .md-artifact-code {
-  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.9% * var(--accent-saturation, 1))) 16.3% / 0.1);
+  border-left: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(23.7% * var(--accent-saturation, 1))) 40.6%);
 }
 
@@ -6265,6 +6274,94 @@ html[data-accent][data-theme="light"] {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+:root[data-accent][data-theme="light"] {
+  --bg: #f4f7fc;
+  --panel: rgba(255, 255, 255, .94);
+  --panel-soft: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(67.5% * var(--accent-saturation, 1))) 37.5% / 0.03);
+  --line: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(67.5% * var(--accent-saturation, 1))) 37.5% / 0.1);
+  --text: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8%);
+  --muted: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(21% * var(--accent-saturation, 1))) 39.2%);
+  --faint: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(17.1% * var(--accent-saturation, 1))) 56.5%);
+  --ice: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(72.6% * var(--accent-saturation, 1))) 18.6%);
+}
+
+:root[data-accent][data-theme="light"] .snowfall-app {
+  background: radial-gradient(ellipse at 62% 40%, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(84.5% * var(--accent-saturation, 1))) 62.2% / 0.1), transparent 48%),
+    radial-gradient(ellipse at 20% 100%, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(84.5% * var(--accent-saturation, 1))) 62.2% / 0.07), transparent 40%),
+    var(--bg);
+}
+
+:root[data-accent][data-theme="light"] .sidebar {
+  --sidebar-panel-bg: #f8fafe;
+  --sidebar-hover: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(71.4% * var(--accent-saturation, 1))) 95.9%);
+  --sidebar-active: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(81.8% * var(--accent-saturation, 1))) 93.5%);
+  --sidebar-border: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(46.3% * var(--accent-saturation, 1))) 92%);
+}
+
+:root[data-accent][data-theme="light"] .new-chat-button {
+  border-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(74.5% * var(--accent-saturation, 1))) 89.2%);
+  background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(91.7% * var(--accent-saturation, 1))) 95.3%);
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(80% * var(--accent-saturation, 1))) 25.5%);
+}
+
+:root[data-accent][data-theme="light"] .new-chat-button:hover:not(:disabled) {
+  border-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(76.2% * var(--accent-saturation, 1))) 83.5%);
+  background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(89.5% * var(--accent-saturation, 1))) 92.5%);
+}
+
+:root[data-accent][data-theme="light"] .search-box {
+  border-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(46.3% * var(--accent-saturation, 1))) 92%);
+  background: #ffffff;
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .search-box:focus-within {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(74.2% * var(--accent-saturation, 1))) 74.1%);
+}
+
+:root[data-accent][data-theme="light"] .conversation-item:hover,
+:root[data-accent][data-theme="light"] .conversation-project-item:hover {
+  background: var(--sidebar-hover);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8%);
+}
+
+:root[data-accent][data-theme="light"] .conversation-item.selected,
+:root[data-accent][data-theme="light"] .conversation-project-item.selected {
+  background: var(--sidebar-active);
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(76.3% * var(--accent-saturation, 1))) 18.2%);
+}
+
+:root[data-accent][data-theme="light"] .composer {
+  border-color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(51.7% * var(--accent-saturation, 1))) 88.6%);
+  background: rgba(255, 255, 255, .95);
+  box-shadow: 0 8px 30px hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(67.5% * var(--accent-saturation, 1))) 37.5% / 0.08);
+}
+
+:root[data-accent][data-theme="light"] .composer:focus-within {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(74.2% * var(--accent-saturation, 1))) 74.1%);
+  box-shadow: 0 8px 30px hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(67.5% * var(--accent-saturation, 1))) 37.5% / 0.1), 0 0 0 3px hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(85.6% * var(--accent-saturation, 1))) 59% / 0.12);
+}
+
+:root[data-accent][data-theme="light"] .message-avatar.message-avatar-agent {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-accent][data-theme="light"] .sidebar-rail {
+  background: #ffffff;
+  border-right-color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(51.7% * var(--accent-saturation, 1))) 94.3%);
+}
+
+:root[data-accent][data-theme="light"] .settings-save {
+  background: linear-gradient(145deg, hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(85.6% * var(--accent-saturation, 1))) 59%), hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(66.4% * var(--accent-saturation, 1))) 49%));
+  color: #ffffff;
+}
+
+:root[data-accent][data-theme="light"] .settings-save:hover:not(:disabled) {
+  background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(87.6% * var(--accent-saturation, 1))) 62.2%), hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(70.5% * var(--accent-saturation, 1))) 52.2%));
 }
 
 @media (max-width: 620px) {

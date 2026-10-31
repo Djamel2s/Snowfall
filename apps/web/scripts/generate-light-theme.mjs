@@ -20,6 +20,12 @@ export function lighten(color, property) {
   const hsl = toHsl(rgba)
   // Ombres : restent sombres, un peu plus légères sur fond clair.
   if (SHADOWS.has(property) && hsl.l < 0.35) return format({ ...rgba, a: rgba.a * 0.45 })
+  // Voile clair coloré et transparent (sélection, survol, carte teintée) : sur fond clair, il
+  // reste un voile de la même teinte, pas un gris sombre. L'inverser comme un texte
+  // clair donnait des états « sélectionné » gris au lieu de bleu ciel.
+  if (rgba.a < 0.5 && hsl.s > 0.25 && hsl.l > 0.5 && !SHADOWS.has(property)) {
+    return format({ ...fromHsl({ h: hsl.h, s: Math.max(hsl.s, 0.6), l: 0.5 }), a: rgba.a })
+  }
   let l = 1 - hsl.l
   let s = hsl.s
   if (hsl.l > 0.8) {
@@ -63,6 +69,15 @@ for (const file of SOURCES) {
       })
     COLOR.lastIndex = 0
     if (!declarations.length) continue
+    // Raccourci « background » converti : il remet background-clip à zéro. Un texte en
+    // dégradé (titre d'accueil, logo) deviendrait un rectangle : on réapplique le découpage.
+    if (declarations.some((line) => /^\s*background:/.test(line))) {
+      const clips = rule.body
+        .split(';')
+        .map((line) => line.trim())
+        .filter((line) => /^(-webkit-)?background-clip\s*:|^-webkit-text-fill-color\s*:/.test(line))
+      declarations.push(...clips.map((line) => `  ${line};`))
+    }
     const key = rule.wrapper ?? ''
     blocks.set(key, [...(blocks.get(key) ?? []), `${prefix(rule.selector)} {\n${declarations.join('\n')}\n}`])
   }
