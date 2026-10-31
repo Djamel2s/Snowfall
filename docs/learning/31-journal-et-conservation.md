@@ -65,3 +65,34 @@ l'administrateur. On ne l'a pas fait. Par conception, l'administrateur ne lit
 pas les conversations des autres. Chacun exerce ses droits lui-même, depuis
 « Mon compte » (export, suppression), et la rubrique Sécurité le rappelle en une
 ligne. La confidentialité tient mieux quand personne n'a la clé de tout.
+
+## 6. Deux corrections, et la leçon qu'elles donnent (31 octobre)
+
+**La tâche planifiée effacée par la conservation.** La purge choisissait les
+conversations « sans activité depuis 90 jours ». Une tâche en pause, ou un
+déclencheur qui attend un nouveau document, n'écrit rien dans sa
+conversation. Celle-ci finissait donc par échoir. Et comme la tâche pointe vers
+sa conversation avec une clé étrangère `ON DELETE CASCADE`, **effacer la
+conversation effaçait aussi la tâche**, sans que personne l'ait demandé.
+
+La purge ne peut pas lire `agent_schedules` : la RLS y est imposée, même au
+propriétaire de la table. On a donc réutilisé la file sans contenu des tâches
+(`agent_schedule_queue`) : elle porte maintenant l'identifiant de la
+conversation, et la purge épargne toute conversation qui y figure. Le test
+crée une tâche en pause, la vieillit de 400 jours, vérifie qu'elle survit, puis
+qu'elle échoit une fois la tâche supprimée.
+
+**Le Pilotage qui comptait les robots.** Un message envoyé par une tâche
+planifiée ou par l'API publique faisait apparaître son auteur comme « actif »,
+alors qu'il n'était pas là. Ces messages passent par un jeton interne à usage
+unique, que **le serveur** fabrique. C'est sur ce jeton qu'on note l'origine
+(`schedule` ou `api`), jamais sur un champ que le client pourrait envoyer. Le
+drapeau suit le run jusqu'à l'enregistrement, qui pose le même marqueur de
+transaction que la copie et l'import. Ce drapeau ne peut que *retirer* du
+comptage : le détourner ne gonflerait aucun chiffre.
+
+**La leçon.** Une clé étrangère en cascade est une *action*, pas seulement une
+contrainte. Avant d'effacer automatiquement, demande-toi ce qui part avec. Et
+quand une donnée doit être exacte (un tableau de bord), demande-toi qui peut
+fabriquer ce qui la nourrit. Les deux tests ont été vérifiés par mutation : en
+retirant chaque correction, chacun échoue.

@@ -148,16 +148,33 @@ def run_tool(args, seconds, uid, workdir):
     return out
 
 
+def wipe(workdir, uid):
+    """Efface le dossier de travail. Les outils y créent des fichiers et dossiers
+    à eux (cache de polices…) que le service, sans privilège, ne peut pas vider :
+    l'utilisateur de l'emplacement fait le ménage, puis le dossier vide est retiré."""
+    try:
+        run_tool(["/usr/bin/find", workdir, "-mindepth", "1", "-delete"], 10, uid, workdir)
+    except Exception:  # noqa: BLE001 - on retire au moins ce qui peut l'être
+        pass
+    shutil.rmtree(workdir, ignore_errors=True)
+
+
 def recognize(data, media_type, uid):
     workdir = os.path.join(WORK_ROOT, uuid.uuid4().hex)
     os.makedirs(workdir, mode=0o700)
-    os.chown(workdir, uid, uid)
+    # Droits posés tant que le service est propriétaire (sans CAP_FOWNER, plus après).
+    os.chmod(workdir, 0o770)
     started = time.monotonic()
     try:
+        # Le service n'a aucun privilège (ni CAP_DAC_OVERRIDE) : il écrit le
+        # fichier AVANT de céder le dossier, puis garde l'accès par le groupe 0
+        # (lister les pages rendues, tout effacer à la fin). L'utilisateur de
+        # l'emplacement ne voit que ce dossier.
         source = os.path.join(workdir, "source" + MEDIA_TYPES[media_type])
         with open(source, "wb") as handle:
             handle.write(data)
         os.chown(source, uid, uid)
+        os.chown(workdir, uid, 0)
 
         if media_type == "application/pdf":
             # Pages rendues en niveaux de gris, côté le plus long borné.
@@ -184,7 +201,7 @@ def recognize(data, media_type, uid):
         return {"text": text, "pages": len(texts)}
     finally:
         kill_user(uid)
-        shutil.rmtree(workdir, ignore_errors=True)
+        wipe(workdir, uid)
 
 
 class Handler(BaseHTTPRequestHandler):

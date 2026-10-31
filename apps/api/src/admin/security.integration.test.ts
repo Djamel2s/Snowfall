@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 import { Pool } from "pg";
+import { PostgresAgentStore } from "../agents/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { LocalKeyEncryptionProvider } from "../crypto/envelope.js";
 import { OrganizationKeyring } from "../crypto/keyring.js";
 import { withTenant } from "../db/tenant.js";
 import { AdminForbiddenError } from "./overview.js";
+import { PostgresScheduleStore } from "../schedules/store.js";
 import { PostgresSecurityStore } from "./security.js";
 
 const appUrl = process.env.TEST_DATABASE_URL;
@@ -17,6 +19,8 @@ describe("Sécurité : PostgreSQL (conservation, file d'activité, journal des a
   let owner: Pool;
   let store: PostgresSecurityStore;
   let conversations: PostgresConversationStore;
+  let agents: PostgresAgentStore;
+  let schedules: PostgresScheduleStore;
   const [org, other] = [randomUUID(), randomUUID()];
   const [admin, member, outsider] = [randomUUID(), randomUUID(), randomUUID()];
   const as = (userId: string, organizationId = org) => ({ userId, organizationId });
@@ -25,7 +29,10 @@ describe("Sécurité : PostgreSQL (conservation, file d'activité, journal des a
     pool = new Pool({ connectionString: appUrl });
     owner = new Pool({ connectionString: ownerUrl });
     store = new PostgresSecurityStore(pool);
-    conversations = new PostgresConversationStore(pool, new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32))));
+    const keyring = new OrganizationKeyring(new LocalKeyEncryptionProvider(randomBytes(32)));
+    conversations = new PostgresConversationStore(pool, keyring);
+    agents = new PostgresAgentStore(pool, keyring);
+    schedules = new PostgresScheduleStore(pool, keyring);
     await owner.query("INSERT INTO organizations (id, name) VALUES ($1, 'A'), ($2, 'B')", [org, other]);
     await owner.query("INSERT INTO users (id, email) SELECT id, id || '@t.local' FROM unnest($1::uuid[]) AS id", [[admin, member, outsider]]);
     await owner.query("INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $3, 'admin'), ($1, $4, 'member'), ($2, $5, 'admin')", [org, other, admin, member, outsider]);
@@ -67,6 +74,29 @@ describe("Sécurité : PostgreSQL (conservation, file d'activité, journal des a
     assert.deepEqual(columns.rows.map((row) => row.column_name), ["conversation_id", "last_activity", "organization_id", "user_id"]);
     await assert.rejects(pool.query("SELECT * FROM conversation_activity"), /permission denied/);
     await assert.rejects(store.setRetention(as(admin), 5), /organization_retention_days_check/);
+  });
+
+  it("conservation : la conversation d'une tâche planifiée (même en pause) n'échoit pas tant que la tâche existe", async () => {
+    const avatar = { kind: "alien" as const, color: "mint" as const, eyes: "sleepy" as const, accessory: "none" as const };
+    const agent = await agents.create(as(member), { name: "Veille", avatar, instructions: "", provider: "mistral", model: "mistral-small-latest" });
+    const conversation = await conversations.create(as(member), "Veille", agent.id);
+    const task = (await schedules.create(as(member), {
+      agentId: agent.id,
+      conversationId: conversation.id,
+      name: "Veille",
+      prompt: "Surveille.",
+      kind: "knowledge",
+      rule: null,
+      timezone: "Europe/Paris",
+      nextRunAt: null,
+    }))!;
+    await schedules.setEnabled(as(member), task.id, false, null);
+    await age(member, [conversation.id], 400);
+    const mine = async () => (await store.expired()).map((item) => item.conversationId);
+    assert.ok(!(await mine()).includes(conversation.id));
+    // Tâche supprimée : la conversation suit de nouveau la règle commune.
+    assert.equal(await schedules.delete(as(member), task.id), true);
+    assert.ok((await mine()).includes(conversation.id));
   });
 
   it("journal : administrateurs de l'organisation seulement ; lecture directe impossible pour l'application", async () => {

@@ -9,7 +9,7 @@ import { PostgresPromptStore } from "../prompts/store.js";
 import { PostgresSkillStore } from "../skills/store.js";
 import { LocalKeyEncryptionProvider } from "./envelope.js";
 import { organizationKeyContext, OrganizationKeyring } from "./keyring.js";
-import { reencryptTable, staleValues, tablesFor } from "./rotation.js";
+import { ENCRYPTED_TABLES, reencryptTable, staleValues, tablesFor } from "./rotation.js";
 
 const appUrl = process.env.TEST_DATABASE_URL;
 const ownerUrl = process.env.TEST_DATABASE_MIGRATION_URL;
@@ -39,6 +39,21 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     await owner.query("DELETE FROM users WHERE id = ANY($1)", [[alice, gone]]);
     await pool.end();
     await owner.end();
+  });
+
+  it("couverture : chaque colonne que la base impose chiffrée est rechiffrée par la rotation (et rien d'autre)", async () => {
+    // Une nouvelle colonne chiffrée oubliée ici resterait sous l'ancienne clé, illisible
+    // une fois celle-ci retirée : on part des contraintes de la base, pas d'une liste à tenir.
+    const constraints = await owner.query<{ table: string; definition: string }>(
+      `SELECT conrelid::regclass::text AS "table", pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint WHERE contype = 'c' AND pg_get_constraintdef(oid) LIKE '%:v1%'`,
+    );
+    const enforced = new Set<string>();
+    for (const row of constraints.rows) for (const match of row.definition.matchAll(/(\w+) ~ '\^\[0-9\]\+:v1/g)) enforced.add(`${row.table}.${match[1]}`);
+    const rotated = new Set(ENCRYPTED_TABLES.flatMap((target) => target.fields.map((field) => `${target.table}.${field.column}`)));
+    assert.ok(enforced.has("messages.activity"));
+    assert.deepEqual([...enforced].filter((column) => !rotated.has(column)).sort(), []);
+    assert.deepEqual([...rotated].filter((column) => !enforced.has(column)).sort(), []);
   });
 
   /** Comme le script : propriétaire des tables, sous la RLS du contexte posé. */

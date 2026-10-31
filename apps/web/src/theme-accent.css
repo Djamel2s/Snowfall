@@ -1,4 +1,4 @@
-/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1390 déclarations) : ne pas modifier à la main.
+/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1553 déclarations) : ne pas modifier à la main.
    Active seulement sous :root[data-accent] (couleur choisie par l'organisation). */
 
 :root[data-accent][data-theme="dark"] {
@@ -1301,7 +1301,8 @@ html[data-accent][data-theme="dark"] {
 }
 
 :root[data-accent][data-theme="dark"] .message-file-figure figcaption {
-  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%);
+  background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(51.5% * var(--accent-saturation, 1))) 6.5% / 0.62);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
 }
 
 :root[data-accent][data-theme="dark"] .message-file-figure figcaption button,
@@ -1309,6 +1310,11 @@ html[data-accent][data-theme="dark"] {
   border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
   background: transparent;
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 78.6%);
+}
+
+:root[data-accent][data-theme="dark"] .message-file-figure figcaption button {
+  border-color: transparent;
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
 }
 
 :root[data-accent][data-theme="dark"] .message-file small {
@@ -2346,6 +2352,314 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .audit-details dd {
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(25.5% * var(--accent-saturation, 1))) 73.1%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-head {
+  border: 0;
+  background: transparent;
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-head:hover {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(56.5% * var(--accent-saturation, 1))) 91%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-head:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
+}
+
+:root[data-accent][data-theme="dark"] .activity-label {
+  color: inherit;
+}
+
+:root[data-accent][data-theme="dark"] .activity-summary {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-warn {
+  color: #ffd59a;
+}
+
+:root[data-accent][data-theme="dark"] .activity-now {
+  background-image: linear-gradient(90deg, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%) 0%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%) 35%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 96.7%) 50%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%) 65%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%) 100%);
+  color: transparent;
+}
+
+:root[data-accent][data-theme="dark"] .activity-pulse {
+  background: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8%);
+  box-shadow: 0 0 0 0 hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8% / 0.55);
+}
+
+:root[data-accent][data-theme="dark"] .activity-hosts .site-icon,
+:root[data-accent][data-theme="dark"] .sources-stack .site-icon {
+  box-shadow: 0 0 0 1.5px hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(48% * var(--accent-saturation, 1))) 9.8%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-duration {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-step::before {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
+}
+
+:root[data-accent][data-theme="dark"] .activity-dot {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.18);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.07);
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(78.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-step.error > .activity-dot {
+  border-color: rgba(255, 185, 189, .35);
+  color: #ffb9bd;
+}
+
+:root[data-accent][data-theme="dark"] .activity-step.running > .activity-dot {
+  border-color: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8% / 0.45);
+}
+
+:root[data-accent][data-theme="dark"] .activity-text {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(38.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-step.denied .activity-text {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+  text-decoration-color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7% / 0.5);
+}
+
+:root[data-accent][data-theme="dark"] .activity-time {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-detail {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-agent {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.1);
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(78.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-done {
+  color: #8ee6b8;
+}
+
+:root[data-accent][data-theme="dark"] .activity-source {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.1);
+  background: rgba(255, 255, 255, .02);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-source.cited {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.32);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.08);
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 92.9%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-source-n {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.2);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .activity-badge.warn {
+  background: rgba(255, 196, 92, .1);
+  color: #ffd59a;
+}
+
+:root[data-accent][data-theme="dark"] .activity-badge.ok {
+  background: rgba(142, 230, 184, .09);
+  color: #8ee6b8;
+}
+
+:root[data-accent][data-theme="dark"] .activity-badge.bad {
+  background: rgba(255, 140, 150, .1);
+  color: #ffb9bd;
+}
+
+:root[data-accent][data-theme="dark"] .activity-badge.muted {
+  background: rgba(255, 255, 255, .04);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%);
+}
+
+:root[data-accent][data-theme="dark"] .site-icon {
+  background: #ffffff;
+}
+
+:root[data-accent][data-theme="dark"] .site-icon-letter {
+  background: hsl(var(--site-hue, 210) 52% 44%);
+  color: #ffffff;
+}
+
+:root[data-accent][data-theme="dark"] .site-icon-doc {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.16);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 90.6%);
+}
+
+:root[data-accent][data-theme="dark"] .cite-chip {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.14);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.08);
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(78.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .cite-chip:hover,
+:root[data-accent][data-theme="dark"] .cite.open .cite-chip {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.36);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.17);
+  color: #ffffff;
+}
+
+:root[data-accent][data-theme="dark"] .cite-chip:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.55);
+}
+
+:root[data-accent][data-theme="dark"] .cite-chip-more {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%);
+}
+
+:root[data-accent][data-theme="dark"] .cite-pending {
+  background: rgba(255, 255, 255, .05);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .cite-card {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.16);
+  background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(47.5% * var(--accent-saturation, 1))) 12%);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .45);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(38.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .cite-card > .source-card + .source-card {
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.1);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-number {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.18);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-title strong {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-title small {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-excerpt {
+  border-left: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.25);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 70.4%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-origin {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-action {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.22);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.1);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 90.6%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-action:hover:not(:disabled) {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.2);
+  color: #ffffff;
+}
+
+:root[data-accent][data-theme="dark"] .sources-toggle,
+:root[data-accent][data-theme="dark"] .sources-also-toggle {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
+  background: rgba(255, 255, 255, .025);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 70.4%);
+}
+
+:root[data-accent][data-theme="dark"] .sources-toggle:hover,
+:root[data-accent][data-theme="dark"] .sources-also-toggle:hover {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.28);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .sources-toggle:focus-visible,
+:root[data-accent][data-theme="dark"] .sources-also-toggle:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
+}
+
+:root[data-accent][data-theme="dark"] .sources-list > .source-card {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.1);
+  background: rgba(255, 255, 255, .02);
+}
+
+:root[data-accent][data-theme="dark"] .sources-also-toggle {
+  border-color: transparent;
+  background: transparent;
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .sources-also > .source-card {
+  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
+}
+
+:root[data-accent][data-theme="dark"] .reduce-motion .activity-now {
+  background-image: none;
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(38.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="dark"] .document-note {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .document-passage {
+  border-left: 3px solid transparent;
+}
+
+:root[data-accent][data-theme="dark"] .document-passage h4 {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .document-passage p {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.7% * var(--accent-saturation, 1))) 77.5%);
+}
+
+:root[data-accent][data-theme="dark"] .document-passage.cited {
+  border-left-color: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8%);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.07);
+}
+
+:root[data-accent][data-theme="dark"] .document-passage mark {
+  background: rgba(255, 214, 102, .26);
+  color: #fff3d1;
+}
+
+:root[data-accent][data-theme="dark"] .document-page {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .document-badge {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81% / 0.14);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 90.6%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-flag {
+  border: 0;
+  background: transparent;
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-flag:hover {
+  color: #ffd59a;
+}
+
+:root[data-accent][data-theme="dark"] .source-card-issue {
+  border: 1px solid rgba(255, 196, 92, .3);
+  background: rgba(255, 196, 92, .08);
+  color: #ffd59a;
+}
+
+:root[data-accent][data-theme="dark"] .source-card-issue:hover {
+  background: rgba(255, 196, 92, .16);
+}
+
+:root[data-accent][data-theme="dark"] .source-card-reported {
+  color: #8ee6b8;
 }
 
 :root[data-accent][data-theme="dark"] .provider-logo-openai,
@@ -4455,13 +4769,18 @@ html[data-accent][data-theme="light"] {
 }
 
 :root[data-accent][data-theme="light"] .message-file-figure figcaption {
-  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
+  background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(51.5% * var(--accent-saturation, 1))) 93.5% / 0.62);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .message-file-figure figcaption button,
 :root[data-accent][data-theme="light"] .message-file {
   border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
+}
+
+:root[data-accent][data-theme="light"] .message-file-figure figcaption button {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .message-file small {
@@ -5433,6 +5752,297 @@ html[data-accent][data-theme="light"] {
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(25.5% * var(--accent-saturation, 1))) 26.9%);
 }
 
+:root[data-accent][data-theme="light"] .activity-head {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .activity-head:hover {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .activity-head:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
+}
+
+:root[data-accent][data-theme="light"] .activity-summary {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .activity-warn {
+  color: #443521;
+}
+
+:root[data-accent][data-theme="light"] .activity-now {
+  background-image: linear-gradient(90deg, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%) 0%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%) 35%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%) 50%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%) 65%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%) 100%);
+}
+
+:root[data-accent][data-theme="light"] .activity-pulse {
+  background: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32.2%);
+  box-shadow: 0 0 0 0 hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32.2% / 0.55);
+}
+
+:root[data-accent][data-theme="light"] .activity-hosts .site-icon,
+:root[data-accent][data-theme="light"] .sources-stack .site-icon {
+  box-shadow: 0 0 0 1.5px hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(48% * var(--accent-saturation, 1))) 9.8% / 0.45);
+}
+
+:root[data-accent][data-theme="light"] .activity-duration {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .activity-step::before {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+}
+
+:root[data-accent][data-theme="light"] .activity-dot {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.18);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.07);
+  color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .activity-step.error > .activity-dot {
+  border-color: rgba(255, 0, 15, 0.35);
+  color: #2f1718;
+}
+
+:root[data-accent][data-theme="light"] .activity-step.running > .activity-dot {
+  border-color: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+}
+
+:root[data-accent][data-theme="light"] .activity-text {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .activity-step.denied .activity-text {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+  text-decoration-color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3% / 0.5);
+}
+
+:root[data-accent][data-theme="light"] .activity-time {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .activity-detail {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .activity-agent {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
+  color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .activity-done {
+  color: #229b5c;
+}
+
+:root[data-accent][data-theme="light"] .activity-source {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
+  background: rgba(26, 26, 26, 0.02);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
+}
+
+:root[data-accent][data-theme="light"] .activity-source.cited {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.32);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .activity-source-n {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.2);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .activity-badge.warn {
+  background: rgba(255, 163, 0, 0.1);
+  color: #443521;
+}
+
+:root[data-accent][data-theme="light"] .activity-badge.ok {
+  background: rgba(46, 209, 124, 0.09);
+  color: #229b5c;
+}
+
+:root[data-accent][data-theme="light"] .activity-badge.bad {
+  background: rgba(255, 0, 22, 0.1);
+  color: #2f1718;
+}
+
+:root[data-accent][data-theme="light"] .activity-badge.muted {
+  background: rgba(26, 26, 26, 0.04);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
+}
+
+:root[data-accent][data-theme="light"] .site-icon {
+  background: #1a1a1a;
+}
+
+:root[data-accent][data-theme="light"] .site-icon-letter {
+  color: #1a1a1a;
+}
+
+:root[data-accent][data-theme="light"] .site-icon-doc {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.16);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .cite-chip {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.08);
+  color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .cite-chip:hover,
+:root[data-accent][data-theme="light"] .cite.open .cite-chip {
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.36);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.17);
+  color: #1a1a1a;
+}
+
+:root[data-accent][data-theme="light"] .cite-chip:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.55);
+}
+
+:root[data-accent][data-theme="light"] .cite-chip-more {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
+}
+
+:root[data-accent][data-theme="light"] .cite-pending {
+  background: rgba(26, 26, 26, 0.05);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .cite-card {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
+  background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(47.5% * var(--accent-saturation, 1))) 88%);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.203);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .cite-card > .source-card + .source-card {
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
+}
+
+:root[data-accent][data-theme="light"] .source-card-number {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.18);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-title strong {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-title small {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-excerpt {
+  border-left: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.25);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 29.6%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-origin {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-action {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.22);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-action:hover:not(:disabled) {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.2);
+  color: #1a1a1a;
+}
+
+:root[data-accent][data-theme="light"] .sources-toggle,
+:root[data-accent][data-theme="light"] .sources-also-toggle {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+  background: rgba(26, 26, 26, 0.025);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 29.6%);
+}
+
+:root[data-accent][data-theme="light"] .sources-toggle:hover,
+:root[data-accent][data-theme="light"] .sources-also-toggle:hover {
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.28);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .sources-toggle:focus-visible,
+:root[data-accent][data-theme="light"] .sources-also-toggle:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
+}
+
+:root[data-accent][data-theme="light"] .sources-list > .source-card {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
+  background: rgba(26, 26, 26, 0.02);
+}
+
+:root[data-accent][data-theme="light"] .sources-also-toggle {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .sources-also > .source-card {
+  border: 1px dashed hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+}
+
+:root[data-accent][data-theme="light"] .reduce-motion .activity-now {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
+}
+
+:root[data-accent][data-theme="light"] .document-note {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .document-passage h4 {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .document-passage p {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.7% * var(--accent-saturation, 1))) 22.5%);
+}
+
+:root[data-accent][data-theme="light"] .document-passage.cited {
+  border-left-color: hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 32.2%);
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.07);
+}
+
+:root[data-accent][data-theme="light"] .document-passage mark {
+  background: rgba(255, 187, 0, 0.26);
+  color: #221e11;
+}
+
+:root[data-accent][data-theme="light"] .document-page {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .document-badge {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.14);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-flag {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
+}
+
+:root[data-accent][data-theme="light"] .source-card-flag:hover {
+  color: #443521;
+}
+
+:root[data-accent][data-theme="light"] .source-card-issue {
+  border: 1px solid rgba(255, 163, 0, 0.3);
+  background: rgba(255, 163, 0, 0.08);
+  color: #443521;
+}
+
+:root[data-accent][data-theme="light"] .source-card-issue:hover {
+  background: rgba(255, 163, 0, 0.16);
+}
+
+:root[data-accent][data-theme="light"] .source-card-reported {
+  color: #229b5c;
+}
+
 :root[data-accent][data-theme="light"] .studio-icon {
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 41.4%);
 }
@@ -6364,6 +6974,85 @@ html[data-accent][data-theme="light"] {
   background: linear-gradient(145deg, hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(87.6% * var(--accent-saturation, 1))) 62.2%), hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(70.5% * var(--accent-saturation, 1))) 52.2%));
 }
 
+:root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
+:root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
+:root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
+  border-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(40.8% * var(--accent-saturation, 1))) 86.1%);
+  background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(43.6% * var(--accent-saturation, 1))) 92.4%);
+}
+
+:root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]::after,
+:root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]::after,
+:root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]::after {
+  background: #ffffff;
+  box-shadow: 0 1px 2px hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8% / 0.25);
+}
+
+:root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked,
+:root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
+:root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
+  border-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(66.4% * var(--accent-saturation, 1))) 49%);
+  background: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(85.6% * var(--accent-saturation, 1))) 59%);
+}
+
+:root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
+:root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+:root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
+  background: #ffffff;
+}
+
+:root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
+  outline-color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(66.4% * var(--accent-saturation, 1))) 49%);
+}
+
+:root[data-accent][data-theme="light"] .site-icon {
+  background: #ffffff;
+  box-shadow: 0 0 0 1px hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8% / 0.12);
+}
+
+:root[data-accent][data-theme="light"] .site-icon-letter {
+  background: hsl(var(--site-hue, 210) 55% 46%);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+:root[data-accent][data-theme="light"] .site-icon-doc {
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(81.8% * var(--accent-saturation, 1))) 93.5%);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(66.4% * var(--accent-saturation, 1))) 49%);
+  box-shadow: none;
+}
+
+:root[data-accent][data-theme="light"] .activity-hosts .site-icon,
+:root[data-accent][data-theme="light"] .sources-stack .site-icon {
+  box-shadow: 0 0 0 1.5px #ffffff;
+}
+
+:root[data-accent][data-theme="light"] .cite-card {
+  background: #ffffff;
+  border-color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(51.7% * var(--accent-saturation, 1))) 88.6%);
+  box-shadow: 0 14px 34px hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8% / 0.16);
+}
+
+:root[data-accent][data-theme="light"] .activity-now {
+  background-image: linear-gradient(90deg, hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%) 0%, hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%) 35%, hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(66.4% * var(--accent-saturation, 1))) 49%) 50%, hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%) 65%, hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%) 100%);
+}
+
+:root[data-accent][data-theme="light"] .document-passage mark {
+  background: #ffe9a8;
+  color: #3a2a00;
+}
+
+:root[data-accent][data-theme="light"] .message-file-figure figcaption {
+  background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 11.8% / 0.6);
+  color: #ffffff;
+}
+
+:root[data-accent][data-theme="light"] .message-file-figure figcaption button {
+  color: #ffffff;
+}
+
 @media (max-width: 620px) {
 :root[data-accent][data-theme="dark"] .sidebar {
   box-shadow: 20px 0 60px rgba(0,0,0,.3);
@@ -6398,5 +7087,16 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .artifact-panel {
   background: hsl(calc(219deg + var(--accent-shift, 0deg)) min(100%, calc(50% * var(--accent-saturation, 1))) 92.2%);
+}
+}
+
+@media (prefers-reduced-motion: reduce) {
+:root[data-accent][data-theme="dark"] .activity-now {
+  background-image: none;
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(38.7% * var(--accent-saturation, 1))) 85.3%);
+}
+
+:root[data-accent][data-theme="light"] .activity-now {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
 }
 }

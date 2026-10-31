@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { getSession, logout as endSession } from './auth/session'
 import {
   api,
@@ -8,6 +8,7 @@ import {
   isPaused,
   type KnowledgeOwnerKind,
   type Message,
+  type MessageSource,
   type McpServer,
   type Prompt,
   type MessageFeedback as Feedback,
@@ -36,8 +37,12 @@ import LanguageSwitcher from './components/LanguageSwitcher'
 import { AgentAvatar, MessageAgentAvatar, ProviderLogo } from './components/AgentAvatar'
 import AttachmentChip from './components/AttachmentChip'
 import Markdown from './components/Markdown'
-import MessageSources from './components/MessageSources'
-import AgentSteps from './components/AgentSteps'
+import Activity from './components/Activity'
+import { SourcesBar } from './components/Citations'
+import { Citations, citationScope, type CitationIssue } from './lib/citations'
+import { DocumentViewer } from './lib/document-view'
+import { sourceLabel } from './lib/activity'
+import DocumentPanel from './components/DocumentPanel'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import BranchSwitcher from './components/BranchSwitcher'
@@ -199,7 +204,18 @@ function App() {
   )
   const [creating, setCreating] = useState(false)
   const [input, setInput] = useState('')
-  const { artifact, openArtifact, closeArtifact } = useArtifactPanel()
+  const { artifact, openArtifact: showArtifact, closeArtifact } = useArtifactPanel()
+  // Document cité ouvert à côté de la conversation : un seul panneau à la fois.
+  const [openedDocument, setOpenedDocument] = useState<{ source: MessageSource; opening: number } | null>(null)
+  const openArtifact = useCallback((next: Parameters<typeof showArtifact>[0]) => {
+    setOpenedDocument(null)
+    showArtifact(next)
+  }, [showArtifact])
+  const openDocument = useCallback((source: MessageSource) => {
+    closeArtifact()
+    setOpenedDocument((current) => ({ source, opening: (current?.opening ?? 0) + 1 }))
+  }, [closeArtifact])
+  const closeDocument = useCallback(() => setOpenedDocument(null), [])
   // Lien de partage ouvert (#partage=…) : vue en lecture seule à la place de la conversation.
   const [sharedToken, setSharedToken] = useState(readShareToken)
   useEffect(() => {
@@ -1002,6 +1018,14 @@ function App() {
     }
   }
 
+  /** Citation douteuse signalée : un 👎 sur la réponse, avec la citation et la raison. */
+  async function reportCitation(messageId: string, source: MessageSource, issue: CitationIssue) {
+    const previous = activeConversation?.messages.find((item) => item.id === messageId)?.feedback
+    const note = t('cite.reportComment', { n: source.n, source: sourceLabel(source, 40), issue: t(`cite.issue.${issue}`) })
+    const comment = [previous?.rating === 'down' ? previous.comment : undefined, note].filter(Boolean).join(' ').slice(0, 1000)
+    await rateMessage(messageId, { rating: 'down', comment })
+  }
+
   /** Autre version d'un message : la conversation affiche sa branche. */
   async function selectBranch(messageId: string) {
     const conversation = activeConversation
@@ -1095,8 +1119,9 @@ function App() {
 
   return (
     <ArtifactContext.Provider value={openArtifact}>
+    <DocumentViewer.Provider value={openDocument}>
     <LinkTrust.Provider value={linkHosts}>
-    <main className={`snowfall-app ${artifact ? 'with-artifact' : ''}`}>
+    <main className={`snowfall-app ${artifact || openedDocument ? 'with-artifact' : ''}`}>
       <Snowfall />
 
       <Sidebar
@@ -1439,6 +1464,15 @@ function App() {
                       ) : message.role === 'assistant' ? (
                         <>
                           {reasoningByMessage[message.id] && <Reasoning text={reasoningByMessage[message.id]!} />}
+                          {message.activity && (
+                            <Activity
+                              steps={message.activity.steps}
+                              startedAt={message.activity.startedAt}
+                              endedAt={message.activity.endedAt}
+                              sources={message.sources}
+                              consulted={message.activity.consulted}
+                            />
+                          )}
                           {comparison?.rightId === message.id && comparison.conversationId === activeConversation?.id ? (
                             <ComparePair
                               left={{ label: comparison.leftLabel, content: comparison.left.content }}
@@ -1448,14 +1482,20 @@ function App() {
                               onKeepRight={() => setComparison(null)}
                             />
                           ) : (
-                            <Markdown source={message.content} showCode={wantsCode(shownMessages[messageIndex - 1]?.content ?? '')} />
+                            <Citations.Provider value={citationScope(message.sources, message.activity?.steps, message.activity?.consulted, (source, issue) => reportCitation(message.id, source, issue))}>
+                              <Markdown source={message.content} showCode={wantsCode(shownMessages[messageIndex - 1]?.content ?? '')} />
+                            </Citations.Provider>
                           )}
                           {activeConversation &&
                             (() => {
                               const files = (generatedFiles[activeConversation.id] ?? []).filter((file) => file.messageId === message.id)
                               return files.length ? <MessageFiles conversationId={activeConversation.id} files={files} /> : null
                             })()}
-                          {message.sources?.length ? <MessageSources sources={message.sources} /> : null}
+                          {message.sources?.length ? (
+                            <Citations.Provider value={citationScope(message.sources, message.activity?.steps, message.activity?.consulted, (source, issue) => reportCitation(message.id, source, issue))}>
+                              <SourcesBar sources={message.sources} consulted={message.activity?.consulted} />
+                            </Citations.Provider>
+                          ) : null}
                         </>
                       ) : (
                         message.content && <p>{message.content}</p>
@@ -1551,7 +1591,7 @@ function App() {
                     <div className="message-body">
                       <div className="message-author">{assistantName}</div>
                       {reasoning && <Reasoning text={reasoning} thinking={!streamingText && !paused} />}
-                      {agentSteps.length > 0 && <AgentSteps steps={agentSteps} onDecide={run.decide} />}
+                      {agentSteps.length > 0 && <Activity live steps={agentSteps} onDecide={run.decide} />}
                       {comparison && !comparison.rightId && comparison.conversationId === activeConversation?.id ? (
                         <ComparePair
                           left={{ label: comparison.leftLabel, content: comparison.left.content }}
@@ -1562,7 +1602,9 @@ function App() {
                         />
                       ) : streamingText || continuing ? (
                         <>
-                          <Markdown source={(continuing ?? '') + streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
+                          <Citations.Provider value={citationScope([], agentSteps)}>
+                            <Markdown source={(continuing ?? '') + streamingText} showCode={wantsCode(shownMessages.at(-1)?.role === 'user' ? shownMessages.at(-1)!.content : '')} />
+                          </Citations.Provider>
                           {!streamingText && (
                             <div className="typing-indicator" aria-label={t('chat.answering')}>
                               <span />
@@ -1571,7 +1613,8 @@ function App() {
                             </div>
                           )}
                         </>
-                      ) : (
+                      ) : agentSteps.length > 0 ? null : (
+                        // L'agent agit : la ligne d'activité dit déjà ce qu'il fait.
                         <div className="typing-indicator" aria-label={t('chat.answering')}>
                           <span />
                           <span />
@@ -1759,8 +1802,10 @@ function App() {
         </div>
       </section>
       {artifact && <ArtifactPanel key={artifact.opening} artifact={artifact} onClose={closeArtifact} />}
+      {openedDocument && <DocumentPanel key={openedDocument.opening} source={openedDocument.source} onClose={closeDocument} />}
     </main>
     </LinkTrust.Provider>
+    </DocumentViewer.Provider>
     </ArtifactContext.Provider>
   )
 }

@@ -44,5 +44,11 @@
   ],
   "skills": [
     "traiter-une-demande-multi-domaines"
-  ]
+  ],
+  "measured": {
+    "model": "google:gemini-3.5-flash-lite",
+    "passed": 18,
+    "total": 18,
+    "date": "2026-10-31"
+  }
 }

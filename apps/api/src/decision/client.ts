@@ -1,6 +1,7 @@
 import http from "node:http";
 import type { DecisionEngine } from "./routing.js";
 import type { Confusion, DecisionHead } from "./workshop.js";
+import { localEndpoint, type LocalEndpoint } from "../security/local-endpoint.js";
 
 // Service de décision local (apps/decision) : aucun réseau, socket Unix.
 
@@ -21,13 +22,17 @@ export interface DecisionTrainer {
 }
 
 export class UnixSocketDecision implements DecisionEngine, DecisionTrainer {
-  constructor(private readonly socketPath: string) {}
+  private readonly endpoint: LocalEndpoint;
+
+  constructor(socketPath: string) {
+    this.endpoint = localEndpoint(socketPath);
+  }
 
   private post<T>(path: string, payload: unknown, options: { timeout: number; maxResponse: number; signal?: AbortSignal | undefined }) {
     const body = JSON.stringify(payload);
     return new Promise<T>((resolve, reject) => {
       const request = http.request(
-        { socketPath: this.socketPath, path, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }, timeout: options.timeout, ...(options.signal ? { signal: options.signal } : {}) },
+        { ...this.endpoint, path, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) }, timeout: options.timeout, ...(options.signal ? { signal: options.signal } : {}) },
         (response) => {
           const chunks: Buffer[] = [];
           let size = 0;

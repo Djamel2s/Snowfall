@@ -4,6 +4,7 @@ import { artifactKind, artifactTitle, useOpenArtifact, type ArtifactKind } from 
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
 import { highlight } from '../lib/highlight'
 import MathFormula from './MathFormula'
+import { CitationChip } from './Citations'
 import { useI18n } from '../lib/i18n'
 import { hostOf, isTrustedLink, useLinkTrust } from '../lib/link-trust'
 import '../markdown.css'
@@ -34,6 +35,8 @@ function renderInline(nodes: Inline[]): ReactNode[] {
             {renderInline(node.children)}
           </SafeLink>
         )
+      case 'cite':
+        return <CitationChip key={index} numbers={node.numbers} />
     }
   })
 }

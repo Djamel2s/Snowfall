@@ -319,6 +319,26 @@ describe("Bases de connaissances : routes", () => {
     assert.equal((await app.inject(json("PATCH", `/agents/${agent.id}/knowledge`, { confidential: true }))).statusCode, 403);
   });
 
+  it("ouvrir une citation : passages du document dans l'ordre, consultation tracée ; rien pour une autre organisation", async (t) => {
+    const { app, knowledge, as, events } = setup();
+    t.after(() => app.close());
+    const agent = await createAgent(app);
+    const source = (await app.inject(upload(`/agents/${agent.id}/knowledge/files`, "vpn.md", "# VPN\n\nInstallez WireGuard.\n\n# Accès\n\nDemandez un compte à la DSI."))).json().source;
+    await knowledge.idle();
+    const read = await app.inject({ method: "GET", url: `/knowledge/sources/${source.id}/passages` });
+    assert.equal(read.statusCode, 200);
+    const body = read.json() as { name: string; passages: { text: string; heading: string | null }[] };
+    assert.equal(body.name, "vpn.md");
+    const text = body.passages.map((passage) => passage.text).join("\n");
+    assert.ok(text.indexOf("WireGuard") < text.indexOf("DSI"));
+    assert.ok(events.some((event) => event.eventType === "knowledge.source_view" && event.targetId === source.id));
+    assert.equal(read.headers["cache-control"], "no-store");
+
+    as({ userId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", organizationId: "22222222-2222-4222-8222-222222222222", role: "admin" });
+    assert.equal((await app.inject({ method: "GET", url: `/knowledge/sources/${source.id}/passages` })).statusCode, 404);
+    assert.equal((await app.inject({ method: "GET", url: "/knowledge/sources/pas-un-id/passages" })).statusCode, 400);
+  });
+
   it("antivirus : un document infecté n'entre jamais dans la base", async (t) => {
     const { app, events, knowledge } = setup({
       scanner: { scan: async (bytes) => (bytes.includes("EICAR") ? { clean: false, signature: "Eicar-Test-Signature" } : { clean: true }) },

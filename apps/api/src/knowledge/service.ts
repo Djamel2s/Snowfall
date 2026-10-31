@@ -1,3 +1,4 @@
+import { excerptOf } from "../conversations/activity.js";
 import type { FastifyBaseLogger, FastifyRequest } from "fastify";
 import type { AuditLog } from "../audit/audit.js";
 import { ExtractionError, extractInWorker } from "../attachments/extract.js";
@@ -51,6 +52,8 @@ export type Passage = {
   section: string | null;
   page: number | null;
   text: string;
+  /** Extrait montré au survol de la citation (sinon : début du passage). */
+  excerpt?: string | null;
 };
 
 /** Question de recherche : telle que posée, et reformulée avec l'historique. */
@@ -142,6 +145,18 @@ export class KnowledgeService {
   async linkPolicy(tenant: TenantContext) {
     const settings = this.deps.settings ? await this.deps.settings.get(tenant) : null;
     return { enabled: this.deps.linksEnabled && (settings?.linksEnabled ?? true), domains: settings?.linkDomains ?? [] };
+  }
+
+  /**
+   * Téléchargement public (icône d'un site cité) : mêmes protections que
+   * l'import de liens (adresse publique, proxy de sortie, taille bornée).
+   */
+  fetchPublic(url: string, options: { maxBytes: number; timeoutMs: number; domains: string[] }) {
+    return safeFetch(url, {
+      ...options,
+      proxy: this.deps.fetchProxy,
+      ...(this.deps.fetchTesting ? { testing: this.deps.fetchTesting } : {}),
+    });
   }
 
   /** Contrôle d'une URL avant import (mêmes règles que le téléchargement). */
@@ -507,5 +522,9 @@ export function renderKnowledge(passages: Passage[]) {
   return `<knowledge>\n${blocks.join("\n\n")}\n</knowledge>`;
 }
 
+/** Sources à garder avec la réponse : sans le texte du passage, avec un court extrait. */
 export const citationsOf = (passages: Passage[]): Citation[] =>
-  passages.map(({ text: _text, ...citation }) => citation);
+  passages.map(({ text, ...citation }) => {
+    const excerpt = excerptOf(citation.excerpt ?? text);
+    return { ...citation, excerpt: excerpt ?? null };
+  });

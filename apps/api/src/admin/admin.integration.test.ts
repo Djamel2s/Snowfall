@@ -21,7 +21,7 @@ describe("Pilotage : PostgreSQL (comptage sans contenu, administrateurs, seuil, 
   let overview: PostgresAdminOverviewStore;
   const [org, other] = [randomUUID(), randomUUID()];
   const admin = randomUUID();
-  const users = Array.from({ length: 5 }, () => randomUUID());
+  const users = Array.from({ length: 6 }, () => randomUUID());
   const outsider = randomUUID();
   const tenant = (userId: string, organizationId = org) => ({ userId, organizationId });
 
@@ -99,5 +99,13 @@ describe("Pilotage : PostgreSQL (comptage sans contenu, administrateurs, seuil, 
     assert.ok(await conversations.fork(tenant(users[2]!), source.id, exchange.assistantMessage.id));
     await conversations.importConversation(tenant(users[2]!), "Historique ChatGPT", Array.from({ length: 40 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `Ancien message ${index}` })));
     assert.equal((await overview.overview(tenant(admin), 7)).days.at(-1)!.messages, 14);
+
+    // Tâche planifiée ou API publique : la personne n'était pas là. Un membre sans autre
+    // activité n'apparaît donc pas comme actif.
+    const quiet = await conversations.create(tenant(users[5]!), "Veille");
+    await conversations.appendExchange(tenant(users[5]!), quiet.id, "Veille du jour", "Rien de neuf.", { automated: true });
+    result = await overview.overview(tenant(admin), 7);
+    assert.equal(result.days.at(-1)!.messages, 14);
+    assert.equal(result.active7, 5);
   });
 });

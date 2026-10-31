@@ -97,6 +97,28 @@ processus qui tourne **sous l'utilisateur de l'exécution**.
 | Agent | à choisir dans le studio |
 | Confidentiel | **permis** : le bac à sable est local, sans réseau, donc rien ne sort |
 
+## 7. Tester comme en production, ou ne rien prouver (ajout du 31 octobre)
+
+Lancer l'OCR en vrai sur un poste de développement a révélé un bug que tous
+les tests ignoraient. En production, le service tourne en root **sans aucun
+privilège** : pas de `CAP_DAC_OVERRIDE`, le droit de passer outre les
+permissions de fichiers. Il cédait le dossier de travail à l'utilisateur
+jetable, puis essayait d'y écrire le document : refusé. Les tests de la CI
+tournaient, eux, avec les privilèges par défaut de Docker, qui incluent
+justement ce droit. Ils étaient verts, et le service était cassé.
+
+Deux leçons :
+- **Un test doit tourner dans les mêmes conditions que la production**,
+  surtout pour un composant de sécurité. La CI lance maintenant les tests OCR
+  avec exactement les privilèges de `compose` ;
+- **le moindre privilège change l'ordre des opérations** : écrire avant de
+  céder, et laisser le propriétaire faire son propre ménage (un outil peut
+  créer des dossiers à lui, comme un cache de polices).
+
+Sur le poste, les services restent sans réseau ; un petit conteneur « pont »
+(socat) expose leurs sockets sur 127.0.0.1. L'API n'accepte cette adresse
+qu'en boucle locale, et jamais en production.
+
 ## Pour vérifier que tu as compris
 
 1. Pourquoi un socket Unix plutôt qu'un port sur un réseau interne ?

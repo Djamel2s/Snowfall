@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { generatedFileIds } from "./code-tool.js";
 import { imageTool, MAX_IMAGES_PER_ANSWER, OpenAiCompatibleImages } from "./image-tool.js";
+import { runTool, TOOL_TIMEOUT_MS } from "./tools.js";
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 7)]);
 const signal = new AbortController().signal;
@@ -36,5 +37,19 @@ describe("Génération d'images locale", () => {
 
     const infected = imageTool({ generator: { generate: async () => PNG }, scanner: { scan: async () => ({ clean: false, signature: "Eicar" }) } as never, saveFile: async () => assert.fail("pas d'enregistrement"), images: { count: 0 } });
     assert.match((await infected.execute({ prompt: "x" }, { signal })).content, /refusée/);
+  });
+
+  it("délai propre à l'outil : une image lente (1024×1024 ≈ 1 min sur GPU) n'est pas coupée par le délai commun", async () => {
+    const tool = imageTool({ generator: { generate: async () => PNG }, saveFile: async () => ({ id: "f1" }) as never, images: { count: 0 } });
+    // Constaté en vrai : coupée à 30 s, l'image échouait alors que le service répondait en 54 s.
+    assert.ok((tool.timeoutMs ?? TOOL_TIMEOUT_MS) >= 180_000);
+    // Le délai commun s'applique toujours aux outils qui n'en déclarent pas.
+    const slow = { ...tool, timeoutMs: 20, execute: (_args: unknown, context: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          // Garde le test en vie (le délai d'AbortSignal ne retient pas la boucle d'événements).
+          const alive = setTimeout(() => undefined, 5_000);
+          context.signal.addEventListener("abort", () => (clearTimeout(alive), reject(new Error("coupé"))));
+        }) };
+    assert.match((await runTool([slow as never], { name: "generate_image", arguments: { prompt: "alien" } }, signal)).content, /délai dépassé/);
   });
 });

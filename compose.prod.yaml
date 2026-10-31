@@ -347,7 +347,7 @@ services:
     restart: unless-stopped
     logging: *logging
     tmpfs:
-      - /tmp:size=64m,mode=0700
+      - /tmp:size=64m,mode=0700,uid=10201,gid=10201
     volumes:
       - snowfall_decision_socket:/run/decision
 

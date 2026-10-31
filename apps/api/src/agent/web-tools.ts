@@ -5,6 +5,7 @@ import type { WebResult, WebSearchEngine } from "../web/searxng.js";
 import type { CitationRegistry } from "./knowledge-tool.js";
 import { defineTool } from "./tools.js";
 import { datamark, stripTags } from "../security/neutralize.js";
+import { excerptOf } from "../conversations/activity.js";
 
 // Recherche web en deux outils : web_search (résultats d'un moteur) et
 // read_webpage (lecture d'une page). Tout ce qui vient du web est une DONNÉE
@@ -70,7 +71,7 @@ export class WebSession {
   }
 }
 
-const asPassage = (result: { url: string; title: string }): Passage => ({
+const asPassage = (result: { url: string; title: string; snippet?: string }): Passage => ({
   n: 0,
   sourceId: result.url,
   name: result.title,
@@ -80,6 +81,8 @@ const asPassage = (result: { url: string; title: string }): Passage => ({
   page: null,
   // Clé de numérotation : l'adresse seule (même [n] pour le résultat et la page lue).
   text: "",
+  // Extrait du moteur, montré au survol de la citation (donnée du web : texte brut, borné).
+  ...(result.snippet ? { excerpt: excerptOf(result.snippet) ?? null } : {}),
 });
 
 export function webTools(deps: { engine: WebSearchEngine; readPage: PageReader; citations: CitationRegistry; session: WebSession }) {

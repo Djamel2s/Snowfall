@@ -1,3 +1,5 @@
+import { readCitation } from './activity'
+
 // Markdown minimal (sous-ensemble GFM) transformé en arbre, rendu ensuite en
 // éléments React : aucun HTML brut n'est jamais injecté dans la page.
 // Volontairement absent : images (une injection de prompt pourrait s'en servir
@@ -11,6 +13,8 @@ export type Inline =
   | { type: 'br' }
   /** Formule LaTeX, rendue en MathML (jamais en HTML brut). */
   | { type: 'math'; tex: string; display: boolean }
+  /** Citation de sources numérotées : « [1] », « [1, 3] », « [1][2] ». */
+  | { type: 'cite'; numbers: number[] }
 
 export type Align = 'left' | 'center' | 'right' | null
 
@@ -125,6 +129,17 @@ export function parseInline(source: string): Inline[] {
       out.push(...(href ? [{ type: 'link' as const, href, children: label }] : label))
       i += link[0].length + (image ? 1 : 0)
       continue
+    }
+
+    if (char === '[') {
+      const cite = readCitation(rest)
+      if (cite) {
+        flush()
+        // Espace avant la citation : gardé dans le texte, la pastille suit le mot.
+        out.push({ type: 'cite', numbers: cite.numbers })
+        i += cite.length
+        continue
+      }
     }
 
     if (char === 'h' && !WORD.test(previous)) {

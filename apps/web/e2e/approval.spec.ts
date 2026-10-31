@@ -97,7 +97,10 @@ test('équipe d’agents : étapes du sous-agent sous la délégation, validatio
   await page.getByPlaceholder(/Posez votre question/).fill('Fais noter la règle des congés.')
   await page.keyboard.press('Enter')
   await expect(card(page)).toContainText('Pour le compte de RH')
-  await expect(page.locator('.agent-step-nested .agent-step-agent').first()).toHaveText('RH')
+  // En direct : une seule ligne (l'action en cours) ; le fil se déplie au clic, sans les trois points.
+  await expect(page.locator('.typing-indicator')).toHaveCount(0)
+  await page.locator('.activity-head').click()
+  await expect(page.locator('.activity-children .activity-agent').first()).toHaveText('RH')
   await expect(page.getByText('Délégation')).toBeVisible()
   await page.screenshot({ path: info.outputPath('equipe.png') })
 })

@@ -325,6 +325,19 @@ export function registerKnowledgeRoutes(api: FastifyInstance, kit: RouteKit, dep
     return reply.code(202).send({ source: { ...view(source), status: "pending", errorCode: null } });
   });
 
+  // Texte lu d'un document (passages dans l'ordre) : ouvrir une citation à sa place,
+  // dans l'interface, au lieu de télécharger le fichier. Mêmes droits que le téléchargement.
+  api.get("/knowledge/sources/:id/passages", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    const params = sourceParams.safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+    const found = await store.sourcePassages(user, params.data.id);
+    if (!found) return reply.code(404).send({ error: "Not found" });
+    await kit.record(request, user, { eventType: "knowledge.source_view", targetType: "knowledge_source", targetId: params.data.id });
+    return { name: found.name, passages: found.passages };
+  });
+
   api.get("/knowledge/sources/:id/content", async (request, reply) => {
     const user = kit.principal(request);
     kit.privateResponse(reply);

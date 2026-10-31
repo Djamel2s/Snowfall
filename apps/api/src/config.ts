@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { VaultAuthSettings } from "./crypto/vault.js";
 import type { ModelSelection, ProviderId } from "./llm/types.js";
+import { assertSocketInProduction } from "./security/local-endpoint.js";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -308,6 +309,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (production && e.KMS_PROVIDER === "vault" && !e.VAULT_ADDR!.startsWith("https://")) {
     throw new Error("VAULT_ADDR doit être en HTTPS en production.");
   }
+  // Services isolés : socket Unix ; tcp://127.0.0.1 seulement en développement (pont local).
+  assertSocketInProduction("SANDBOX_SOCKET", e.SANDBOX_SOCKET, production);
+  assertSocketInProduction("OCR_SOCKET", e.OCR_SOCKET, production);
+  assertSocketInProduction("DECISION_SOCKET", e.DECISION_SOCKET, production);
   // MCP : en production, les serveurs ne sont joints QUE par le proxy de sortie
   // (liste de domaines, résolution DNS et refus des adresses internes chez lui).
   if (production && e.MCP_ENABLED === "true" && (!env.HTTPS_PROXY || env.NODE_USE_ENV_PROXY !== "1")) {

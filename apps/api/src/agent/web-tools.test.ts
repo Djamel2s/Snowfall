@@ -68,7 +68,8 @@ describe("Recherche web : protections", () => {
     await run("web_search", { query: "loyers" });
     await run("read_webpage", { url: "https://www.service-public.fr/loyers" });
     assert.deepEqual(citations.citations("Le plafond est de 12,5 €/m² [1]."), [
-      { n: 1, sourceId: "https://www.service-public.fr/loyers", name: "Service-Public : loyers 2026", url: "https://www.service-public.fr/loyers", base: "web", section: null, page: null },
+      // Extrait du moteur gardé avec la source (survol de la citation).
+      { n: 1, sourceId: "https://www.service-public.fr/loyers", name: "Service-Public : loyers 2026", url: "https://www.service-public.fr/loyers", base: "web", section: null, page: null, excerpt: "Plafonds de loyer revalorisés." },
     ]);
   });
 

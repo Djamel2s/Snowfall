@@ -1,4 +1,5 @@
 import http from "node:http";
+import { localEndpoint, type LocalEndpoint } from "../security/local-endpoint.js";
 
 // OCR local (apps/ocr) : documents numérisés lus dans l'infrastructure, sans
 // service tiers. Le conteneur n'a aucun réseau ; on lui parle par socket Unix.
@@ -20,13 +21,17 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const TIMEOUT_MS = 200_000;
 
 export class UnixSocketOcr implements DocumentOcr {
-  constructor(private readonly socketPath: string) {}
+  private readonly endpoint: LocalEndpoint;
+
+  constructor(socketPath: string) {
+    this.endpoint = localEndpoint(socketPath);
+  }
 
   recognize(bytes: Buffer, mediaType: OcrMediaType): Promise<string> {
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
-          socketPath: this.socketPath,
+          ...this.endpoint,
           path: "/ocr",
           method: "POST",
           headers: { "Content-Type": mediaType, "Content-Length": bytes.length },

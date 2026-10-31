@@ -328,5 +328,30 @@ describe(
       // Un autre tenant ne retitre rien.
       assert.equal(await store.retitle(b, conversation.id, "Piraté", "Mes frais"), false);
     });
+
+    it("activité d'une réponse : chiffrée, liée à son message, copiée par une bifurcation ; jamais en clair", async () => {
+      const conversation = await store.create(a, "VPN");
+      const activity = {
+        startedAt: 1_000,
+        endedAt: 4_000,
+        steps: [{ id: "call-1", name: "web_search", status: "done" as const, summary: "procédure WireGuard", startedAt: 1_000, endedAt: 2_000, found: [1] }],
+        consulted: [{ n: 1, sourceId: "https://doc.example/vpn", name: "Guide VPN", url: "https://doc.example/vpn", base: "web" as const, excerpt: "Installez WireGuard." }],
+      };
+      const exchange = (await store.appendExchange(a, conversation.id, "VPN ?", "Installez WireGuard [1].", { activity }))!;
+      assert.deepEqual((await store.getMessages(a, conversation.id))!.at(-1)!.activity, activity);
+      // RLS imposée même au propriétaire : requêtes directes sous le contexte de l'auteur.
+      const direct = (sql: string, params: unknown[]) => withTenant(owner, a, (client) => client.query(sql, params));
+      const raw = await direct("SELECT activity FROM messages WHERE id = $1", [exchange.assistantMessage.id]);
+      assert.ok(!String(raw.rows[0]!.activity).includes("WireGuard"));
+      // Recopiée telle quelle sur un autre message : le déchiffrement échoue (AAD liée au message).
+      await direct("UPDATE messages SET activity = $2 WHERE id = $1", [exchange.userMessage.id, raw.rows[0]!.activity]);
+      await assert.rejects(store.getMessages(a, conversation.id));
+      await direct("UPDATE messages SET activity = NULL WHERE id = $1", [exchange.userMessage.id]);
+      // En clair : refusé par la base.
+      await assert.rejects(direct("UPDATE messages SET activity = '{\"steps\":[]}' WHERE id = $1", [exchange.assistantMessage.id]), /messages_activity_encrypted_check/);
+      // Bifurcation : l'activité suit la réponse copiée (rechiffrée pour la copie).
+      const fork = (await store.fork(a, conversation.id, exchange.assistantMessage.id))!;
+      assert.deepEqual((await store.getMessages(a, fork.id))!.at(-1)!.activity, activity);
+    });
   },
 );

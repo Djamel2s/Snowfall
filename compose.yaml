@@ -93,6 +93,171 @@ services:
       start_period: 5m
       retries: 3
 
+  # Recherche web des agents en développement (profil « web-search ») :
+  #   docker compose --profile web-search up -d searxng
+  # puis WEB_SEARCH_URL=http://127.0.0.1:8888 dans .env. API JSON seule, sur
+  # 127.0.0.1 uniquement ; en production, voir compose.prod.yaml (proxy de sortie).
+  searxng:
+    image: searxng/searxng:2026.10.2-19ffbcd30@sha256:c642712fcedcdaa78fac44f71eada86aff510745826ba1bd1a368211fea2ce7f
+    container_name: snowfall-searxng
+    profiles: ["web-search"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?Define SEARXNG_SECRET in .env}
+    tmpfs: ["/tmp", "/var/cache/searxng"]
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./infra/searxng/settings.dev.yml:/etc/searxng/settings.yml:ro
+
+  # ---- Services isolés en développement (profil « code ») ----------------------
+  # Interpréteur de code, OCR et décision locale : comme en production, sans
+  # réseau, lecture seule, socket Unix réservé à un groupe. Différences de dev :
+  # runtime runc (gVisor indisponible sous Docker Desktop : isolation moindre,
+  # SANDBOX_REQUIRE_GVISOR=false) et un pont (socat) qui expose les sockets sur
+  # 127.0.0.1, car Docker Desktop ne partage pas les sockets Unix avec Windows.
+  #   docker compose --profile code up -d --build
+  # puis dans .env : SANDBOX_SOCKET=tcp://127.0.0.1:7811, OCR_SOCKET=tcp://127.0.0.1:7812,
+  # DECISION_SOCKET=tcp://127.0.0.1:7813 (tcp:// refusé par l'API en production).
+  sandbox:
+    build: { context: apps/sandbox }
+    container_name: snowfall-sandbox
+    profiles: ["code"]
+    environment:
+      SANDBOX_REQUIRE_GVISOR: "false"
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL, CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    tmpfs:
+      - /work:size=256m,mode=0711
+      - /tmp:size=16m,mode=0700
+      - /dev/shm:size=16m,mode=0700
+    volumes:
+      - snowfall_dev_sandbox_socket:/run/sandbox
+
+  ocr:
+    build: { context: apps/ocr }
+    container_name: snowfall-ocr
+    profiles: ["code"]
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, KILL, CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    tmpfs:
+      - /work:size=512m,mode=0711
+      - /tmp:size=16m,mode=0700
+    volumes:
+      - snowfall_dev_ocr_socket:/run/ocr
+
+  # Décision locale (routage des modèles) : profil à part, l'image pèse ~2,5 Go.
+  decision:
+    build: { context: apps/decision }
+    container_name: snowfall-decision
+    profiles: ["decision"]
+    init: true
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 2
+    restart: unless-stopped
+    tmpfs:
+      - /tmp:size=64m,mode=0700,uid=10201,gid=10201
+    volumes:
+      - snowfall_dev_decision_socket:/run/decision
+
+  # Pont de développement : 127.0.0.1:7811 → bac à sable, 7812 → OCR, 7813 →
+  # décision. Il n'a que les groupes des trois sockets ; les services, eux,
+  # restent sans réseau.
+  socket-bridge:
+    image: alpine/socat:1.8.0.3@sha256:beb4a68d9e4fe6b0f21ea774a0fde6c31f580dde6368939ed70100c5385b015e
+    container_name: snowfall-socket-bridge
+    profiles: ["code", "decision"]
+    user: "10100:10100"
+    group_add: ["10010", "10011", "10012"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        socat TCP-LISTEN:7811,fork,reuseaddr UNIX-CONNECT:/run/sandbox/sandbox.sock &
+        socat TCP-LISTEN:7812,fork,reuseaddr UNIX-CONNECT:/run/ocr/ocr.sock &
+        socat TCP-LISTEN:7813,fork,reuseaddr UNIX-CONNECT:/run/decision/decision.sock &
+        wait
+    ports:
+      - "127.0.0.1:7811:7811"
+      - "127.0.0.1:7812:7812"
+      - "127.0.0.1:7813:7813"
+    volumes:
+      - snowfall_dev_sandbox_socket:/run/sandbox
+      - snowfall_dev_ocr_socket:/run/ocr
+      - snowfall_dev_decision_socket:/run/decision
+
+  # ---- Voix locale en développement (profil « voice ») -------------------------
+  # Speaches : transcription (faster-whisper) et synthèse (Kokoro), API audio
+  # compatible OpenAI, sur le GPU. Les modèles sont téléchargés une fois (Hugging
+  # Face) dans le volume. Rien d'autre ne sort : l'audio reste sur le poste.
+  #   docker compose --profile voice up -d speaches
+  # puis STT_URL=http://127.0.0.1:8000, TTS_URL=http://127.0.0.1:8000 dans .env.
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:0.8.3-cuda@sha256:9abc6968a883e77ead9286c38a6ccf3139dcad518b783deeebb7be2ced50e972
+    container_name: snowfall-speaches
+    profiles: ["voice"]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    gpus: all
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - snowfall_dev_speaches_models:/home/ubuntu/.cache/huggingface/hub
+
+  # ---- Images locales en développement (profil « images ») ---------------------
+  # LocalAI : API images compatible OpenAI (/v1/images/generations), sur le GPU.
+  # Le modèle est installé une fois depuis la galerie LocalAI dans le volume.
+  #   docker compose --profile images up -d localai
+  # puis IMAGE_URL=http://127.0.0.1:8090 (8080 est pris par Keycloak) et
+  # IMAGE_MODEL=sd-3.5-medium-ggml, installé par POST /models/apply.
+  localai:
+    image: localai/localai:v4.11.0-gpu-nvidia-cuda-12@sha256:1ee31dce19426ce7948e003bd2143bc88289db984369bdc53179c184d5ad07f9
+    container_name: snowfall-localai
+    profiles: ["images"]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    gpus: all
+    ports:
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - snowfall_dev_localai_models:/models
+      - snowfall_dev_localai_backends:/backends
+
 volumes:
   snowfall_postgres_data:
   snowfall_clamav_db:
+  snowfall_dev_sandbox_socket:
+  snowfall_dev_ocr_socket:
+  snowfall_dev_decision_socket:
+  snowfall_dev_speaches_models:
+  snowfall_dev_localai_models:
+  snowfall_dev_localai_backends:

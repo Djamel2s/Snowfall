@@ -359,6 +359,8 @@ export const messages = pgTable.withRLS(
     content: text("content").notNull(),
     // Sources citées par une réponse (base de connaissances), JSON chiffré.
     sources: text("sources"),
+    // Activité de la réponse (étapes, durées, sources consultées ; jamais le contenu lu), JSON chiffré.
+    activity: text("activity"),
     // Auteur d'une réponse : « agent:<id> » ou « model:<fournisseur>:<modèle> » (le
     // modèle ou l'agent peut changer en cours de conversation). Aucun contenu.
     author: text("author"),

@@ -5,6 +5,28 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **31 octobre — poste de développement complet** : recherche web (SearXNG),
+  interpréteur de code et OCR (pont local, sockets Unix inchangés en
+  production), antivirus. Bug trouvé en vrai : l'OCR échouait sous les seuls
+  privilèges de production (tests lancés avec ceux de Docker), et la décision
+  locale ne démarrait pas (`/tmp` à root) ; corrigés, CI alignée. Modèle
+  local (Ollama, qwen3:8b, bge-m3) et voix locale (Speaches). RUNBOOK § 41.
+
+- **31 octobre — activité et sources** : en direct, une phrase dit ce que fait
+  l'agent et le fil des étapes se remplit ; ensuite, une ligne repliée
+  (« 1 recherche · 1 page lue · 5,8 s ») garde tout : durées, sources
+  trouvées par chaque étape (citées ou non), spécialistes, validations,
+  contenus suspects signalés. Citations [n] en pastilles avec l'icône du site
+  et une carte (extrait, étape qui l'a trouvée). Sources citées, puis « Aussi
+  consultées ». Icônes servies par Snowfall. Document cité ouvert au passage
+  surligné ; citation douteuse signalée (👎 commenté). Fiche 32.
+
+- **31 octobre — correctifs** : la conversation d'une tâche planifiée n'est
+  plus effacée par la conservation (la tâche disparaissait avec elle) ; le
+  Pilotage ne compte plus les tâches planifiées ni l'API publique comme une
+  activité ; interrupteurs du thème clair. Assistant général remesuré :
+  18/18. Restent à remesurer : commercial, RH, analyste. Feuille de route : section 10.
+
 - **30 octobre — Administration › Sécurité** : journal d'audit consultable
   (filtres, pages, détail, export CSV) et durée de conservation des
   conversations (purge automatique journalisée) ; droits RGPD rappelés
@@ -414,3 +436,15 @@ Avancement (18 octobre) :
    (limite documentée) ?
 4. **Ordre de la phase 3** : celui proposé, ou une fonction te manque plus que
    les autres ?
+
+## 10. Feuille de route (31 octobre)
+
+| Lot | Contenu | État |
+|---|---|---|
+| 1 | Correctifs : conservation et tâches planifiées, activité automatique, interrupteurs clairs, remesure de 4 agents | Fait (mesures : selon le quota) |
+| 2 | **Activité et sources** : ce que fait l'agent en direct, puis repliable après la réponse ; sources citées dans le texte avec le site (icône servie par Snowfall) | Fait (31 oct., fiche 32) |
+| 3 | Exploitation prouvée : supervision et alertes, restauration testée avec preuve, exercice de réponse à incident | À faire |
+| 4 | Coûts et limites : coût en euros au Pilotage, quotas couvrant les outils, plafond de jetons et de durée par réponse | À faire |
+| 5 | Éditeur de workflows | À cadrer ensemble |
+| 6 | Teams et Slack, puis Outlook et Word | À faire |
+| — | Hors code : test d'intrusion, AIPD signée, registre, DPA, hébergeur qualifié, gVisor en production, OpenBao en cluster ou HSM | En parallèle |

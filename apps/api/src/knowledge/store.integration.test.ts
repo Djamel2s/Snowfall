@@ -100,6 +100,10 @@ describe("Bases de connaissances : RLS, chiffrement, triggers", { skip: !appUrl 
     const source = await knowledge.addSource(tenant(alice), base.id, { kind: "file", name: "p.txt", mediaType: "text/plain", bytes: Buffer.from("x") });
 
     assert.equal(await knowledge.load(tenant(bob), base.id), null);
+    // Ouvrir une citation : le texte du document, pour son auteur seulement.
+    await knowledge.replaceChunks(tenant(alice), source.id, [{ text: "Budget Apollo : 2 M€.", heading: "Budget", page: 3, vector: null }], null);
+    assert.deepEqual(await knowledge.sourcePassages(tenant(alice), source.id), { name: "p.txt", passages: [{ text: "Budget Apollo : 2 M€.", heading: "Budget", page: 3 }] });
+    assert.equal(await knowledge.sourcePassages(tenant(bob), source.id), null);
     await assert.rejects(knowledge.ensureBase(tenant(bob), { kind: "project", projectId: project.id }), /PROJECT_NOT_FOUND/);
     assert.equal((await knowledge.listSources(tenant(bob), base.id)).length, 0);
 

@@ -114,3 +114,51 @@
   color: #ffffff;
 }
 :root[data-theme="light"] .settings-save:hover:not(:disabled) { background: linear-gradient(145deg, #4a96f3, #2f78db); }
+
+/* Interrupteurs : rail clair et pastille blanche ; activé, rail bleu (la couleur de
+   l'interface le suit). L'inversion automatique donnait une pastille presque noire. */
+:root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
+:root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
+  border-color: #cdd9ea;
+  background: #e3eaf4;
+}
+:root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]::after,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]::after,
+:root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]::after {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 27, 45, .25);
+}
+:root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
+:root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
+  border-color: #2a6fd0;
+  background: #3d8cf0;
+}
+:root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+:root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
+  background: #ffffff;
+}
+:root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
+  outline-color: #2a6fd0;
+}
+
+/* Icônes de site : toujours sur fond blanc (l'inversion les rendait noires) ;
+   initiale sur sa teinte, carte de source blanche. */
+:root[data-theme="light"] .site-icon { background: #ffffff; box-shadow: 0 0 0 1px rgba(15, 27, 45, .12); }
+:root[data-theme="light"] .site-icon-letter { background: hsl(var(--site-hue, 210) 55% 46%); color: #ffffff; box-shadow: none; }
+:root[data-theme="light"] .site-icon-doc { background: #e1ecfc; color: #2a6fd0; box-shadow: none; }
+:root[data-theme="light"] .activity-hosts .site-icon,
+:root[data-theme="light"] .sources-stack .site-icon { box-shadow: 0 0 0 1.5px #ffffff; }
+:root[data-theme="light"] .cite-card { background: #ffffff; border-color: #d3e0f1; box-shadow: 0 14px 34px rgba(15, 27, 45, .16); }
+:root[data-theme="light"] .activity-now { background-image: linear-gradient(90deg, #5b6a82 0%, #5b6a82 35%, #2a6fd0 50%, #5b6a82 65%, #5b6a82 100%); }
+
+/* Passage cité d'un document : surlignage jaune lisible sur fond clair. */
+:root[data-theme="light"] .document-passage mark { background: #ffe9a8; color: #3a2a00; }
+
+/* Étiquette d'une image générée : reste sombre et lisible par-dessus l'image. */
+:root[data-theme="light"] .message-file-figure figcaption { background: rgba(15, 27, 45, .6); color: #ffffff; }
+:root[data-theme="light"] .message-file-figure figcaption button { color: #ffffff; }

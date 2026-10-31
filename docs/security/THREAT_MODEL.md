@@ -235,7 +235,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Surveillance individuelle des salariés par le tableau de bord (I, conformité RGPD / CSE) | Des totaux seulement : aucune donnée par personne, aucun classement ; l'usage d'un agent n'apparaît qu'à partir de 5 personnes distinctes | F | `admin.integration.test.ts` (seuil), `admin.test.ts` (aucun identifiant de personne dans la réponse) |
 | Administrateur qui lit les messages des autres pour « compter » (I) | Les messages restent lisibles par leur seul auteur (RLS) ; le comptage se fait dans une table sans contenu (`member_activity`), remplie par trigger, sans aucun droit pour le rôle applicatif | F | `admin.integration.test.ts` (« permission denied », colonnes de la table) |
 | Membre, ou administrateur d'une autre organisation, qui lit le pilotage (I, E) | Rôle vérifié par la route (refus journalisé `admin.overview`) ET par la fonction SQL (membre owner/admin de l'organisation du contexte) | F | `admin.test.ts`, `admin.integration.test.ts` (membre, autre organisation, rôle périmé dans le jeton) |
-| Chiffres faussés (T) | Copie de conversation et import d'historique marqués dans la transaction : non comptés (le drapeau ne peut que retirer) ; un seul utilisateur ne fait pas apparaître un agent (seuil de personnes, pas de messages) | M : les tâches planifiées et l'API publique comptent comme activité de leur auteur | `admin.integration.test.ts` (copie et import) |
+| Chiffres faussés (T) | Copie de conversation, import d'historique et messages automatiques (tâche planifiée, API publique : origine posée par le serveur sur le jeton interne, jamais par le client) marqués dans la transaction : non comptés (le drapeau ne peut que retirer) ; un seul utilisateur ne fait pas apparaître un agent (seuil de personnes, pas de messages) | F | `admin.integration.test.ts` (copie, import, message automatique ; mutation vérifiée), `runs.routes.test.ts` (API publique et tâche planifiée marquées, interface non) |
 | Conservation excessive de l'activité (conformité) | 400 jours (13 mois), purge à chaque écriture | F | migration `admin_overview` |
 
 ### 3.4 quindecies Titres générés et conversations vides (28 octobre)
@@ -258,6 +258,29 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Couleur injectée dans le style (T) | `#rrggbb` seulement (API et base) ; l'application n'en tire que deux nombres (décalage de teinte, facteur de saturation) posés en variables CSS, jamais la chaîne elle-même | F | `branding.test.ts` (« red; background:url(x) » refusée) |
 | Couleur choisie qui rend l'interface illisible ou trompeuse (T) | Luminosité d'origine gardée (contraste inchangé) ; facteur de saturation borné ; vert/orange/rouge (états, alertes) jamais recolorés | F | captures en rouge, vert, violet, thèmes sombre et clair |
 
+### 3.4 novodecies Poste de développement : services isolés joints par un pont local (31 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Bac à sable, OCR ou décision joints depuis le réseau en développement (E) | Pont publié sur 127.0.0.1 seulement ; services toujours sans réseau ; l'API n'accepte que `tcp://127.0.0.1`, `localhost` ou `[::1]`, et refuse `tcp://` en production (socket Unix exigé) | M : en développement, tout processus local du poste peut joindre le pont | `local-endpoint.test.ts` |
+| OCR inopérant en production malgré des tests verts (D) | Le service sans privilège écrivait dans un dossier déjà cédé à l'utilisateur de lecture ; corrigé (fichier écrit avant la cession, ménage fait par cet utilisateur). La CI lance désormais les tests OCR avec les seuls privilèges de la production | F | `ocr_test.py` (CI, `--cap-drop ALL` + 4 privilèges) |
+| Décision locale qui ne démarre pas en production (D) | `/tmp` en mémoire appartenait à root (0700) alors que le service tourne sous 10201 : plantage au démarrage. Corrigé dans les deux compose (`uid=10201`) ; la CI monte désormais le même `/tmp` et retire tous les privilèges | F | CI (« Tests du service de décision ») |
+
+### 3.4 octodecies Activité d'une réponse, citations et icônes des sites (31 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Fuite de lecture vers un tiers par les icônes (I) : le navigateur qui charge `google.com/s2/favicons?domain=…` ou le site lui-même dit qui lit quoi | Icônes récupérées par le serveur (`safeFetch` : adresse publique, proxy de sortie, domaines autorisés de l'organisation, 64 Ko) et servies depuis `/api/favicons/:domain` ; CSP `img-src 'self'` inchangée | F | `activity.spec.ts` (aucune requête hors Snowfall), `favicon.test.ts` |
+| Icône piégée (T) : SVG avec script, HTML déguisé, type annoncé trompeur | Type reconnu par les octets (PNG, ICO, JPEG, GIF, WebP), jamais SVG ; `nosniff`, `CSP default-src 'none'; sandbox` | F | `favicon.test.ts`, `runs.routes.test.ts` (« icône d'un site ») |
+| Serveur utilisé comme relais vers le réseau interne (SSRF) par la route des icônes (E) | Nom de domaine public seulement (ni IP, ni port, ni chemin, ni nom sans point), puis les contrôles de `safeFetch` ; 240 appels par minute ; aucune récupération pour une organisation qui ne sort pas sur le web (ni recherche web, ni import de liens) | F | `favicon.test.ts`, `runs.routes.test.ts` (aucune requête pour 127.0.0.1, localhost, port, nom interne) |
+| Inférence entre organisations par le cache des icônes (I) : « cette icône répond vite, une autre organisation a lu ce site » | Cache par organisation | F | `favicon.test.ts` |
+| Texte piégé dans l'activité (T) : titre de page ou requête qui imite l'interface | Libellés en texte brut (jamais Markdown ni HTML), une ligne, sans caractères de contrôle, bornés ; identifiants et noms d'outils contrôlés | F | `activity.test.ts` (API) |
+| L'activité garde ce qui a été lu (I) | Libellés, numéros, durées et extraits de 280 caractères au plus ; jamais le contenu des pages, documents ou résultats ; chiffrée (AAD liée au message), refusée en clair par la base, rechiffrée par la rotation ; absente des partages et exports | F | `store.integration.test.ts`, `runs.routes.test.ts`, `rotation.integration.test.ts` (couverture tirée des contraintes ; mutation vérifiée) |
+| Lecture d'un document par la route « ouvrir au passage » (`/knowledge/sources/:id/passages`) sans en avoir le droit (I) | Mêmes droits que le téléchargement : la RLS de la base de connaissances (base de projet : son auteur seulement) ; consultation journalisée (`knowledge.source_view`) ; texte rendu en texte brut | F | `knowledge.routes.test.ts`, `store.integration.test.ts` (connaissances : autre utilisateur → rien) |
+| Signalement de citation détourné (T) | Devient un 👎 commenté ordinaire (1 000 caractères, chiffré) ; partagé à l'auteur de l'agent seulement avec l'accord habituel | F | `activity.spec.ts` |
+| Activité qui grossit sans fin (D) | 80 étapes, 80 sources, 20 numéros par étape | F | `activity.test.ts` (API) |
+| Citation qui pousse vers un faux site (T) | La carte ouvre l'adresse de la source (moteur ou utilisateur), jamais un lien écrit par le modèle ; `noopener noreferrer`, `referrerpolicy=no-referrer` ; les liens du texte gardent la règle des domaines vérifiés | F | `activity.spec.ts` |
+
 ### 3.4 septdecies Administration › Sécurité : journal et conservation (30 octobre)
 
 | Menace | Mesures | Résiduel | Preuve |
@@ -266,7 +289,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Injection par les filtres du journal (T) | Catégories `^[a-z_]{1,40}$` (API et base), curseur daté + UUID, paramètres inconnus refusés | F | `security.test.ts`, `security.integration.test.ts` |
 | Export CSV piégé (formule exécutée à l'ouverture dans un tableur) (T) | Toute cellule commençant par `= + - @` (ou tabulation) est neutralisée ; export borné à 5 000 lignes et journalisé | F | `security.test.ts` (« =HYPERLINK… ») |
 | Effacement de traces par la conservation (R) | Changement de durée journalisé ; chaque conversation purgée journalisée (`conversation.purge`, raison `retention`) ; le journal lui-même est en ajout seul (trigger) et n'est jamais purgé par l'application | F | `security.test.ts` (purge journalisée) |
-| Purge qui lit ou efface au-delà de son périmètre (I, D) | File sans contenu (`conversation_activity`) tenue par trigger ; seules les organisations qui ont fixé une durée ; effacement sous la RLS de chaque auteur ; temporaires exclues (purge propre) | F | `security.integration.test.ts` |
+| Purge qui lit ou efface au-delà de son périmètre (I, D) | File sans contenu (`conversation_activity`) tenue par trigger ; seules les organisations qui ont fixé une durée ; effacement sous la RLS de chaque auteur ; temporaires exclues (purge propre) ; conversation d'une tâche planifiée jamais échue tant que la tâche existe, même en pause (sinon la tâche disparaissait avec elle, par cascade) | F | `security.integration.test.ts` (dont tâche en pause ; mutation vérifiée) |
 | Adresses IP des membres visibles des administrateurs (I) | Finalité : sécurité (connexions, refus) ; visibles dans le détail d'un événement et l'export seulement | M : donnée personnelle, à mentionner dans le registre des traitements | — |
 
 ### 3.5 Artifacts

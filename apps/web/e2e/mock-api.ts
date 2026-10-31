@@ -40,7 +40,34 @@ export type MockOptions = {
   files?: { id: string; name: string; kind: 'document' | 'image'; mediaType: string; size: number; messageId: string; createdAt: string; conversationId: string }[]
   /** Préréglages déjà enregistrés. */
   presets?: { id: string; name: string; settings: Record<string, unknown>; createdAt: string }[]
+  /** Réponse qui cherche sur le web, lit une page et cite ses sources (activité gardée). */
+  research?: boolean
+  /** Réponse qui cite un document de la base (ouvrir au passage, signaler). */
+  documentAnswer?: boolean
+  /** Réponse qui crée une image (outil generate_image), rattachée à la réponse. */
+  imageAnswer?: boolean
 }
+
+const DOC_SOURCE = { n: 1, sourceId: 'doc-1', name: 'Politique de déplacements.pdf', url: null, base: 'agent', section: 'Hôtels', page: 4, excerpt: 'Le plafond de nuit d’hôtel est de 120 € à Paris et 90 € en région, petit-déjeuner compris.' }
+const DOC_PASSAGES = [
+  { text: 'Cette politique s’applique à tous les déplacements professionnels.', heading: 'Champ', page: 1 },
+  { text: 'Le train est privilégié pour les trajets de moins de quatre heures.', heading: 'Transport', page: 2 },
+  { text: 'Le plafond de nuit d’hôtel est de 120 € à Paris et 90 € en région, petit-déjeuner compris. Au-delà, l’accord du manager est requis.', heading: 'Hôtels', page: 4 },
+]
+
+/** Icône servie par Snowfall pour lemonde.fr ; les autres sites n'en ont pas (initiale). */
+const FAVICON = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAMElEQVR4nGNgiDoBR/9hAJ8gaarhGohVDdFAvGoQlyTVCA0keJ001cihNBqsQypYAWF86nQX0wxzAAAAAElFTkSuQmCC', 'base64')
+
+const RESEARCH_SOURCES = [
+  { n: 1, sourceId: 'https://www.lemonde.fr/sport/ballon-or-2026', name: 'L’Anglais Harry Kane remporte le Ballon d’or 2026', url: 'https://www.lemonde.fr/sport/ballon-or-2026', base: 'web', excerpt: 'Avec 73 buts en club et en sélection, l’attaquant du Bayern Munich succède à Rodri. Il devance Kylian Mbappé et Lamine Yamal.' },
+  { n: 2, sourceId: 'https://www.uefa.com/news/kane-season', name: 'Kane : une saison record avec le Bayern', url: 'https://www.uefa.com/news/kane-season', base: 'web', excerpt: 'Meilleur buteur de Bundesliga pour la troisième saison consécutive, 14 buts en Ligue des champions.' },
+]
+const RESEARCH_ALSO = [{ n: 3, sourceId: 'https://fr.wikipedia.org/wiki/Ballon_d%27or', name: 'Ballon d’or — Wikipédia', url: 'https://fr.wikipedia.org/wiki/Ballon_d%27or', base: 'web', excerpt: 'Le Ballon d’or est une récompense attribuée chaque année.' }]
+const RESEARCH_STEPS = [
+  { id: 'w1', name: 'web_search', status: 'done', summary: 'Ballon d’or 2026 vainqueur', startedAt: 1_000, endedAt: 2_400, found: [1, 2, 3] },
+  { id: 'w2', name: 'read_webpage', status: 'done', summary: 'L’Anglais Harry Kane remporte le Ballon d’or 2026', startedAt: 2_500, endedAt: 4_100, found: [1] },
+]
+const RESEARCH_ANSWER = 'Harry Kane a remporté le Ballon d’or 2026 [1]. Il a inscrit 73 buts sur la saison, dont 14 en Ligue des champions [1][2].'
 
 const APPROVAL = { id: 'a-1', stepId: 's-1', tool: 'save_to_knowledge', title: 'Enregistrer une note', detail: 'Wifi invités : Snowfall-Guest' }
 const sse = (events: [string, unknown][]) => events.map(([event, data]) => `event: ${event}
@@ -185,6 +212,13 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     const path = url.pathname.replace(/^\/api/, '')
     const method = request.method()
     const key = `${method} ${path}`
+
+    if (method === 'GET' && path === '/knowledge/sources/doc-1/passages') return json(route, { name: DOC_SOURCE.name, passages: DOC_PASSAGES })
+    if (method === 'GET' && path.startsWith('/favicons/')) {
+      return decodeURIComponent(path.slice('/favicons/'.length)) === 'lemonde.fr'
+        ? route.fulfill({ status: 200, contentType: 'image/png', body: FAVICON })
+        : json(route, { error: 'Not found' }, 404)
+    }
 
     // Comme Fastify : un corps JSON annoncé mais vide est refusé (400). Sans ce
     // contrôle, un DELETE ou un POST sans données passait ici et échouait en vrai.
@@ -699,7 +733,11 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         feedbackCalls.push({ messageId: feedbackPath[1]!, ...body })
         return json(route, { feedback: body.rating ? body : null })
       }
-      if (method === 'GET' && rest === '/files') return json(route, { files: [] })
+      if (method === 'GET' && rest === '/files') {
+        const last = (messages.get(conversationId!) ?? []).filter((item) => item.role === 'assistant').at(-1)
+        return json(route, { files: options.imageAnswer && last ? [{ id: 'img-1', name: 'image.png', mediaType: 'image/png', size: FAVICON.length, messageId: last.id, createdAt: now }] : [] })
+      }
+      if (method === 'GET' && rest === '/files/img-1') return route.fulfill({ status: 200, contentType: 'image/png', body: FAVICON })
       if (method === 'GET' && rest === '/shares') return json(route, { shares: sharesById.map(({ id, token, expiresAt }) => ({ id, token, expiresAt, createdAt: now })) })
       if (method === 'POST' && rest === '/shares') {
         const { days } = request.postDataJSON() as { days: number }
@@ -806,6 +844,41 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         if (options.sensitive && /1 85 05 78 006 084 91/.test(content)) {
           if (options.sensitive === 'blocked') return json(route, { error: 'Local model required', reason: 'sensitive_requires_local', categories: ['nir'] }, 409)
           Object.assign(conversations.find((item) => item.id === conversationId) ?? {}, { sensitive: true })
+        }
+        if (options.imageAnswer) {
+          const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
+          const step = { id: 'i1', name: 'generate_image', status: 'done', summary: 'image', startedAt: 1_000, endedAt: 55_000 }
+          const assistantMessage = { id: id(), role: 'assistant' as const, content: 'Voici un alien vert qui vous salue !', createdAt: now, author: 'model:mistral:mistral-small-latest', activity: { startedAt: 500, endedAt: 88_000, steps: [step], consulted: [] } }
+          messages.get(conversationId!)?.push(userMessage, assistantMessage)
+          return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse([['step', step], ['token', { text: assistantMessage.content }], ['done', { userMessage, assistantMessage }]]) })
+        }
+        if (options.documentAnswer) {
+          const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
+          const step = { id: 'k1', name: 'search_knowledge', status: 'done', summary: 'plafond hôtel Paris', startedAt: 1_000, endedAt: 1_600, found: [1] }
+          const answer = 'À Paris, la nuit d’hôtel est plafonnée à 120 € [1].'
+          const assistantMessage = { id: id(), role: 'assistant' as const, content: answer, createdAt: now, author: 'model:mistral:mistral-small-latest', sources: [DOC_SOURCE], activity: { startedAt: 900, endedAt: 2_400, steps: [step], consulted: [DOC_SOURCE] } }
+          messages.get(conversationId!)?.push(userMessage, assistantMessage)
+          return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse([['step', step], ['token', { text: answer }], ['done', { userMessage, assistantMessage }]]) })
+        }
+        if (options.research) {
+          const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
+          const activity = { startedAt: 500, endedAt: 6_300, steps: RESEARCH_STEPS, consulted: [...RESEARCH_SOURCES, ...RESEARCH_ALSO] }
+          const assistantMessage = { id: id(), role: 'assistant' as const, content: RESEARCH_ANSWER, createdAt: now, author: 'model:mistral:mistral-small-latest', sources: RESEARCH_SOURCES, activity }
+          messages.get(conversationId!)?.push(userMessage, assistantMessage)
+          const conversation = conversations.find((item) => item.id === conversationId)
+          if (conversation && conversation.title === 'Nouvelle conversation') conversation.title = content.slice(0, 80)
+          return route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: sse([
+              ['step', { ...RESEARCH_STEPS[0], status: 'running', endedAt: undefined, found: undefined }],
+              ['step', RESEARCH_STEPS[0]],
+              ['step', { ...RESEARCH_STEPS[1], status: 'running', endedAt: undefined, found: undefined }],
+              ['step', RESEARCH_STEPS[1]],
+              ['token', { text: RESEARCH_ANSWER }],
+              ['done', { userMessage, assistantMessage }],
+            ]),
+          })
         }
         const answer = options.answer ?? 'Bonjour !'
         const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }

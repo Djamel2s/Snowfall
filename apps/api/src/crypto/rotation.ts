@@ -4,7 +4,7 @@ import { runAad } from "../agent/runs.js";
 import { profileAad } from "../agents/store.js";
 import { attachmentAad } from "../attachments/store.js";
 import { summaryAad } from "../conversations/compaction.js";
-import { conversationFieldAad, feedbackAad, messageAad, messageSourcesAad, titleAad } from "../conversations/store.js";
+import { conversationFieldAad, feedbackAad, messageAad, messageActivityAad, messageSourcesAad, titleAad } from "../conversations/store.js";
 import type { TenantContext } from "../db/tenant.js";
 import { exampleAad, headAad } from "../decision/workshop.js";
 import { generatedFileAad } from "../files/generated.js";
@@ -104,6 +104,7 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     fields: [
       { column: "content", aad: (row, t) => messageAad(t, s(row.conversation_id), s(row.id), s(row.role) as Parameters<typeof messageAad>[3]) },
       { column: "sources", aad: (row, t) => messageSourcesAad(t, s(row.conversation_id), s(row.id)) },
+      { column: "activity", aad: (row, t) => messageActivityAad(t, s(row.conversation_id), s(row.id)) },
     ],
   },
   { table: "message_feedback", scope: "user", keys: ["message_id"], fields: [{ column: "comment", aad: (row, t) => feedbackAad(t, s(row.message_id)) }] },

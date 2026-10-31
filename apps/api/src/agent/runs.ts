@@ -28,6 +28,8 @@ export type RunRequest = {
   role: string;
   /** Sources injectées d'office (modèle sans outils), pour les citer à la fin. */
   sources?: Citation[] | undefined;
+  /** Envoyé par une tâche planifiée ou l'API publique (exclu du Pilotage). */
+  automated?: "schedule" | "api" | undefined;
   details: Record<string, string | number | boolean>;
 };
 
@@ -38,6 +40,8 @@ export type RunProgress = {
   reasoning?: string;
   steps: ToolEvent[];
   pending: PendingApproval[];
+  /** Début de la réponse (ms), pour la durée affichée avec son activité. */
+  startedAt?: number;
 };
 
 export type RunRecord = {

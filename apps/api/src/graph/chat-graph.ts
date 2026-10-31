@@ -3,6 +3,7 @@ import { pseudonymizingModel } from "../privacy/pseudonymize.js";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { exposureOf, gateOutbound, mergeExposure, type Exposure } from "../agent/exposure.js";
 import type { AgentTrace } from "../observability/tracing.js";
+import { INJECTION_NOTICE } from "../security/injection.js";
 import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
 
 /** Image jointe, transmise en base64 aux modèles multimodaux. */
@@ -145,7 +146,23 @@ export type ToolEvent = {
   /** Étape d'un sous-agent : son nom, et l'appel de délégation qui l'a lancé. */
   agent?: string | undefined;
   parent?: string | undefined;
+  /** Début et fin de l'étape (ms depuis l'époque Unix). */
+  startedAt?: number | undefined;
+  endedAt?: number | undefined;
+  /** Numéros des sources trouvées par l'étape (provenance des citations). */
+  found?: number[] | undefined;
+  /** Résultat signalé comme suspect (injection) : l'agent a reçu l'avertissement. */
+  flagged?: boolean | undefined;
+  /** Action validée par l'utilisateur. */
+  approved?: boolean | undefined;
 };
+
+/** Sources numérotées d'un résultat d'outil (passages, pages web) : leurs numéros. */
+function foundIn(data: unknown) {
+  if (!Array.isArray(data)) return undefined;
+  const numbers = data.map((item) => (item && typeof item === "object" ? (item as { n?: unknown }).n : undefined)).filter((n): n is number => typeof n === "number" && n > 0);
+  return numbers.length ? [...new Set(numbers)].slice(0, 20) : undefined;
+}
 
 /**
  * Exécution durable : l'état du graphe est enregistré après chaque étape
@@ -366,7 +383,8 @@ export function buildAgentGraph(
     .addNode("tool", async (input: { call: ToolCall; exposure?: Exposure }, config) => {
       const { call } = input;
       const signal = config.signal ?? new AbortController().signal;
-      config.writer?.({ tool: { id: call.id, name: call.name, status: "running" } satisfies ToolEvent });
+      const startedAt = Date.now();
+      config.writer?.({ tool: { id: call.id, name: call.name, status: "running", startedAt } satisfies ToolEvent });
       const span = options.trace?.tool({ name: call.name, callId: call.id, input: call.arguments });
       let result: Awaited<ReturnType<typeof runTool>>;
       try {
@@ -379,7 +397,20 @@ export function buildAgentGraph(
       }
       span?.end({ status: result.denied ? "denied" : result.isError ? "error" : "done", output: result.content });
       const status = result.denied ? "denied" : result.isError ? "error" : "done";
-      config.writer?.({ tool: { id: call.id, name: call.name, status, summary: result.summary } satisfies ToolEvent });
+      const found = foundIn(result.data);
+      config.writer?.({
+        tool: {
+          id: call.id,
+          name: call.name,
+          status,
+          summary: result.summary,
+          startedAt,
+          endedAt: Date.now(),
+          ...(found ? { found } : {}),
+          ...(result.content.includes(INJECTION_NOTICE) ? { flagged: true } : {}),
+          ...(result.approved ? { approved: true } : {}),
+        } satisfies ToolEvent,
+      });
       const turn: ChatTurn = {
         role: "tool",
         toolCallId: call.id,

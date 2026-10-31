@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { TenantContext } from "../db/tenant.js";
 import type { ChatTurn } from "../graph/chat-graph.js";
 import type { ActiveBase, Citation, KnowledgeService, Passage } from "../knowledge/service.js";
-import { renderKnowledge } from "../knowledge/service.js";
+import { citationsOf, renderKnowledge } from "../knowledge/service.js";
 import { defineTool } from "./tools.js";
 
 /** Outils dont les résultats sont des sources numérotées [n]. */
@@ -50,8 +50,12 @@ export class CitationRegistry {
   citations(answer: string): Citation[] {
     const cited = new Set([...answer.matchAll(/\[(\d{1,3})\]/g)].map((match) => Number(match[1])));
     const all = [...this.passages.values()];
-    const kept = cited.size ? all.filter((passage) => cited.has(passage.n)) : all;
-    return kept.map(({ text: _text, ...citation }) => citation);
+    return citationsOf(cited.size ? all.filter((passage) => cited.has(passage.n)) : all);
+  }
+
+  /** Toutes les sources consultées pendant la réponse (activité), citées ou non. */
+  consulted(): Citation[] {
+    return citationsOf([...this.passages.values()]);
   }
 }
 

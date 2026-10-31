@@ -54,6 +54,8 @@ export type LoadedBase = {
   sources: Map<string, { name: string; url: string | null }>;
 };
 
+export type SourcePassages = { name: string; passages: { text: string; heading: string | null; page: number | null }[] };
+
 /** Sources par base, et passages par base (au-delà : refus d'import). */
 export const MAX_SOURCES_PER_BASE = 200;
 export const MAX_CHUNKS_PER_BASE = 50_000;
@@ -70,6 +72,8 @@ export interface KnowledgeStore {
   ): Promise<KnowledgeSource>;
   getSource(tenant: TenantContext, sourceId: string): Promise<(KnowledgeSource & { base: KnowledgeBase; agentId: string | null }) | null>;
   sourceContent(tenant: TenantContext, sourceId: string): Promise<{ name: string; url: string | null; mediaType: string | null; bytes: Buffer } | null>;
+  /** Texte lu d'un document, passage par passage, dans l'ordre (ouvrir une citation à sa place). */
+  sourcePassages(tenant: TenantContext, sourceId: string): Promise<SourcePassages | null>;
   /** Contenu récupéré d'un lien : remplace le contenu provisoire et le nom. */
   updateFetched(tenant: TenantContext, sourceId: string, input: { name: string; mediaType: string; bytes: Buffer }): Promise<void>;
   setStatus(tenant: TenantContext, sourceId: string, status: SourceStatus, errorCode?: string | null): Promise<void>;
@@ -289,6 +293,26 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         mediaType: row.mediaType,
         bytes: await this.keyring.decryptBytes(client, tenant.organizationId, row.content, aad("content")),
       };
+    });
+  }
+
+  sourcePassages(tenant: TenantContext, sourceId: string) {
+    return withTenant(this.pool, tenant, async (client) => {
+      const source = (
+        await client.query<{ baseId: string; name: string }>(
+          `SELECT base_id AS "baseId", name FROM knowledge_sources WHERE id = $1 AND organization_id = $2 AND status = 'ready'`,
+          [sourceId, tenant.organizationId],
+        )
+      ).rows[0];
+      if (!source) return null;
+      const open = await this.keyring.opener(client, tenant.organizationId);
+      const rows = await client.query<{ id: string; content: string }>(
+        `SELECT id, content FROM knowledge_chunks WHERE source_id = $1 AND organization_id = $2 ORDER BY ordinal`,
+        [sourceId, tenant.organizationId],
+      );
+      const passages = [];
+      for (const row of rows.rows) passages.push(decodeChunk((await open(row.content, chunkAad(tenant.organizationId, sourceId, row.id, "text"))).toString("utf8")));
+      return { name: (await open(source.name, sourceAad(tenant.organizationId, source.baseId, sourceId, "name"))).toString("utf8"), passages };
     });
   }
 

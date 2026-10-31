@@ -22,6 +22,20 @@ export type MessageSource = {
   /** Section (« Partie > Sous-partie ») et page du passage cité. */
   section?: string | null
   page?: number | null
+  /** Extrait du passage ou de la page (texte brut), montré au survol de la citation. */
+  excerpt?: string | null
+}
+
+/** Document lu par l'agent : ses passages, dans l'ordre. */
+export type DocumentPassages = { name: string; passages: { text: string; heading: string | null; page: number | null }[] }
+
+/** Ce que l'agent a fait pour une réponse : étapes, durées, sources consultées. */
+export type MessageActivity = {
+  startedAt: number
+  endedAt: number
+  steps: AgentStep[]
+  /** Toutes les sources consultées, citées ou non. */
+  consulted: MessageSource[]
 }
 
 /** Fichier produit par l'interpréteur de code, rattaché à une réponse. */
@@ -42,6 +56,8 @@ export type Message = {
   author?: string
   /** Réponse inachevée (longueur maximale, arrêt) : elle peut être continuée. */
   incomplete?: boolean
+  /** Étapes de l'agent pour cette réponse. */
+  activity?: MessageActivity
 }
 
 export type MessageFeedback = { rating: 'up' | 'down'; comment?: string }
@@ -739,6 +755,15 @@ export type AgentStep = {
   /** Étape d'un sous-agent : son nom, et l'étape de délégation qui l'a lancé. */
   agent?: string
   parent?: string
+  /** Début et fin (ms depuis l'époque Unix). */
+  startedAt?: number
+  endedAt?: number
+  /** Numéros des sources trouvées par l'étape. */
+  found?: number[]
+  /** Contenu signalé comme suspect : l'agent a été averti. */
+  flagged?: boolean
+  /** Action que tu as validée. */
+  approved?: boolean
 }
 
 type StreamOptions = {
@@ -1066,6 +1091,8 @@ export const api = {
   reindexKnowledgeSource: async (id: string) =>
     (await request<{ source: KnowledgeSource }>(`/knowledge/sources/${id}/reindex`, { method: 'POST' })).source,
   knowledgeSourceBlob: async (id: string) => (await send(`/knowledge/sources/${id}/content`)).blob(),
+  /** Texte lu d'un document, passage par passage (ouvrir une citation à sa place). */
+  knowledgePassages: (id: string) => request<DocumentPassages>(`/knowledge/sources/${id}/passages`),
 
   listModels: async () => (await modelCatalog()).providers,
 

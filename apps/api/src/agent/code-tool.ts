@@ -5,6 +5,7 @@ import type { GeneratedFileMeta } from "../files/generated.js";
 import type { MalwareScanner } from "../security/antivirus.js";
 import { sandboxPath } from "../skills/scripts.js";
 import { defineTool } from "./tools.js";
+import { localEndpoint, type LocalEndpoint } from "../security/local-endpoint.js";
 
 // Interpréteur de code : le code écrit par le modèle s'exécute dans le bac à
 // sable (apps/sandbox), un conteneur SANS réseau joint par un socket Unix.
@@ -35,14 +36,18 @@ export interface CodeSandbox {
 
 /** Bac à sable par socket Unix (aucun port réseau ouvert). */
 export class UnixSocketSandbox implements CodeSandbox {
-  constructor(private readonly socketPath: string) {}
+  private readonly endpoint: LocalEndpoint;
+
+  constructor(socketPath: string) {
+    this.endpoint = localEndpoint(socketPath);
+  }
 
   run(code: string, options: { timeoutSeconds: number; signal: AbortSignal; skill?: SkillRun | undefined }): Promise<SandboxResult> {
     const body = JSON.stringify(options.skill ? { ...options.skill, timeoutSeconds: options.timeoutSeconds } : { code, timeoutSeconds: options.timeoutSeconds });
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
-          socketPath: this.socketPath,
+          ...this.endpoint,
           path: "/run",
           method: "POST",
           headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },

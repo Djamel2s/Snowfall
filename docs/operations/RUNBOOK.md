@@ -519,6 +519,61 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   (messages, fichiers, partages) : prévenir les membres avant d'activer une
   durée courte.
 
+## 39. Correctifs du 31 octobre (conservation, pilotage)
+
+- Migration `schedules_retention` (`npm run db:migrate`) : la file
+  `agent_schedule_queue` porte la conversation de chaque tâche ;
+  `snowfall_retention_expired()` épargne ces conversations tant que la tâche
+  existe (supprimer la tâche les remet sous la règle commune).
+- Pilotage : les messages des tâches planifiées et de l'API publique ne
+  comptent plus comme activité (pas de reprise de l'historique : les jours
+  passés gardent leur compte).
+
+## 40. Activité des réponses et icônes des sites
+
+- Migration `message_activity` (`npm run db:migrate`) : colonne chiffrée
+  `messages.activity`. Les réponses d'avant n'ont pas d'activité (normal).
+- Icônes : `GET /api/favicons/<domaine>`, récupérées par le proxy de sortie
+  comme les liens de la base (domaines autorisés de l'organisation compris).
+  Un site sans icône affiche son initiale ; 404 gardé une journée en cache.
+- Rotation des clés : la colonne est couverte ; le test de couverture échoue
+  si une future colonne chiffrée est oubliée.
+
+## 41. Poste de développement : toutes les fonctions en local
+
+- Recherche web : `docker compose --profile web-search up -d searxng`
+  (`127.0.0.1:8888`, `infra/searxng/settings.dev.yml`, sortie directe), puis
+  `WEB_SEARCH_URL=http://127.0.0.1:8888` et `SEARXNG_SECRET` dans `.env`.
+- Interpréteur de code et OCR : `docker compose --profile code up -d --build`.
+  Les services restent sans réseau ; le conteneur `socket-bridge` (socat)
+  expose leurs sockets sur `127.0.0.1:7811` (code) et `7812` (OCR), car
+  Docker Desktop ne partage pas les sockets Unix avec Windows. Dans `.env` :
+  `SANDBOX_SOCKET=tcp://127.0.0.1:7811`, `OCR_SOCKET=tcp://127.0.0.1:7812`.
+  L'API refuse `tcp://` en production, et toute adresse hors boucle locale.
+  Sous Docker Desktop : runtime `runc` (pas de gVisor), isolation moindre,
+  réservée au développement.
+- Décision locale (~2,5 Go) : `docker compose --profile decision up -d --build`,
+  puis `DECISION_SOCKET=tcp://127.0.0.1:7813`.
+- Antivirus : `docker compose --profile antivirus up -d clamav`, puis
+  `ANTIVIRUS=clamav`, `CLAMAV_HOST=localhost`.
+- Modèle local et embeddings : Ollama natif (GPU), `ollama pull qwen3:8b` et
+  `ollama pull bge-m3`, puis `LOCAL_LLM_BASE_URL=http://127.0.0.1:11434/v1`,
+  `LOCAL_LLM_TOOLS=true`, `LOCAL_EMBEDDING_MODEL=bge-m3`. Production : vLLM
+  (débit multi-utilisateurs), même variable.
+- Voix : `docker compose --profile voice up -d speaches` (GPU, ~9 Go), puis
+  télécharger les modèles une fois : `POST /v1/models/deepdml/faster-whisper-large-v3-turbo-ct2`
+  et `POST /v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX` ; `.env` : `STT_URL`,
+  `TTS_URL` (`http://127.0.0.1:8000`), `STT_MODEL`, `TTS_MODEL`,
+  `TTS_VOICE=ff_siwis` (voix française).
+- Images : `docker compose --profile images up -d localai` (GPU), puis une
+  fois `POST http://127.0.0.1:8090/models/apply {"id":"localai@sd-3.5-medium-ggml"}`
+  (~5 Go ; licence Stability Community : gratuite sous 1 M$ de CA annuel) ;
+  `.env` : `IMAGE_URL=http://127.0.0.1:8090`, `IMAGE_MODEL=sd-3.5-medium-ggml`.
+  Sur une RTX 3060 : ~20 s en 512×512, ~55 s en 1024×1024 (format demandé par
+  Snowfall) ; l'outil a son propre délai (185 s), le délai commun des outils
+  (30 s) le coupait.
+- Place disque : prévoir ~35 Go pour l'ensemble.
+
 ## 30. Compétences des agents
 
 - Migrations : `skills`, `skills_enforcement` (`npm run db:migrate`, droits

@@ -1,0 +1,37 @@
+# SearXNG de DÉVELOPPEMENT (compose.yaml, profil « web-search ») : comme la
+# production, sauf la sortie, directe (pas de proxy Squid sur un poste de dev).
+# Ne jamais utiliser ce fichier en production (voir settings.yml).
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - brave
+      - qwant
+      - mojeek
+      - wikipedia
+
+general:
+  instance_name: "Snowfall"
+  enable_metrics: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  # L'API ne répond qu'en JSON (aucune page pour un navigateur).
+  formats:
+    - json
+
+server:
+  # Clé secrète : variable SEARXNG_SECRET (jamais dans ce fichier).
+  secret_key: "remplacée-par-SEARXNG_SECRET"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+
+ui:
+  static_use_hash: true

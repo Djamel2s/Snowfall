@@ -150,6 +150,9 @@ import { PostgresAdminOverviewStore, type AdminOverviewStore } from "./admin/ove
 import { PostgresScimUserStore, type ScimUserStore } from "./scim/store.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { EmbeddingRegistry, type EmbeddingConfig, type EmbeddingProvider } from "./knowledge/embeddings.js";
+import { activityOf, type MessageActivity } from "./conversations/activity.js";
+import { FaviconService } from "./web/favicon.js";
+import { registerFaviconRoutes } from "./routes/favicons.js";
 import { citationsOf, KnowledgeService, renderKnowledge, type ActiveBase, type Passage } from "./knowledge/service.js";
 import { PostgresKnowledgeStore } from "./knowledge/store.js";
 import { createQueryRewriter, heuristicStandalone, type QueryRewriter } from "./knowledge/rewrite.js";
@@ -198,6 +201,8 @@ declare module "fastify" {
   }
   interface FastifyRequest {
     principal: AuthenticatedUser | null;
+    /** Message envoyé par une tâche planifiée ou l'API publique : pas une activité de la personne. */
+    automated?: "schedule" | "api";
   }
 }
 
@@ -264,6 +269,8 @@ export type AppDependencies = {
   checkpointer?: (tenant: { organizationId: string; userId: string }) => BaseCheckpointSaver;
   /** Moteur de recherche web (SearXNG). Absent : outil web_search indisponible. */
   webSearch?: WebSearchEngine;
+  /** Icônes des sites cités (tests : récupération simulée). Absent : par la base de connaissances. */
+  favicons?: FaviconService;
   /** Bac à sable d'exécution de code. Absent : interpréteur indisponible. */
   sandbox?: CodeSandbox;
   /** Serveurs MCP approuvés par l'admin. Absent : outil « mcp » indisponible. */
@@ -386,7 +393,7 @@ export function createAppServer(deps: AppDependencies) {
   const audit = deps.audit ?? noopAuditLog;
   const kit = createRouteKit(audit);
   const authenticate: Authenticator = deps.authenticate ?? (async () => null);
-  const internalPrincipals = new Map<string, { user: AuthenticatedUser; expires: number }>();
+  const internalPrincipals = new Map<string, { user: AuthenticatedUser; expires: number; automated?: "schedule" | "api" }>();
   const conversationStore = deps.conversationStore;
   const models = deps.models ?? new ProviderRegistry({}, { fallback: echoModel });
   const agents = deps.agents;
@@ -742,6 +749,7 @@ export function createAppServer(deps: AppDependencies) {
         if (typeof internal === "string") internalPrincipals.delete(internal);
         if (!entry || entry.expires < Date.now()) return reply.code(401).send({ error: "Unauthorized" });
         request.principal = entry.user;
+        if (entry.automated) request.automated = entry.automated;
         return;
       }
 
@@ -819,6 +827,20 @@ export function createAppServer(deps: AppDependencies) {
       registerBrandingRoutes(api, kit, { store: deps.branding, members: deps.members, scanner: deps.scanner });
     }
 
+    // Icônes des sites cités : récupérées et servies par Snowfall, jamais par le navigateur.
+    const favicons = deps.favicons ?? (deps.knowledge ? new FaviconService((url, options) => deps.knowledge!.fetchPublic(url, options)) : undefined);
+    if (favicons) {
+      registerFaviconRoutes(api, kit, {
+        favicons,
+        // Seulement si l'organisation sort déjà sur le web (recherche web ou import de liens).
+        domains: async (user) => {
+          const policy = deps.knowledge ? await deps.knowledge.linkPolicy(user) : { enabled: false, domains: [] };
+          const tools = deps.settings ? (await deps.settings.get(user)).tools : defaultOrganizationTools;
+          return policy.enabled || tools.includes("web_search") ? policy.domains : null;
+        },
+      });
+    }
+
     // Administration › Pilotage : totaux de l'organisation, administrateurs seulement.
     if (deps.adminOverview && deps.members) {
       registerAdminRoutes(api, kit, { overview: deps.adminOverview, members: deps.members, agents, ratings: deps.agentRatings, settings: deps.settings });
@@ -838,7 +860,7 @@ export function createAppServer(deps: AppDependencies) {
         conversations: conversationStore,
         send: async (user, conversationId, content) => {
           const token = randomBytes(32).toString("base64url");
-          internalPrincipals.set(token, { user, expires: Date.now() + 600_000 });
+          internalPrincipals.set(token, { user, expires: Date.now() + 600_000, automated: "api" });
           const response = await app
             .inject({
               method: "POST",
@@ -1825,6 +1847,11 @@ export function createAppServer(deps: AppDependencies) {
           summary: event.summary,
           agent: event.agent ?? specialist.name,
           parent: event.parent ? `${callId}/${event.parent}` : callId,
+          // Numéros de sources : propres au sous-agent, sans lien avec celles de la réponse.
+          startedAt: event.startedAt,
+          endedAt: event.endedAt,
+          flagged: event.flagged,
+          approved: event.approved,
         });
       // Demande d'écriture du sous-agent → validation de l'utilisateur, au nom du sous-agent.
       const escalate = (request: { callId: string; name: string; preview: ToolPreview }, signal: AbortSignal) =>
@@ -1924,7 +1951,7 @@ export function createAppServer(deps: AppDependencies) {
       run: RunRecord,
       answer: string,
       sources: MessageSource[],
-      outcome: { usage?: TokenUsage | undefined; model: string; partial: boolean; steps: number; truncated?: boolean },
+      outcome: { usage?: TokenUsage | undefined; model: string; partial: boolean; steps: number; truncated?: boolean; activity?: MessageActivity | undefined },
     ) {
       const { request: input } = run;
       // Arrêtée ou coupée par la longueur maximale : la réponse pourra être continuée.
@@ -1939,6 +1966,8 @@ export function createAppServer(deps: AppDependencies) {
                 runId: run.id,
                 author: authorOf(input),
                 incomplete,
+                ...(input.automated ? { automated: true } : {}),
+                ...(outcome.activity ? { activity: outcome.activity } : {}),
               })
               .then((exchange) => (exchange ? { userMessage: exchange.userMessage, assistantMessage: exchange.assistantMessage } : null))
           : input.kind === "continue"
@@ -1947,7 +1976,7 @@ export function createAppServer(deps: AppDependencies) {
                 .extendAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, incomplete)
                 .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null))
             : await conversationStore
-                .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined, run.id, authorOf(input), incomplete)
+                .replaceLastAssistant(user, run.conversationId, input.previousAssistantId ?? "", answer, sources.length ? sources : undefined, run.id, authorOf(input), incomplete, outcome.activity)
                 .then((assistantMessage) => (assistantMessage ? { assistantMessage } : null));
       if (!payload) return null;
 
@@ -2022,7 +2051,7 @@ export function createAppServer(deps: AppDependencies) {
     }
 
     /** Arrêt demandé : la réponse partielle est gardée (comme avant), le run effacé. */
-    async function cancelRun(request: FastifyRequest, user: AuthenticatedUser, run: RunRecord, text: string, plan?: KnowledgePlan) {
+    async function cancelRun(request: FastifyRequest, user: AuthenticatedUser, run: RunRecord, text: string, plan?: KnowledgePlan, progress: RunProgress = run.progress) {
       for (const pending of run.progress.pending) {
         await kit.record(request, user, {
           eventType: "tool.approval",
@@ -2036,7 +2065,8 @@ export function createAppServer(deps: AppDependencies) {
         ? await completeRun(request, user, run, text, plan ? knowledgeSources(plan, text) : (run.request.sources ?? []), {
             model: run.request.provider,
             partial: true,
-            steps: run.progress.steps.length,
+            steps: progress.steps.length,
+            activity: activityOf(progress.steps, plan?.mode === "agent" ? plan.citations.consulted() : [], progress.startedAt),
           })
         : null;
       await runs.finish(user, run.id);
@@ -2063,6 +2093,8 @@ export function createAppServer(deps: AppDependencies) {
       localRuns.set(run.id, { stop });
       const emit = (event: RunEvent) => runEvents.emit(run.id, event);
       const progress: RunProgress = { ...structuredClone(run.progress), pending: [] };
+      // Reprise (validation, panne) : la réponse a commencé au premier passage.
+      progress.startedAt ??= Date.now();
       const provider = run.request.provider;
       const started = performance.now();
       const observe = (outcome: "success" | "aborted" | "refused" | "rate_limited" | "error" | "paused") =>
@@ -2276,6 +2308,7 @@ export function createAppServer(deps: AppDependencies) {
           partial: false,
           steps: result.steps ?? 0,
           truncated: result.truncated === true,
+          activity: activityOf(progress.steps, citations.size ? citations.consulted() : [], progress.startedAt),
         });
         // Fichiers produits par le code : rattachés à la réponse enregistrée.
         const fileIds = generatedFileIds(result.turns ?? []);
@@ -2304,7 +2337,7 @@ export function createAppServer(deps: AppDependencies) {
           }
           if (stopReason === "cancel" || stopReason === "limit") {
             const text = stopReason === "limit" && progress.text.trim() ? `${progress.text}\n\n_${LIMIT_NOTICE}_` : progress.text;
-            await cancelRun(request, user, run, text, plan).catch((cause: unknown) => {
+            await cancelRun(request, user, run, text, plan, progress).catch((cause: unknown) => {
               request.log.error({ err: cause }, "Échec d'enregistrement de la réponse partielle");
             });
           }
@@ -2503,7 +2536,7 @@ export function createAppServer(deps: AppDependencies) {
       }
 
       const token = randomBytes(32).toString("base64url");
-      internalPrincipals.set(token, { user, expires: Date.now() + 30_000 });
+      internalPrincipals.set(token, { user, expires: Date.now() + 30_000, automated: "schedule" });
       const response = await app
         .inject({
           method: "POST",
@@ -2710,6 +2743,7 @@ export function createAppServer(deps: AppDependencies) {
           provider: admitted.provider,
           role: user.role,
           ...(plan.mode === "inline" ? { sources: citationsOf(plan.passages) } : {}),
+          ...(request.automated ? { automated: request.automated } : {}),
           details: { attachments: attachmentIds.length, edited: Boolean(editMessageId), passages: knowledgeDetail(plan) },
         },
       });

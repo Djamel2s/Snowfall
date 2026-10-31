@@ -55,7 +55,9 @@ export function imageTool(deps: {
     name: "generate_image",
     description:
       "Crée une image à partir d'une description, avec un modèle local (rien ne sort de la plateforme). " +
-      "À utiliser quand l'utilisateur demande une illustration, un visuel ou une image. Décris précisément le sujet, " +
+      "À utiliser quand l'utilisateur demande une illustration, un visuel, un dessin ou une image (« dessine… », « génère une image… ») : " +
+      "préfère toujours cet outil à un dessin en SVG ou en code, sauf si l'utilisateur demande explicitement du SVG, un schéma ou un diagramme. " +
+      "Si l'outil échoue, dis-le plutôt que de dessiner autre chose. Décris précisément le sujet, " +
       "le style et la composition, en anglais de préférence. L'image s'affiche sous ta réponse : ne la décris pas en détail.",
     parameters: z
       .object({
@@ -64,6 +66,8 @@ export function imageTool(deps: {
       })
       .strict(),
     access: "read",
+    // Une image prend de 20 s à plus d'une minute sur un GPU : le délai commun des outils (30 s) la couperait.
+    timeoutMs: TIMEOUT_MS + 5_000,
     async execute({ prompt, size }, { signal }) {
       if (deps.images.count >= MAX_IMAGES_PER_ANSWER) return { content: "Limite d'images atteinte pour cette réponse.", summary: "limite" };
       deps.images.count++;

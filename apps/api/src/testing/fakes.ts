@@ -22,6 +22,8 @@ export function createFakeConversationStore(): ConversationStore & {
   files: Map<string, AttachmentMeta>;
   /** Fait échoir une conversation temporaire (tests de purge). */
   expire(conversationId: string): void;
+  /** Conversations ayant reçu un échange automatique (tâche planifiée, API), hors Pilotage. */
+  automated: Set<string>;
 } {
   const conversations = new Map<string, FakeConversation>();
   // Tous les messages (toutes branches), avec leur parent ; feuille affichée par conversation.
@@ -40,6 +42,7 @@ export function createFakeConversationStore(): ConversationStore & {
   const leaf = (id: string) => view(id).at(-1)?.id ?? null;
   const feedback = new Map<string, MessageFeedback>();
   const runs = new Map<string, string>();
+  const automated = new Set<string>();
   const files = new Map<string, AttachmentMeta>();
   let clock = Date.now();
   const now = () => new Date((clock += 1)).toISOString();
@@ -59,6 +62,7 @@ export function createFakeConversationStore(): ConversationStore & {
 
   return {
     files,
+    automated,
     markSensitive: async (owner, conversationId) => {
       const conversation = conversations.get(conversationId);
       if (conversation && owns(owner, conversationId)) conversation.sensitive = true;
@@ -232,16 +236,18 @@ export function createFakeConversationStore(): ConversationStore & {
       if (options.sources?.length) assistantMessage.sources = options.sources;
       if (options.author) assistantMessage.author = options.author;
       if (options.incomplete) assistantMessage.incomplete = true;
+      if (options.activity) assistantMessage.activity = options.activity;
       list.push(userMessage, assistantMessage);
       leaves.set(id, assistantMessage.id);
       if (options.runId) runs.set(assistantMessage.id, options.runId);
+      if (options.automated) automated.add(id);
       conversations.get(id)!.updatedAt = now();
       const { parentId: _u, ...user } = userMessage;
       const { parentId: _a, ...assistant } = assistantMessage;
       return { userMessage: user, assistantMessage: assistant };
     },
 
-    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources, runId, author, incomplete) => {
+    replaceLastAssistant: async (owner, id, previousAssistantId, content, sources, runId, author, incomplete, activity) => {
       if (!owns(owner, id)) return null;
       const list = messages.get(id)!;
       const previous = list.find((item) => item.id === previousAssistantId && item.role === "assistant");
@@ -250,6 +256,7 @@ export function createFakeConversationStore(): ConversationStore & {
       if (sources?.length) replacement.sources = sources;
       if (author) replacement.author = author;
       if (incomplete) replacement.incomplete = true;
+      if (activity) replacement.activity = activity;
       list.push(replacement);
       leaves.set(id, replacement.id);
       if (runId) runs.set(replacement.id, runId);
@@ -380,6 +387,11 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
     sourceContent: async (tenant, sourceId) => {
       const source = sourceOf(tenant, sourceId);
       return source ? { name: source.name, url: source.url, mediaType: source.mediaType, bytes: source.bytes } : null;
+    },
+    sourcePassages: async (tenant, sourceId) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source || source.status !== "ready") return null;
+      return { name: source.name, passages: (chunks.get(sourceId) ?? []).map((chunk) => ({ text: chunk.text, heading: chunk.heading ?? null, page: chunk.page ?? null })) };
     },
     updateFetched: async (tenant, sourceId, input) => {
       const source = sourceOf(tenant, sourceId);

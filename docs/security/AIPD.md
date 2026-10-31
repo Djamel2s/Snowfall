@@ -63,6 +63,8 @@ conversations et les documents, traitement à grande échelle possible.
 | Service de décision local (routage des modèles) | Question posée (4 000 caractères au plus) | Conteneur sans réseau, rien conservé ni journalisé ; le modèle choisi reste un fournisseur autorisé |
 | Outils externes en mode OAuth | Arguments des appels, au nom de l'utilisateur | Serveur approuvé par un administrateur ; connexion choisie par l'utilisateur |
 | Fournisseur d'IA de la réponse | Mémoire de l'utilisateur (s'il l'a activée) | Jamais en conversation temporaire ni confidentielle |
+| Activité d'une réponse (étapes de l'agent) | Requêtes de recherche, titres et adresses des pages lues, noms des documents consultés, extraits de 280 caractères au plus, durées | Gardée avec la réponse, chiffrée, visible de son auteur seulement ; jamais le contenu lu ; ni partagée (lien en lecture) ni exportée ; supprimée avec la conversation |
+| Icônes des sites cités | Nom de domaine seulement | Récupérées par Snowfall (par le proxy de sortie), jamais par le navigateur de l'utilisateur ni par un service tiers ; cache en mémoire par organisation (7 jours), rien en base |
 
 Transferts hors UE : à compléter selon les fournisseurs autorisés (localisation,
 clauses contractuelles types, garanties complémentaires).

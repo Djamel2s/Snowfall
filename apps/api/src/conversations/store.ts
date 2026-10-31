@@ -1,3 +1,4 @@
+import type { MessageActivity } from "./activity.js";
 import { activePath, latestLeaf, type BranchInfo, type BranchNode } from "./branches.js";
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -19,6 +20,8 @@ export type MessageSource = {
   base: "agent" | "project" | "web";
   section?: string | null;
   page?: number | null;
+  /** Extrait du passage (document) ou de la page (web), montré au survol de la citation. */
+  excerpt?: string | null;
 };
 
 /** Bases de connaissances consultées par la conversation. */
@@ -96,6 +99,8 @@ export type StoredMessage = {
   author?: string;
   /** Réponse inachevée (coupée par la longueur maximale, ou arrêtée) : peut être continuée. */
   incomplete?: true;
+  /** Ce que l'agent a fait pour cette réponse (étapes, sources consultées). */
+  activity?: MessageActivity;
 };
 
 export type MessageFeedback = { rating: "up" | "down"; comment?: string };
@@ -123,6 +128,10 @@ export type ExchangeOptions = {
   author?: string;
   /** Réponse inachevée. */
   incomplete?: boolean;
+  /** Envoyé par une tâche planifiée ou l'API publique : pas compté comme activité (Pilotage). */
+  automated?: boolean;
+  /** Étapes de la réponse, gardées avec elle. */
+  activity?: MessageActivity;
 };
 
 export interface ConversationStore {
@@ -204,6 +213,7 @@ export interface ConversationStore {
     runId?: string,
     author?: string,
     incomplete?: boolean,
+    activity?: MessageActivity,
   ): Promise<StoredMessage | null>;
   /**
    * Continuer : la suite s'ajoute à la dernière réponse (même message), si elle
@@ -242,6 +252,10 @@ export function messageAad(
 
 export function messageSourcesAad(owner: ConversationOwner, conversationId: string, messageId: string) {
   return `message-sources:${owner.organizationId}:${owner.userId}:${conversationId}:${messageId}`;
+}
+
+export function messageActivityAad(owner: ConversationOwner, conversationId: string, messageId: string) {
+  return `message-activity:${owner.organizationId}:${owner.userId}:${conversationId}:${messageId}`;
 }
 
 type ConversationRow = {
@@ -283,6 +297,7 @@ type MessageRow = {
   role: MessageRole;
   content: string;
   sources?: string | null;
+  activity?: string | null;
   createdAt: string;
   author?: string | null;
   incomplete?: boolean;
@@ -308,7 +323,8 @@ function snippet(text: string, index: number, length: number) {
  * (organisation, utilisateur) ET s'exécute sous RLS avec le contexte tenant.
  */
 /**
- * Messages recopiés (copie de conversation, import) : pas une activité du jour.
+ * Messages recopiés (copie de conversation, import) ou automatiques (tâche
+ * planifiée, API publique) : pas une activité de la personne.
  * Le compteur du pilotage (trigger messages_activity_count) les ignore pour
  * cette transaction seulement.
  */
@@ -378,7 +394,7 @@ export class PostgresConversationStore implements ConversationStore {
     conversationId: string,
     row: MessageRow,
   ): Promise<StoredMessage> {
-    const { sources, author, incomplete, ...rest } = row;
+    const { sources, activity, author, incomplete, ...rest } = row;
     const message: StoredMessage = {
       ...rest,
       ...(author ? { author } : {}),
@@ -394,6 +410,11 @@ export class PostgresConversationStore implements ConversationStore {
       message.sources = JSON.parse(
         await this.keyring.decrypt(client, owner.organizationId, sources, messageSourcesAad(owner, conversationId, row.id)),
       ) as MessageSource[];
+    }
+    if (activity) {
+      message.activity = JSON.parse(
+        await this.keyring.decrypt(client, owner.organizationId, activity, messageActivityAad(owner, conversationId, row.id)),
+      ) as MessageActivity;
     }
     return message;
   }
@@ -715,7 +736,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!exists.rowCount) return null;
 
       const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
-        `SELECT id, role, content, sources, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
+        `SELECT id, role, content, sources, activity, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
          FROM messages
          WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
          ORDER BY created_at ASC, id ASC`,
@@ -790,6 +811,7 @@ export class PostgresConversationStore implements ConversationStore {
     runId?: string,
     author?: string,
     incomplete = false,
+    activity?: MessageActivity,
   ) {
     const id = randomUUID();
     const encrypted = await this.keyring.encrypt(
@@ -801,17 +823,21 @@ export class PostgresConversationStore implements ConversationStore {
     const encryptedSources = sources?.length
       ? await this.keyring.encrypt(client, owner.organizationId, JSON.stringify(sources), messageSourcesAad(owner, conversationId, id))
       : null;
+    const encryptedActivity = activity
+      ? await this.keyring.encrypt(client, owner.organizationId, JSON.stringify(activity), messageActivityAad(owner, conversationId, id))
+      : null;
     const result = await client.query<{ id: string; role: MessageRole; createdAt: string }>(
       `INSERT INTO messages
-         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, run_id, author, incomplete, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, clock_timestamp())
+         (id, conversation_id, user_id, organization_id, role, content, sources, parent_id, run_id, author, incomplete, activity, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, clock_timestamp())
        RETURNING id, role, created_at AS "createdAt"`,
-      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId, runId ?? null, author ?? null, incomplete],
+      [id, conversationId, owner.userId, owner.organizationId, role, encrypted, encryptedSources, parentId, runId ?? null, author ?? null, incomplete, encryptedActivity],
     );
     const message: StoredMessage = { ...result.rows[0]!, content };
     if (sources?.length) message.sources = sources;
     if (author) message.author = author;
     if (incomplete) message.incomplete = true;
+    if (activity) message.activity = activity;
     return message;
   }
 
@@ -831,6 +857,7 @@ export class PostgresConversationStore implements ConversationStore {
       );
       const current = conversation.rows[0];
       if (!current) return null;
+      if (options.automated) await notActivity(client);
 
       // Parent du nouveau message : la fin de la branche affichée, ou, pour une
       // modification, le parent du message modifié (la nouvelle version est sa sœur).
@@ -848,7 +875,7 @@ export class PostgresConversationStore implements ConversationStore {
       }
 
       const userMessage = await this.insertMessage(client, owner, conversationId, "user", userContent, undefined, parentId);
-      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id, options.runId, options.author, options.incomplete);
+      const assistantMessage = await this.insertMessage(client, owner, conversationId, "assistant", assistantContent, options.sources, userMessage.id, options.runId, options.author, options.incomplete, options.activity);
 
       if (options.attachmentIds?.length) {
         const linked = await client.query<AttachmentMeta & { name: string }>(
@@ -919,7 +946,7 @@ export class PostgresConversationStore implements ConversationStore {
       await notActivity(client);
 
       const all = await client.query<MessageRow & { parentId: string | null; sortKey: string }>(
-        `SELECT id, role, content, sources, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
+        `SELECT id, role, content, sources, activity, author, incomplete, parent_id AS "parentId", created_at AS "createdAt", ${SORT_KEY}
          FROM messages
          WHERE conversation_id = $1 AND user_id = $2 AND organization_id = $3
          ORDER BY created_at ASC, id ASC`,
@@ -967,7 +994,7 @@ export class PostgresConversationStore implements ConversationStore {
 
       let parentId: string | null = null;
       for (const message of copied) {
-        parentId = (await this.insertMessage(client, owner, id, message.role, message.content, message.sources, parentId, undefined, message.author, message.incomplete === true)).id;
+        parentId = (await this.insertMessage(client, owner, id, message.role, message.content, message.sources, parentId, undefined, message.author, message.incomplete === true, message.activity)).id;
       }
       const row = (
         await client.query<ConversationRow>(
@@ -1052,6 +1079,7 @@ export class PostgresConversationStore implements ConversationStore {
     runId?: string,
     author?: string,
     incomplete?: boolean,
+    activity?: MessageActivity,
   ) {
     return withTenant(this.pool, owner, async (client) => {
       const conversation = await client.query(
@@ -1072,7 +1100,7 @@ export class PostgresConversationStore implements ConversationStore {
       if (!previous.rowCount) return null;
 
       // Nouvelle version, sœur de l'ancienne : celle-ci reste consultable.
-      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId, runId, author, incomplete);
+      const message = await this.insertMessage(client, owner, conversationId, "assistant", content, sources, previous.rows[0]!.parentId, runId, author, incomplete, activity);
       await client.query(
         `UPDATE conversations SET current_leaf_id = $4, updated_at = now()
          WHERE id = $1 AND user_id = $2 AND organization_id = $3`,
@@ -1095,7 +1123,7 @@ export class PostgresConversationStore implements ConversationStore {
       if ((await this.currentLeaf(client, owner, conversationId)) !== messageId) return null;
       const row = (
         await client.query<MessageRow>(
-          `SELECT id, role, content, sources, author, incomplete, created_at AS "createdAt" FROM messages
+          `SELECT id, role, content, sources, activity, author, incomplete, created_at AS "createdAt" FROM messages
            WHERE id = $1 AND role = 'assistant' AND conversation_id = $2 AND user_id = $3 AND organization_id = $4`,
           [messageId, conversationId, owner.userId, owner.organizationId],
         )

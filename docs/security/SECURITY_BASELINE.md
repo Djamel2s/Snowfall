@@ -399,9 +399,11 @@ adversarial code reviews whose findings were all fixed and covered by tests
   database that the caller is owner/admin of the context organization. The API
   route checks the role too and audits refusals (`admin.overview`).
 - Retention: 400 days. Copies (fork) and imports are not counted.
-- Known gaps: scheduled tasks and public-API calls count as their author's
-  activity; no cost in euros yet (tokens only, no price table); no audit-log
-  viewer in Administration yet (the log is insert-only for the application).
+- Messages sent by a scheduled task or the public API are not counted as
+  activity (2026-10-31): the server tags the one-time internal token it mints
+  for them, never the client; the flag can only remove from the count.
+- Known gap: no cost in euros yet (tokens only, no price table). The audit-log
+  viewer shipped on 2026-10-30 (below).
 
 ### Conversation titles and empty conversations (2026-10-28)
 
@@ -433,6 +435,33 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - The Keycloak login page keeps the Snowfall logo: it is shown before the
   organization is known.
 
+### Answer activity, citations and site icons (2026-10-31)
+
+- Each tool step carries its start and end time, the numbered sources it
+  found, whether its result was flagged as a likely injection, and whether the
+  user approved it. The answer keeps this activity: labels, source numbers,
+  durations and excerpts of at most 280 characters, never the content read.
+  It is encrypted with an AAD bound to the message (`message-activity:…`),
+  rejected in plaintext by a CHECK constraint, and re-encrypted by key
+  rotation. It is not part of share links or exports.
+- Key rotation coverage is now derived from the database: a test lists every
+  `…:v1.` CHECK constraint and fails if a column is not rotated (or if the
+  rotation lists a column the database does not enforce).
+- Citations `[n]` render as chips showing the site and, on hover, focus or
+  tap, a card with the excerpt, the step that found the source and a link to
+  the source address (search engine or user), never a model-written link.
+- A cited document opens in the side panel at the cited passage
+  (`/knowledge/sources/:id/passages`, same rights as the download, audited as
+  `knowledge.source_view`, rendered as plain text). A doubtful citation can be
+  reported: it becomes an ordinary 👎 with a comment.
+- Site icons are fetched by the server (`safeFetch`, egress proxy,
+  organization domain allowlist, 64 KB), recognized by magic bytes (PNG, ICO,
+  JPEG, GIF, WebP; never SVG) and served from `/api/favicons/:domain` with
+  `nosniff` and `CSP default-src 'none'; sandbox`. The browser never contacts
+  the site or a third-party icon service. Cache in memory, per organization.
+  Nothing is fetched for an organization without web egress (web search and
+  link import both off).
+
 ### Administration › Security (2026-10-30)
 
 - Audit log viewer for admins: their organization only, newest first, 50 per
@@ -447,8 +476,11 @@ adversarial code reviews whose findings were all fixed and covered by tests
   queue (`conversation_activity`) maintained by trigger.
 - GDPR data subject rights stay self-service (Settings › My account): admins
   cannot read members' conversations by design.
-- Known gaps: an inactive scheduled task's conversation is purged with its
-  task; the audit log itself has no retention setting (kept, append-only).
+- A scheduled task's conversation never expires while the task exists, even
+  paused (2026-10-31): the content-free schedule queue now carries the
+  conversation id, and `snowfall_retention_expired()` skips it. Before, the
+  purge deleted the conversation and the task with it (cascade).
+- Known gap: the audit log itself has no retention setting (kept, append-only).
 
 ### Known gaps added by the LibreChat parity phase (2026-10-25)
 

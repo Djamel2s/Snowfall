@@ -126,11 +126,13 @@ jobs:
       # Décision dans son image, sans réseau : entrées hostiles, identité, et
       # mesure du routage sur le jeu tenu à l'écart (régression du modèle = échec).
       - name: Tests du service de décision
-        run: docker run --rm --network none --read-only --tmpfs /run/decision:uid=10201,gid=10012,mode=0750 --tmpfs /tmp -v "$PWD/apps/decision:/t:ro" -v "$PWD/apps/api/src/decision:/cases:ro" snowfall-decision:ci python3 -I /t/decision_test.py
-      # OCR dans son image, sans réseau : scan lu, fichier corrompu, utilisateur
-      # dédié, environnement nettoyé, délai.
+        run: docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --tmpfs /run/decision:uid=10201,gid=10012,mode=0750 --tmpfs /tmp:size=64m,mode=0700,uid=10201,gid=10201 -v "$PWD/apps/decision:/t:ro" -v "$PWD/apps/api/src/decision:/cases:ro" snowfall-decision:ci python3 -I /t/decision_test.py
+      # OCR dans son image, sans réseau ET avec les seuls privilèges de la
+      # production (compose) : scan lu, fichier corrompu, utilisateur dédié,
+      # environnement nettoyé, délai. Avec les privilèges par défaut de Docker,
+      # un service qui ne marche pas en production passait ici (31 octobre).
       - name: Tests de l'OCR
-        run: docker run --rm --network none --read-only --tmpfs /work --tmpfs /tmp -v "$PWD/apps/ocr:/t:ro" snowfall-ocr:ci python3 -I /t/ocr_test.py
+        run: docker run --rm --network none --read-only --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add KILL --cap-add CHOWN --security-opt no-new-privileges:true --tmpfs /work:mode=0711 --tmpfs /tmp -v "$PWD/apps/ocr:/t:ro" snowfall-ocr:ci python3 -I /t/ocr_test.py
       # Le bac à sable durci comme en production, attaqué : réseau, identité,
       # socket de l'API, écriture, ressources, survie, fuite entre exécutions.
       - name: Batterie d'attaques du bac à sable

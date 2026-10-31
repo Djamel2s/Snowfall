@@ -35,7 +35,18 @@ export type ToolPreview = {
 };
 
 /** Étape d'un sous-agent, remontée à l'interface pendant qu'il travaille. */
-export type SubStep = { id: string; name: string; status: "running" | "done" | "error" | "denied"; summary?: string | undefined; agent: string; parent: string };
+export type SubStep = {
+  id: string;
+  name: string;
+  status: "running" | "done" | "error" | "denied";
+  summary?: string | undefined;
+  agent: string;
+  parent: string;
+  startedAt?: number | undefined;
+  endedAt?: number | undefined;
+  flagged?: boolean | undefined;
+  approved?: boolean | undefined;
+};
 
 /** Ce que reçoit un outil pendant son exécution. */
 export type ToolContext = {
@@ -94,7 +105,8 @@ export function defineTool<Args extends z.ZodType>(tool: AgentTool<Args>): Agent
   return tool;
 }
 
-export type ToolOutcome = ToolResult & { isError: boolean; denied?: boolean };
+/** approved : action d'écriture (ou appel sortant) validée par l'utilisateur. */
+export type ToolOutcome = ToolResult & { isError: boolean; denied?: boolean; approved?: boolean };
 
 /**
  * Exécute un appel demandé par le modèle, sans jamais lever d'exception :
@@ -129,13 +141,14 @@ export async function runTool(
     if (signal.aborted) throw signal.reason;
     if (!approved) return { content: DENIED_RESULT, summary: preview.title, isError: false, denied: true };
   }
+  const approved = tool.access === "write" ? { approved: true } : {};
 
   // Le délai court après l'accord : l'attente de l'utilisateur n'est pas comptée.
   const timeout = AbortSignal.timeout(tool.timeoutMs ?? TOOL_TIMEOUT_MS);
   try {
     const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]), callId: call.id, approve, report, exposure });
     const content = result.content.length > TOOL_RESULT_CHARS ? `${result.content.slice(0, TOOL_RESULT_CHARS)}\n[… résultat tronqué]` : result.content;
-    return { ...result, content, isError: result.isError ?? false };
+    return { ...result, ...approved, content, isError: result.isError ?? false };
   } catch (error) {
     if (signal.aborted) throw error;
     // Pause de validation demandée DEPUIS l'outil (sous-agent) : elle doit remonter
