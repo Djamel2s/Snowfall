@@ -1374,6 +1374,8 @@
 /* ---- Bibliothèque de prompts ------------------------------------------- */
 
 .prompt-library { display: flex; flex-direction: column; gap: 8px; }
+/* Espacement propre à ce panneau : la recherche reste à la même hauteur que dans les autres. */
+.prompt-library > .search-box { margin-top: 1px; }
 .prompt-form { display: flex; flex-direction: column; gap: 7px; padding: 10px; border: 1px solid rgba(183, 210, 244, .1); border-radius: 12px; background: rgba(255, 255, 255, .02); }
 .prompt-form input,
 .prompt-form textarea {
@@ -2535,3 +2537,51 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 .source-card-issue { padding: 3px 9px; border: 1px solid rgba(255, 196, 92, .3); border-radius: 999px; background: rgba(255, 196, 92, .08); color: #ffd59a; font: inherit; font-size: 10.5px; cursor: pointer; }
 .source-card-issue:hover { background: rgba(255, 196, 92, .16); }
 .source-card-reported { display: inline-flex; align-items: center; gap: 4px; color: #8ee6b8; font-size: 10.5px; }
+
+/* Catalogue en grille (connecteurs, agents) : icône, nom dessous. */
+.list-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 4px; margin: 2px 0 6px; padding: 0; list-style: none; }
+.grid-tile-wrap { min-width: 0; }
+.grid-tile {
+  position: relative;
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #b9c6d8;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color .15s, border-color .15s;
+}
+.grid-tile:hover, .grid-tile:focus-visible { border-color: rgba(183, 210, 244, .12); background: rgba(255, 255, 255, .04); }
+.grid-tile:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: 1px; }
+.grid-tile-icon { display: grid; width: 36px; height: 36px; place-items: center; }
+.grid-tile-title { display: -webkit-box; overflow: hidden; max-width: 100%; color: #b9c6d8; font-size: 10.5px; line-height: 1.25; text-align: center; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.grid-tile-badge { position: absolute; top: 6px; right: 8px; }
+.grid-tile-added { display: block; width: 8px; height: 8px; border-radius: 50%; background: #8ee6b8; box-shadow: 0 0 0 2px #0d1625; }
+
+/* Bibliothèque de connaissances : fil d'Ariane, déplacement, rattachement. */
+.library-path { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px; margin: 4px 2px 2px; color: #7d8ca4; font-size: 11px; }
+.library-path button { max-width: 160px; overflow: hidden; padding: 2px 6px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.library-path button:hover { background: rgba(255, 255, 255, .04); color: #dbe6f5; }
+.library-path button[aria-current="page"] { color: #e3eeff; font-weight: 600; }
+.library-path-step { display: inline-flex; min-width: 0; align-items: center; gap: 2px; }
+.library-move, .library-attach { display: flex; align-items: center; gap: 6px; margin: 2px 6px 6px 32px; color: #8fa0b8; }
+.library-attach { margin: 2px 2px 8px; }
+.library-move select, .library-attach select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(183, 210, 244, .14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 11.5px;
+}
+.library-readonly { margin: 2px 4px 6px; }
+.library-base.dragging { outline: 2px dashed rgba(142, 201, 255, .45); outline-offset: -4px; border-radius: 12px; }

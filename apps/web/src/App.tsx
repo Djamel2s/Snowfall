@@ -452,18 +452,17 @@ function App() {
     if (activeProject) owners.push(['projects', activeProject])
     for (const [kind, id] of owners) {
       api
-        .getKnowledge(kind, id)
+        .getAttachedBases(kind, id)
         .then((view) => {
           if (cancelled) return
-          const ready = view.sources.filter((source) => source.status === 'ready').length
-          setKnowledgeCounts((current) => ({ ...current, [`${kind}:${id}`]: ready }))
+          setKnowledgeCounts((current) => ({ ...current, [`${kind}:${id}`]: view.readySources }))
         })
         .catch(() => undefined)
     }
     return () => {
       cancelled = true
     }
-    // Rechargé aussi à la fermeture du studio (documents ajoutés à l'agent).
+    // Rechargé aussi à la fermeture du studio et en changeant d'espace (bases modifiées).
   }, [activeAgentId, activeProject, studioAgent, sidebarPanel])
 
   async function toggleKnowledge(key: 'agent' | 'project') {

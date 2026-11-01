@@ -167,6 +167,8 @@ export type KnowledgeSource = {
   errorCode: string | null
   name: string
   url: string | null
+  /** Dossier dans la base (null : à la racine). */
+  folderId?: string | null
   mediaType: string | null
   size: number
   chunkCount: number
@@ -175,13 +177,28 @@ export type KnowledgeSource = {
   updatedAt: string
 }
 
-export type KnowledgeBaseView = {
-  id: string | null
-  confidential: boolean
-  canManage: boolean
-  /** Modèle d'embeddings de l'organisation pour cette base ; null = mots-clés. */
-  embeddingModel: string | null
-  linksEnabled: boolean
+/** Ressources partageables (personne, groupe, organisation ; lecture ou modification). */
+export type ShareableType = 'agent' | 'prompt' | 'skill' | 'knowledge_base'
+const accessPath = (type: ShareableType) => (type === 'knowledge_base' ? '/knowledge/bases' : `/${type}s`)
+
+/** Droit sur une base : son auteur, un éditeur, ou un lecteur. */
+export type KnowledgeAccess = 'owner' | 'edit' | 'view'
+
+/** Base de la bibliothèque (nom absent : base reprise d'un agent ou d'un projet). */
+export type LibraryBase = { id: string; name: string | null; confidential: boolean; access: KnowledgeAccess; mine: boolean }
+
+export type LibraryBaseSummary = LibraryBase & {
+  sourceCount: number
+  shared: boolean
+  usedBy: { kind: 'agent' | 'project'; id: string }[]
+  updatedAt: string
+}
+
+export type KnowledgeFolder = { id: string; parentId: string | null; name: string; createdAt: string }
+
+export type LibraryBaseDetail = {
+  base: LibraryBase & { embeddingModel: string | null; linksEnabled: boolean }
+  folders: KnowledgeFolder[]
   sources: KnowledgeSource[]
 }
 
@@ -965,9 +982,9 @@ export const api = {
   clearMemories: () => request<void>('/me/memories', { method: 'DELETE' }),
 
   sharingDirectory: () => request<SharingDirectory>('/sharing/directory'),
-  getAccess: async (type: 'agent' | 'prompt' | 'skill', id: string) => (await request<{ grants: AccessGrant[] }>(`/${type}s/${id}/access`)).grants,
-  setAccess: async (type: 'agent' | 'prompt' | 'skill', id: string, grants: AccessGrant[]) =>
-    (await request<{ grants: AccessGrant[] }>(`/${type}s/${id}/access`, json('PUT', { grants }))).grants,
+  getAccess: async (type: ShareableType, id: string) => (await request<{ grants: AccessGrant[] }>(`${accessPath(type)}/${id}/access`)).grants,
+  setAccess: async (type: ShareableType, id: string, grants: AccessGrant[]) =>
+    (await request<{ grants: AccessGrant[] }>(`${accessPath(type)}/${id}/access`, json('PUT', { grants }))).grants,
   listGroups: async () => (await request<{ groups: MemberGroup[] }>('/groups')).groups,
   createGroup: async (name: string) => (await request<{ group: MemberGroup }>('/groups', json('POST', { name }))).group,
   updateGroup: async (id: string, changes: { name?: string; memberIds?: string[] }) =>
@@ -1073,21 +1090,34 @@ export const api = {
 
   attachmentBlob: async (id: string) => (await send(`/attachments/${id}/content`)).blob(),
 
-  getKnowledge: async (kind: KnowledgeOwnerKind, id: string) =>
-    (await request<{ knowledge: KnowledgeBaseView }>(`/${kind}/${id}/knowledge`)).knowledge,
-  setKnowledgeConfidential: (kind: KnowledgeOwnerKind, id: string, confidential: boolean) =>
-    request<{ knowledge: { id: string; confidential: boolean } }>(`/${kind}/${id}/knowledge`, json('PATCH', { confidential })),
-  addKnowledgeFile: async (kind: KnowledgeOwnerKind, id: string, file: Blob, name: string) =>
+  deleteKnowledgeSource: (id: string) => request<void>(`/knowledge/sources/${id}`, { method: 'DELETE' }),
+  // ---- Bibliothèque ------------------------------------------------------------
+  listLibrary: async () => (await request<{ bases: LibraryBaseSummary[] }>('/knowledge/bases')).bases,
+  createLibraryBase: async (name: string) => (await request<{ base: LibraryBase }>('/knowledge/bases', json('POST', { name }))).base,
+  getLibraryBase: (id: string) => request<LibraryBaseDetail>(`/knowledge/bases/${id}`),
+  updateLibraryBase: async (id: string, input: { name?: string; confidential?: boolean }) =>
+    (await request<{ base: LibraryBase }>(`/knowledge/bases/${id}`, json('PATCH', input))).base,
+  deleteLibraryBase: (id: string) => request<void>(`/knowledge/bases/${id}`, { method: 'DELETE' }),
+  createKnowledgeFolder: async (baseId: string, name: string, parentId: string | null) =>
+    (await request<{ folder: KnowledgeFolder }>(`/knowledge/bases/${baseId}/folders`, json('POST', { name, parentId }))).folder,
+  updateKnowledgeFolder: async (id: string, input: { name?: string; parentId?: string | null }) =>
+    (await request<{ folder: KnowledgeFolder }>(`/knowledge/folders/${id}`, json('PATCH', input))).folder,
+  deleteKnowledgeFolder: (id: string) => request<void>(`/knowledge/folders/${id}`, { method: 'DELETE' }),
+  addLibraryFile: async (baseId: string, file: Blob, name: string, folderId: string | null) =>
     (
-      await request<{ source: KnowledgeSource }>(`/${kind}/${id}/knowledge/files`, {
+      await request<{ source: KnowledgeSource }>(`/knowledge/bases/${baseId}/files`, {
         method: 'POST',
         body: file,
-        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) },
+        headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name), ...(folderId ? { 'X-Folder-Id': folderId } : {}) },
       })
     ).source,
-  addKnowledgeLink: async (kind: KnowledgeOwnerKind, id: string, url: string) =>
-    (await request<{ source: KnowledgeSource }>(`/${kind}/${id}/knowledge/links`, json('POST', { url }))).source,
-  deleteKnowledgeSource: (id: string) => request<void>(`/knowledge/sources/${id}`, { method: 'DELETE' }),
+  addLibraryLink: async (baseId: string, url: string, folderId: string | null) =>
+    (await request<{ source: KnowledgeSource }>(`/knowledge/bases/${baseId}/links`, json('POST', { url, folderId }))).source,
+  moveKnowledgeSource: (id: string, folderId: string | null) => request<{ source: KnowledgeSource }>(`/knowledge/sources/${id}`, json('PATCH', { folderId })),
+  /** Bases rattachées à un agent ou un projet, dans l'ordre. */
+  getAttachedBases: (kind: KnowledgeOwnerKind, id: string) => request<{ bases: LibraryBase[]; canManage: boolean; readySources: number }>(`/${kind}/${id}/knowledge-bases`),
+  setAttachedBases: async (kind: KnowledgeOwnerKind, id: string, baseIds: string[]) =>
+    (await request<{ bases: LibraryBase[] }>(`/${kind}/${id}/knowledge-bases`, json('PUT', { baseIds }))).bases,
   reindexKnowledgeSource: async (id: string) =>
     (await request<{ source: KnowledgeSource }>(`/knowledge/sources/${id}/reindex`, { method: 'POST' })).source,
   knowledgeSourceBlob: async (id: string) => (await send(`/knowledge/sources/${id}/content`)).blob(),

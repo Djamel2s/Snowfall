@@ -22,6 +22,7 @@ import {
   ArchiveRestore,
   Tag,
   ShieldCheck,
+  Library,
 } from 'lucide-react'
 import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
@@ -30,15 +31,16 @@ import AdminPanel from './AdminPanel'
 import SettingsPanel from './SettingsPanel'
 import AgentsPanel from './AgentsPanel'
 import { useBranding } from '../lib/branding'
-import { ListEmpty, ListRow, ListRows, ListSection, PanelBack, PanelNew, PanelSearch, SectionAction } from './ui/List'
+import { InlineEdit, ListEmpty, ListRow, ListRows, ListSection, PanelBack, PanelNew, PanelSearch, SectionAction } from './ui/List'
 import AgentSchedules from './AgentSchedules'
 import PromptLibrary from './PromptLibrary'
 import SkillLibrary from './SkillLibrary'
 // Logos et catalogue chargés à l'ouverture du panneau seulement.
 const ConnectorsPanel = lazy(() => import('./ConnectorsPanel'))
-import KnowledgePanel from './KnowledgePanel'
+import BasePicker from './knowledge/BasePicker'
+import LibraryPanel from './knowledge/LibraryPanel'
 
-export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'prompts' | 'skills' | 'connectors' | 'admin' | 'settings' | 'conversation'
+export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'knowledge' | 'prompts' | 'skills' | 'connectors' | 'admin' | 'settings' | 'conversation'
 
 export type SidebarConversation = {
   id: string
@@ -120,49 +122,6 @@ type SidebarProps = {
   returnedServerId?: string | undefined
 }
 
-/** Champ de saisie en place (nouveau projet, renommage). */
-function InlineEdit({
-  initial,
-  label,
-  icon,
-  onSubmit,
-  onCancel,
-}: {
-  initial: string
-  label: string
-  icon: ReactNode
-  onSubmit: (value: string) => void
-  onCancel: () => void
-}) {
-  const [value, setValue] = useState(initial)
-  return (
-    <form
-      className="project-draft"
-      onSubmit={(event) => {
-        event.preventDefault()
-        const trimmed = value.trim()
-        if (trimmed && trimmed !== initial) onSubmit(trimmed)
-        else onCancel()
-      }}
-    >
-      {icon}
-      <input
-        autoFocus
-        aria-label={label}
-        placeholder={label}
-        maxLength={120}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => event.key === 'Escape' && onCancel()}
-        onBlur={() => !value.trim() && onCancel()}
-        onFocus={(event) => event.target.select()}
-      />
-      <button type="submit" aria-label={label} disabled={!value.trim()}>
-        <Check size={14} />
-      </button>
-    </form>
-  )
-}
 
 export default function Sidebar(props: SidebarProps) {
   const {
@@ -187,6 +146,13 @@ export default function Sidebar(props: SidebarProps) {
   const { t } = useI18n()
   const brand = useBranding()
   const [projectDraft, setProjectDraft] = useState(false)
+  // Bibliothèque : base ouverte (depuis la liste, un agent ou un projet).
+  const [libraryBaseId, setLibraryBaseId] = useState<string | null>(null)
+  const openLibraryBase = (baseId: string) => {
+    if (agentEditor !== undefined) props.onAgentEditorClose()
+    setLibraryBaseId(baseId)
+    props.onSidebarPanelChange('knowledge')
+  }
   // Agent choisi pour planifier une tâche (formulaire ouvert dans la barre).
   const [projectQuery, setProjectQuery] = useState('')
   const [scheduling, setScheduling] = useState<Agent | null>(null)
@@ -291,11 +257,11 @@ export default function Sidebar(props: SidebarProps) {
           <PanelSearch value={search} onChange={props.onSearchChange} placeholder={t('sidebar.search')} label={t('sidebar.searchLabel')} />
           <ListSection label={t('sidebar.projectConversations')}>
             <div className="conversation-list">
-              {filteredConversations.map((conversation) => conversationRow(conversation, <MessageSquare size={16} className="conversation-symbol" />))}
+              {filteredConversations.map((conversation) => conversationRow(conversation))}
             </div>
             {!historyLoading && filteredConversations.length === 0 && <ListEmpty>{search ? t('sidebar.noResult') : t('sidebar.emptyProject')}</ListEmpty>}
           </ListSection>
-          <KnowledgePanel kind="projects" ownerId={project.id} />
+          <BasePicker kind="projects" ownerId={project.id} agents={agents} projects={projects} onOpenBase={openLibraryBase} />
         </div>
       )
     }
@@ -495,6 +461,7 @@ export default function Sidebar(props: SidebarProps) {
               { id: 'chats', label: t('sidebar.chats'), icon: MessageSquare },
               { id: 'projects', label: t('sidebar.projects'), icon: Folder },
               { id: 'agents', label: t('sidebar.agents'), icon: Bot },
+              { id: 'knowledge', label: t('library.title'), icon: Library },
               { id: 'prompts', label: t('prompts.title'), icon: ScrollText },
               { id: 'skills', label: t('skills.title'), icon: GraduationCap },
               { id: 'connectors', label: t('connectors.title'), icon: Plug },
@@ -572,6 +539,7 @@ export default function Sidebar(props: SidebarProps) {
               key={agentEditor?.id ?? 'new'}
               agent={agentEditor}
               agents={props.agents}
+              onOpenBase={openLibraryBase}
               notice={props.agentEditorNotice}
               onClose={props.onAgentEditorClose}
               onSaved={props.onAgentSaved}
@@ -583,6 +551,8 @@ export default function Sidebar(props: SidebarProps) {
             <Suspense fallback={null}>
               <ConnectorsPanel key={props.returnedServerId ?? 'list'} isAdmin={props.isAdmin} notice={props.connectionNotice} returnedServerId={props.returnedServerId} onError={props.onError} />
             </Suspense>
+          ) : sidebarPanel === 'knowledge' ? (
+            <LibraryPanel agents={agents} projects={projects} canWrite={props.canWrite} openBaseId={libraryBaseId} onOpenBase={setLibraryBaseId} />
           ) : sidebarPanel === 'skills' ? (
             <SkillLibrary canWrite={props.canWrite} />
           ) : sidebarPanel === 'prompts' ? (
@@ -648,7 +618,7 @@ export default function Sidebar(props: SidebarProps) {
 
                     {!historyLoading &&
                       historyConversations.map((conversation) =>
-                        conversationRow(conversation, <MessageSquare size={16} className="conversation-symbol" />),
+                        conversationRow(conversation),
                       )}
 
                     {!historyLoading && historyConversations.length === 0 && contentHits.length === 0 && (

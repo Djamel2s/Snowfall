@@ -67,7 +67,12 @@ export function knowledgeWriteTool(deps: {
         }
       }
       try {
-        const base = await deps.service.store.ensureBase(deps.tenant, { kind: "agent", agentId: deps.agentId });
+        // La première base de l'agent que l'utilisateur peut modifier ; aucune base : l'auteur
+        // de l'agent en reçoit une. Sinon, rien n'est écrit (la base de données refuserait).
+        const owner = { kind: "agent", agentId: deps.agentId } as const;
+        const linked = await deps.service.store.basesFor(deps.tenant, owner);
+        const base = linked.find((item) => item.access !== "view") ?? (linked.length ? null : await deps.service.store.ensureBase(deps.tenant, owner).catch(() => null));
+        if (!base) return { content: "Aucune base de cet agent ne t'est ouverte en écriture : note non enregistrée.", summary: title };
         const source = await deps.service.store.addSource(deps.tenant, base.id, {
           kind: "file",
           name: fileName(title),

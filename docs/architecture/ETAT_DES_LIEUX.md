@@ -5,6 +5,14 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **31 octobre — bibliothèque de connaissances** : un espace « Connaissances »
+  dans la barre latérale ; des bases nommées, avec dossiers et sous-dossiers,
+  partageables (personne, groupe, organisation ; lecture ou modification),
+  rattachées à un ou plusieurs agents et projets. Les bases existantes sont
+  reprises automatiquement. Correctif de sécurité au passage : les documents
+  d'un agent privé étaient lisibles de toute l'organisation au niveau de la
+  base. Catalogues de connecteurs et d'agents en grille (liste au choix). Fiche 33.
+
 - **31 octobre — poste de développement complet** : recherche web (SearXNG),
   interpréteur de code et OCR (pont local, sockets Unix inchangés en
   production), antivirus. Bug trouvé en vrai : l'OCR échouait sous les seuls

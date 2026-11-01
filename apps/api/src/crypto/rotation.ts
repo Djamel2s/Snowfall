@@ -8,7 +8,7 @@ import { conversationFieldAad, feedbackAad, messageAad, messageActivityAad, mess
 import type { TenantContext } from "../db/tenant.js";
 import { exampleAad, headAad } from "../decision/workshop.js";
 import { generatedFileAad } from "../files/generated.js";
-import { chunkAad, sourceAad } from "../knowledge/store.js";
+import { baseNameAad, chunkAad, folderNameAad, sourceAad } from "../knowledge/store.js";
 import { tokenAad, verifierAad } from "../mcp/connections.js";
 import { mcpServerAad, type Field as McpField } from "../mcp/store.js";
 import { memoryAad } from "../memory/store.js";
@@ -65,15 +65,19 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     keys: ["id"],
     fields: (["url", "token", "tools", "oauth", "spec"] as McpField[]).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => mcpServerAad(t, s(row.id), field) })),
   },
+  // Bibliothèque de connaissances : lues et rechiffrées dans le contexte de l'organisation
+  // (sans utilisateur, la RLS les ouvre à la tâche système, comme les agents).
+  { table: "knowledge_bases", scope: "organization", keys: ["id"], fields: [{ column: "name", aad: (row, t) => baseNameAad(t.organizationId, s(row.id)) }] },
+  { table: "knowledge_folders", scope: "organization", keys: ["id", "base_id"], fields: [{ column: "name", aad: (row, t) => folderNameAad(t.organizationId, s(row.base_id), s(row.id)) }] },
   {
     table: "knowledge_sources",
-    scope: "mixed",
+    scope: "organization",
     keys: ["id", "base_id"],
     fields: (["name", "url", "content"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => sourceAad(t.organizationId, s(row.base_id), s(row.id), field) })),
   },
   {
     table: "knowledge_chunks",
-    scope: "mixed",
+    scope: "organization",
     keys: ["id", "source_id"],
     fields: [
       { column: "content", aad: (row, t) => chunkAad(t.organizationId, s(row.source_id), s(row.id), "text") },

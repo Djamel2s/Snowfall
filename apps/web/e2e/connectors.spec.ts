@@ -88,7 +88,8 @@ test('administrateur : SharePoint demande le tenant et l’application OAuth, pr
   await page.goto('/')
   await openPanel(page, 'Connecteurs')
   const catalog = page.getByRole('region', { name: 'Catalogue' })
-  await catalog.getByRole('group', { name: 'Catégories' }).getByRole('button', { name: 'Microsoft' }).click()
+  // Catalogue en grille, sans filtres : la recherche trouve le connecteur.
+  await page.getByRole('textbox', { name: 'Chercher un connecteur' }).fill('SharePoint')
   await catalog.getByRole('button', { name: /SharePoint et OneDrive/ }).click()
   const entry = page.getByRole('region', { name: 'SharePoint et OneDrive' })
   await expect(entry.getByText(/Préversion de l'éditeur/)).toBeVisible()
@@ -149,4 +150,22 @@ test('compétence importée depuis un .zip : fichiers et script Python repris, a
   const skills = page.getByRole('group', { name: 'Compétences' })
   await skills.getByRole('switch', { name: 'note-de-synthese' }).check()
   await expect(skills).toContainText('Ses scripts ne tourneront pas')
+})
+
+test('catalogue : grille d’icônes par défaut, liste détaillée au choix (gardée)', async ({ page, isMobile }) => {
+  await mockApi(page, { role: 'admin', platformTools: ['mcp'] })
+  await page.goto('/')
+  await openPanel(page, 'Connecteurs')
+  const catalog = page.getByRole('region', { name: 'Catalogue' })
+  await expect(catalog.getByRole('group', { name: 'Catégories' })).toHaveCount(0)
+  await expect(catalog.locator('.grid-tile').first()).toBeVisible()
+  await expect(catalog.locator('.list-row')).toHaveCount(0)
+  await catalog.getByRole('button', { name: 'Afficher en liste détaillée' }).click()
+  await expect(catalog.locator('.list-row').first()).toBeVisible()
+  await expect(catalog.locator('.grid-tile')).toHaveCount(0)
+  // Rechargée : le choix est gardé dans ce navigateur.
+  await page.reload()
+  await openPanel(page, 'Connecteurs')
+  await expect(page.getByRole('region', { name: 'Catalogue' }).locator('.list-row').first()).toBeVisible()
+  void isMobile
 })

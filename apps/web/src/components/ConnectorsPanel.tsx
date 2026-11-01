@@ -5,7 +5,8 @@ import { useI18n } from '../lib/i18n'
 import ConnectorLogo from './ConnectorLogo'
 import ConnectorDetail from './connectors/ConnectorDetail'
 import CustomConnector from './connectors/CustomConnector'
-import { ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch } from './ui/List'
+import { GridTile, ListEmpty, ListGrid, ListRow, ListRows, ListSection, PanelNew, PanelSearch, ViewToggle } from './ui/List'
+import { useCatalogView } from '../lib/catalog-view'
 
 type Props = {
   isAdmin: boolean
@@ -17,7 +18,6 @@ type Props = {
 
 type View = { kind: 'list' } | { kind: 'server'; id: string } | { kind: 'catalog'; id: string } | { kind: 'custom' }
 
-const categories = ['all', 'google', 'microsoft', 'productivity', 'documents', 'communication', 'meetings', 'design', 'development', 'crm', 'finance', 'search', 'automation'] as const
 
 /**
  * Connecteurs (barre latérale). Une liste, une fiche par connecteur, une action
@@ -31,7 +31,7 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
   const [loaded, setLoaded] = useState(false)
   const [view, setView] = useState<View>(returnedServerId ? { kind: 'server', id: returnedServerId } : { kind: 'list' })
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState<(typeof categories)[number]>('all')
+  const [catalogView, setCatalogView] = useCatalogView('connectors')
 
   useEffect(() => {
     let cancelled = false
@@ -54,7 +54,7 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
   // Un membre ne voit que les connecteurs prêts à l'emploi.
   const listed = isAdmin ? servers : servers.filter((server) => server.status === 'approved')
   const needle = query.trim().toLowerCase()
-  const shown = catalog.filter((item) => (category === 'all' || item.category === category) && (!needle || `${item.name} ${item.description}`.toLowerCase().includes(needle)))
+  const shown = catalog.filter((item) => (!needle || `${item.name} ${item.description}`.toLowerCase().includes(needle)))
 
   const status = (server: McpServer) => {
     if (server.status === 'disabled') return { label: t('connectors.chip.disabled'), tone: 'muted' }
@@ -161,15 +161,24 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
       </ListSection>
 
       {isAdmin && (
-        <ListSection label={t('connectors.catalog')}>
-          <div className="sidebar-tags connector-categories list-filters" role="group" aria-label={t('connectors.categories')}>
-            {categories.map((value) => (
-              <button key={value} type="button" className="sidebar-tag" aria-pressed={category === value} onClick={() => setCategory(value)}>
-                {t(`connectors.category.${value}`)}
-              </button>
-            ))}
-          </div>
-          {shown.length ? (
+        <ListSection label={t('connectors.catalog')} actions={<ViewToggle view={catalogView} onChange={setCatalogView} />}>
+          {shown.length && catalogView === 'grid' ? (
+            <ListGrid label={t('connectors.catalog')}>
+              {shown.map((item) => {
+                const added = servers.find((server) => server.catalogId === item.id)
+                return (
+                  <GridTile
+                    key={item.id}
+                    icon={<ConnectorLogo icon={item.icon} color={item.color} name={item.name} size={28} />}
+                    title={item.name}
+                    tooltip={item.description}
+                    onClick={() => setView(added ? { kind: 'server', id: added.id } : { kind: 'catalog', id: item.id })}
+                    badge={added ? <span className="grid-tile-added" aria-label={t('connectors.added')} title={t('connectors.added')} /> : undefined}
+                  />
+                )
+              })}
+            </ListGrid>
+          ) : shown.length ? (
             <ListRows>
               {shown.map((item) => {
                 const added = servers.find((server) => server.catalogId === item.id)

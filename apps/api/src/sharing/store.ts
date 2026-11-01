@@ -8,7 +8,7 @@ import { withTenant, type TenantContext } from "../db/tenant.js";
 // administrateur, pour les agents) décide ; la RLS des ressources applique la
 // lecture même si l'API se trompait (voir snowfall_access).
 
-export type ResourceType = "agent" | "prompt" | "skill";
+export type ResourceType = "agent" | "prompt" | "skill" | "knowledge_base";
 export type Permission = "view" | "edit";
 export type Principal = { type: "user"; id: string } | { type: "group"; id: string } | { type: "organization" };
 export type Grant = { principal: Principal; permission: Permission };

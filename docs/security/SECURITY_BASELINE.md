@@ -435,6 +435,26 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - The Keycloak login page keeps the Snowfall logo: it is shown before the
   organization is known.
 
+### Knowledge library (2026-10-31)
+
+- Knowledge bases are now standalone objects (encrypted name, author,
+  confidential flag, nested folders) attached to agents and projects. A base is
+  readable by its author, through a grant (person, group, organization;
+  view or edit), through an agent the user can see, or through one of the
+  user's projects. This is enforced by RLS; the content policies use an
+  uncorrelated subquery on the visible bases (evaluated once per query).
+- Security fix: before, an agent's knowledge base was readable at the database
+  level by every member of the organization, even for a private agent.
+- Administrators do not read private bases, and cannot grant themselves access
+  (only the author shares a base). Attaching a base to an agent requires edit
+  rights on both the agent and the base, because it makes the base readable by
+  the agent's users. Helper functions `snowfall_knowledge_can_read/edit` avoid
+  RLS recursion between bases and attachments.
+- Author immutable (trigger); folders acyclic, max 8 levels, same base as their
+  documents (composite foreign keys); a document never changes base. Base and
+  folder names encrypted and covered by key rotation. Deleting an agent keeps
+  its bases (they stay in their author's library).
+
 ### Answer activity, citations and site icons (2026-10-31)
 
 - Each tool step carries its start and end time, the numbered sources it

@@ -56,6 +56,9 @@ const privileges: Record<string, string[]> = {
   knowledge_bases: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   knowledge_sources: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   knowledge_chunks: ["SELECT", "INSERT", "DELETE"],
+  knowledge_folders: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  agent_knowledge_bases: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  project_knowledge_bases: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   // knowledge_jobs : aucun droit, lue seulement via snowfall_pending_knowledge().
   agent_runs: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   agent_checkpoints: ["SELECT", "INSERT", "DELETE"],
@@ -108,6 +111,8 @@ const functions = [
   // Contrôles de droits appelés par la RLS (SECURITY INVOKER : la RLS s'applique dedans).
   "snowfall_is_admin()",
   "snowfall_access(text, uuid)",
+  "snowfall_knowledge_can_read(uuid)",
+  "snowfall_knowledge_can_edit(uuid)",
 ];
 
 async function main() {

@@ -25,12 +25,27 @@ const currentOrganization = sql`nullif(current_setting('app.organization_id', tr
 const currentUser = sql`nullif(current_setting('app.user_id', true), '')::uuid`;
 
 /**
- * Bases de connaissances : celles d'un agent sont visibles de toute
- * l'organisation (user_id NULL), celles d'un projet de son seul propriétaire.
+ * Bases de connaissances : objets à part entière (nom, auteur, partages),
+ * rattachés à des agents et à des projets. Lisible par son auteur, un
+ * administrateur, une autorisation (personne, groupe, organisation), ou au
+ * travers d'un agent qu'on peut voir ou d'un de ses projets.
  */
-function knowledgePolicy(name: string, organizationId: AnyPgColumn, userId: AnyPgColumn) {
-  const condition = sql`${organizationId} = ${currentOrganization} AND (${userId} IS NULL OR ${userId} = ${currentUser})`;
-  return pgPolicy(name, { as: "permissive", for: "all", to: "public", using: condition, withCheck: condition });
+/**
+ * Contenu d'une base (documents, passages, dossiers) : lisible si la base l'est
+ * (sa RLS décide), modifiable si l'utilisateur peut modifier la base. La
+ * sous-requête n'est évaluée qu'une fois par requête (pas par ligne).
+ */
+// Sans utilisateur (tâches système : rotation des clés), l'organisation, comme pour les agents.
+const knowledgeEditable = sql`(SELECT b.id FROM knowledge_bases b WHERE ${currentUser} IS NULL OR b.created_by = ${currentUser} OR snowfall_is_admin() OR snowfall_access('knowledge_base', b.id) = 'edit')`;
+function knowledgeContentPolicies(prefix: string, organizationId: AnyPgColumn, baseId: AnyPgColumn) {
+  const tenant = sql`${organizationId} = ${currentOrganization}`;
+  const writable = sql`${tenant} AND ${baseId} IN ${knowledgeEditable}`;
+  return [
+    pgPolicy(`${prefix}_read`, { as: "permissive", for: "select", to: "public", using: sql`${tenant} AND ${baseId} IN (SELECT b.id FROM knowledge_bases b)` }),
+    pgPolicy(`${prefix}_insert`, { as: "permissive", for: "insert", to: "public", withCheck: writable }),
+    pgPolicy(`${prefix}_update`, { as: "permissive", for: "update", to: "public", using: writable, withCheck: writable }),
+    pgPolicy(`${prefix}_delete`, { as: "permissive", for: "delete", to: "public", using: writable }),
+  ];
 }
 
 function tenantPolicy(
@@ -678,10 +693,10 @@ export const knowledgeBases = pgTable.withRLS(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     organizationId: uuid("organization_id").notNull(),
-    agentId: uuid("agent_id"),
-    projectId: uuid("project_id"),
-    // Propriétaire d'une base de projet ; NULL pour une base d'agent.
-    userId: uuid("user_id"),
+    // Nom de la base (chiffré) ; NULL : base reprise d'un agent ou d'un projet, nommée d'après lui.
+    name: text("name"),
+    // Auteur : il la gère et la partage (comme un agent ou un prompt).
+    createdBy: uuid("created_by").notNull(),
     // Confidentiel : embeddings et réponses uniquement par un modèle local.
     confidential: boolean("confidential").notNull().default(false),
     // Incrémentée à chaque changement : invalide l'index en mémoire.
@@ -691,24 +706,27 @@ export const knowledgeBases = pgTable.withRLS(
   },
   (table) => [
     unique("knowledge_bases_id_org_unique").on(table.id, table.organizationId),
-    uniqueIndex("knowledge_bases_agent_idx").on(table.agentId),
-    uniqueIndex("knowledge_bases_project_idx").on(table.projectId),
-    foreignKey({
-      name: "knowledge_bases_agent_fk",
-      columns: [table.agentId, table.organizationId],
-      foreignColumns: [agents.id, agents.organizationId],
-    }).onDelete("cascade"),
-    foreignKey({
-      name: "knowledge_bases_project_fk",
-      columns: [table.projectId, table.organizationId, table.userId],
-      foreignColumns: [projects.id, projects.organizationId, projects.userId],
-    }).onDelete("cascade"),
-    check(
-      "knowledge_bases_owner_check",
-      sql`(${table.agentId} IS NOT NULL AND ${table.projectId} IS NULL AND ${table.userId} IS NULL)
-        OR (${table.agentId} IS NULL AND ${table.projectId} IS NOT NULL AND ${table.userId} IS NOT NULL)`,
-    ),
-    knowledgePolicy("knowledge_bases_tenant", table.organizationId, table.userId),
+    index("knowledge_bases_creator_idx").on(table.organizationId, table.createdBy),
+    // Pas les administrateurs d'office : une base privée (documents d'un projet)
+    // reste privée ; ils voient celles des agents de l'organisation.
+    // Sans utilisateur (tâches système : rotation des clés), l'organisation.
+    pgPolicy("knowledge_bases_read", {
+      as: "permissive",
+      for: "select",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND (${currentUser} IS NULL OR ${table.createdBy} = ${currentUser} OR snowfall_access('knowledge_base', ${table.id}) IS NOT NULL
+        OR EXISTS (SELECT 1 FROM agent_knowledge_bases l JOIN agents a ON a.id = l.agent_id AND a.organization_id = l.organization_id WHERE l.base_id = ${table.id})
+        OR EXISTS (SELECT 1 FROM project_knowledge_bases l WHERE l.base_id = ${table.id} AND l.user_id = ${currentUser}))`,
+    }),
+    pgPolicy("knowledge_bases_insert", { as: "permissive", for: "insert", to: "public", withCheck: sql`${table.organizationId} = ${currentOrganization} AND ${table.createdBy} = ${currentUser}` }),
+    pgPolicy("knowledge_bases_update", {
+      as: "permissive",
+      for: "update",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND (${currentUser} IS NULL OR ${table.createdBy} = ${currentUser} OR snowfall_is_admin() OR snowfall_access('knowledge_base', ${table.id}) = 'edit')`,
+      withCheck: sql`${table.organizationId} = ${currentOrganization}`,
+    }),
+    pgPolicy("knowledge_bases_delete", { as: "permissive", for: "delete", to: "public", using: sql`${table.organizationId} = ${currentOrganization} AND (${table.createdBy} = ${currentUser} OR snowfall_is_admin())` }),
   ],
 );
 
@@ -718,8 +736,6 @@ export const knowledgeSources = pgTable.withRLS(
     id: uuid("id").defaultRandom().primaryKey(),
     organizationId: uuid("organization_id").notNull(),
     baseId: uuid("base_id").notNull(),
-    // Recopié de la base par trigger (jamais fourni par l'application).
-    userId: uuid("user_id"),
     createdBy: uuid("created_by").notNull(),
     kind: text("kind").notNull(),
     status: text("status").notNull().default("pending"),
@@ -729,6 +745,8 @@ export const knowledgeSources = pgTable.withRLS(
     name: text("name").notNull(),
     url: text("url"),
     content: text("content").notNull(),
+    // Dossier dans la base (NULL : à la racine).
+    folderId: uuid("folder_id"),
     embeddingModel: text("embedding_model"),
     chunkCount: integer("chunk_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -743,6 +761,13 @@ export const knowledgeSources = pgTable.withRLS(
       columns: [table.baseId, table.organizationId],
       foreignColumns: [knowledgeBases.id, knowledgeBases.organizationId],
     }).onDelete("cascade"),
+    // Dossier de la même base ; supprimer un dossier supprime ses documents.
+    foreignKey({
+      name: "knowledge_sources_folder_fk",
+      columns: [table.folderId, table.baseId],
+      foreignColumns: [knowledgeFolders.id, knowledgeFolders.baseId],
+    }).onDelete("cascade"),
+    index("knowledge_sources_folder_idx").on(table.baseId, table.folderId),
     check("knowledge_sources_kind_check", sql`${table.kind} IN ('file', 'link')`),
     check("knowledge_sources_status_check", sql`${table.status} IN ('pending', 'processing', 'ready', 'error')`),
     check("knowledge_sources_error_check", sql`${table.errorCode} IS NULL OR ${table.errorCode} ~ '^[a-z_]{1,40}$'`),
@@ -750,7 +775,129 @@ export const knowledgeSources = pgTable.withRLS(
     check("knowledge_sources_size_check", sql.raw(`size_bytes BETWEEN 0 AND ${KNOWLEDGE_FILE_MAX_BYTES}`)),
     check("knowledge_sources_model_check", sql`${table.embeddingModel} IS NULL OR length(${table.embeddingModel}) BETWEEN 3 AND 160`),
     check("knowledge_sources_url_check", sql`(${table.kind} = 'link') = (${table.url} IS NOT NULL)`),
-    knowledgePolicy("knowledge_sources_tenant", table.organizationId, table.userId),
+    ...knowledgeContentPolicies("knowledge_sources", table.organizationId, table.baseId),
+  ],
+);
+
+// Dossiers d'une base (arborescence) : nom chiffré ; un dossier et son parent
+// sont toujours de la même base (clé composée).
+export const knowledgeFolders = pgTable.withRLS(
+  "knowledge_folders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id").notNull(),
+    baseId: uuid("base_id").notNull(),
+    parentId: uuid("parent_id"),
+    name: text("name").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("knowledge_folders_id_base_unique").on(table.id, table.baseId),
+    index("knowledge_folders_base_idx").on(table.baseId, table.parentId),
+    foreignKey({
+      name: "knowledge_folders_base_fk",
+      columns: [table.baseId, table.organizationId],
+      foreignColumns: [knowledgeBases.id, knowledgeBases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "knowledge_folders_parent_fk",
+      columns: [table.parentId, table.baseId],
+      foreignColumns: [table.id, table.baseId],
+    }).onDelete("cascade"),
+    ...knowledgeContentPolicies("knowledge_folders", table.organizationId, table.baseId),
+  ],
+);
+
+// Bases rattachées à un agent (ses réponses y cherchent) ; l'ordre donne la base
+// où l'agent enregistre ce qu'on lui demande de retenir.
+export const agentKnowledgeBases = pgTable.withRLS(
+  "agent_knowledge_bases",
+  {
+    agentId: uuid("agent_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    baseId: uuid("base_id").notNull(),
+    position: integer("position").notNull().default(0),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "agent_knowledge_bases_pkey", columns: [table.agentId, table.baseId] }),
+    index("agent_knowledge_bases_base_idx").on(table.baseId),
+    foreignKey({
+      name: "agent_knowledge_bases_agent_fk",
+      columns: [table.agentId, table.organizationId],
+      foreignColumns: [agents.id, agents.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "agent_knowledge_bases_base_fk",
+      columns: [table.baseId, table.organizationId],
+      foreignColumns: [knowledgeBases.id, knowledgeBases.organizationId],
+    }).onDelete("cascade"),
+    // Lus avec l'agent (sa RLS décide) ; posés ou retirés par qui peut modifier l'agent,
+    // et seulement vers une base qu'il peut modifier : la rattacher la rend lisible
+    // par les utilisateurs de l'agent.
+    pgPolicy("agent_knowledge_bases_read", {
+      as: "permissive",
+      for: "select",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND EXISTS (SELECT 1 FROM agents a WHERE a.id = ${table.agentId} AND a.organization_id = ${table.organizationId})`,
+    }),
+    pgPolicy("agent_knowledge_bases_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "public",
+      withCheck: sql`${table.organizationId} = ${currentOrganization} AND ${table.createdBy} = ${currentUser} AND EXISTS (SELECT 1 FROM agents a WHERE a.id = ${table.agentId} AND a.organization_id = ${table.organizationId} AND (a.created_by = ${currentUser} OR snowfall_is_admin() OR snowfall_access('agent', a.id) = 'edit')) AND snowfall_knowledge_can_edit(${table.baseId})`,
+    }),
+    pgPolicy("agent_knowledge_bases_update", {
+      as: "permissive",
+      for: "update",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND EXISTS (SELECT 1 FROM agents a WHERE a.id = ${table.agentId} AND a.organization_id = ${table.organizationId} AND (a.created_by = ${currentUser} OR snowfall_is_admin() OR snowfall_access('agent', a.id) = 'edit'))`,
+      withCheck: sql`${table.organizationId} = ${currentOrganization}`,
+    }),
+    pgPolicy("agent_knowledge_bases_delete", {
+      as: "permissive",
+      for: "delete",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND EXISTS (SELECT 1 FROM agents a WHERE a.id = ${table.agentId} AND a.organization_id = ${table.organizationId} AND (a.created_by = ${currentUser} OR snowfall_is_admin() OR snowfall_access('agent', a.id) = 'edit'))`,
+    }),
+  ],
+);
+
+// Bases rattachées à un projet (privé à son auteur).
+export const projectKnowledgeBases = pgTable.withRLS(
+  "project_knowledge_bases",
+  {
+    projectId: uuid("project_id").notNull(),
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    baseId: uuid("base_id").notNull(),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "project_knowledge_bases_pkey", columns: [table.projectId, table.baseId] }),
+    index("project_knowledge_bases_base_idx").on(table.baseId),
+    foreignKey({
+      name: "project_knowledge_bases_project_fk",
+      columns: [table.projectId, table.organizationId, table.userId],
+      foreignColumns: [projects.id, projects.organizationId, projects.userId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "project_knowledge_bases_base_fk",
+      columns: [table.baseId, table.organizationId],
+      foreignColumns: [knowledgeBases.id, knowledgeBases.organizationId],
+    }).onDelete("cascade"),
+    // Projet privé : son auteur rattache les bases qu'il peut lire.
+    pgPolicy("project_knowledge_bases_owner", {
+      as: "permissive",
+      for: "all",
+      to: "public",
+      using: sql`${table.organizationId} = ${currentOrganization} AND ${table.userId} = ${currentUser}`,
+      withCheck: sql`${table.organizationId} = ${currentOrganization} AND ${table.userId} = ${currentUser} AND snowfall_knowledge_can_read(${table.baseId})`,
+    }),
   ],
 );
 
@@ -761,8 +908,6 @@ export const knowledgeChunks = pgTable.withRLS(
     organizationId: uuid("organization_id").notNull(),
     baseId: uuid("base_id").notNull(),
     sourceId: uuid("source_id").notNull(),
-    // Recopié de la source par trigger.
-    userId: uuid("user_id"),
     ordinal: integer("ordinal").notNull(),
     content: text("content").notNull(),
     // Vecteur float32 chiffré ; NULL si la base est en mots-clés seulement.
@@ -777,7 +922,7 @@ export const knowledgeChunks = pgTable.withRLS(
       foreignColumns: [knowledgeSources.id, knowledgeSources.organizationId],
     }).onDelete("cascade"),
     check("knowledge_chunks_ordinal_check", sql`${table.ordinal} >= 0`),
-    knowledgePolicy("knowledge_chunks_tenant", table.organizationId, table.userId),
+    ...knowledgeContentPolicies("knowledge_chunks", table.organizationId, table.baseId),
   ],
 );
 
@@ -1062,7 +1207,7 @@ export const resourceGrants = pgTable.withRLS(
     index("resource_grants_resource_idx").on(table.organizationId, table.resourceType, table.resourceId),
     index("resource_grants_principal_idx").on(table.organizationId, table.principalType, table.principalId),
     uniqueIndex("resource_grants_unique").on(table.resourceType, table.resourceId, table.principalType, sql`coalesce(${table.principalId}, '00000000-0000-0000-0000-000000000000'::uuid)`),
-    check("resource_grants_type_check", sql`${table.resourceType} IN ('agent', 'prompt', 'skill')`),
+    check("resource_grants_type_check", sql`${table.resourceType} IN ('agent', 'prompt', 'skill', 'knowledge_base')`),
     check("resource_grants_permission_check", sql`${table.permission} IN ('view', 'edit')`),
     check(
       "resource_grants_principal_check",

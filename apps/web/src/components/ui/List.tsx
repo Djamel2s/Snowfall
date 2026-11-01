@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
-import { ArrowLeft, Plus, Search } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { ArrowLeft, Check, LayoutGrid, List, Plus, Search } from 'lucide-react'
+import type { CatalogView } from '../../lib/catalog-view'
 import { useI18n } from '../../lib/i18n'
 
 // Briques communes des panneaux de la barre latérale (Conversations, Projets,
@@ -124,4 +125,71 @@ export function ListRows({ children, label }: { children: ReactNode; label?: str
 /** Rien à montrer : une phrase, pas un encart. */
 export function ListEmpty({ children }: { children: ReactNode }) {
   return <p className="empty-search">{children}</p>
+}
+
+/** Catalogue en grille : une tuile par élément, l'icône et le nom dessous. */
+export function ListGrid({ children, label }: { children: ReactNode; label?: string }) {
+  return (
+    <ul className="list-grid" aria-label={label}>
+      {children}
+    </ul>
+  )
+}
+
+export function GridTile({ icon, title, label, tooltip, onClick, badge }: { icon: ReactNode; title: string; label?: string; tooltip?: string; onClick: () => void; badge?: ReactNode }) {
+  return (
+    <li className="grid-tile-wrap">
+      <button type="button" className="grid-tile" title={tooltip ?? title} aria-label={label ?? title} onClick={onClick}>
+        <span className="grid-tile-icon">{icon}</span>
+        <span className="grid-tile-title">{title}</span>
+        {badge && <span className="grid-tile-badge">{badge}</span>}
+      </button>
+    </li>
+  )
+}
+
+/** Bascule grille / liste détaillée, à droite du titre d'un catalogue. */
+export function ViewToggle({ view, onChange }: { view: CatalogView; onChange: (view: CatalogView) => void }) {
+  const { t } = useI18n()
+  return view === 'grid' ? (
+    <SectionAction label={t('catalog.showList')} onClick={() => onChange('list')}>
+      <List size={14} />
+    </SectionAction>
+  ) : (
+    <SectionAction label={t('catalog.showGrid')} onClick={() => onChange('grid')}>
+      <LayoutGrid size={14} />
+    </SectionAction>
+  )
+}
+
+/** Champ de saisie en place (nouveau projet, renommage). */
+export function InlineEdit({ initial, label, icon, onSubmit, onCancel }: { initial: string; label: string; icon: ReactNode; onSubmit: (value: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState(initial)
+  return (
+    <form
+      className="project-draft"
+      onSubmit={(event) => {
+        event.preventDefault()
+        const trimmed = value.trim()
+        if (trimmed && trimmed !== initial) onSubmit(trimmed)
+        else onCancel()
+      }}
+    >
+      {icon}
+      <input
+        autoFocus
+        aria-label={label}
+        placeholder={label}
+        maxLength={120}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => event.key === 'Escape' && onCancel()}
+        onBlur={() => !value.trim() && onCancel()}
+        onFocus={(event) => event.target.select()}
+      />
+      <button type="submit" aria-label={label} disabled={!value.trim()}>
+        <Check size={14} />
+      </button>
+    </form>
+  )
 }

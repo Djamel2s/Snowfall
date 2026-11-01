@@ -1,4 +1,4 @@
-/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1553 déclarations) : ne pas modifier à la main.
+/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1577 déclarations) : ne pas modifier à la main.
    Active seulement sous :root[data-accent] (couleur choisie par l'organisation). */
 
 :root[data-accent][data-theme="dark"] {
@@ -2660,6 +2660,66 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .source-card-reported {
   color: #8ee6b8;
+}
+
+:root[data-accent][data-theme="dark"] .grid-tile {
+  border: 1px solid transparent;
+  background: transparent;
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 78.6%);
+}
+
+:root[data-accent][data-theme="dark"] .grid-tile:hover,
+:root[data-accent][data-theme="dark"] .grid-tile:focus-visible {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
+  background: rgba(255, 255, 255, .04);
+}
+
+:root[data-accent][data-theme="dark"] .grid-tile:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
+}
+
+:root[data-accent][data-theme="dark"] .grid-tile-title {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 78.6%);
+}
+
+:root[data-accent][data-theme="dark"] .grid-tile-added {
+  background: #8ee6b8;
+  box-shadow: 0 0 0 2px hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(48% * var(--accent-saturation, 1))) 9.8%);
+}
+
+:root[data-accent][data-theme="dark"] .library-path {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
+}
+
+:root[data-accent][data-theme="dark"] .library-path button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+:root[data-accent][data-theme="dark"] .library-path button:hover {
+  background: rgba(255, 255, 255, .04);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(56.5% * var(--accent-saturation, 1))) 91%);
+}
+
+:root[data-accent][data-theme="dark"] .library-path button[aria-current="page"] {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .library-move,
+:root[data-accent][data-theme="dark"] .library-attach {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 64.1%);
+}
+
+:root[data-accent][data-theme="dark"] .library-move select,
+:root[data-accent][data-theme="dark"] .library-attach select {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.14);
+  background: rgba(255, 255, 255, .03);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(56.5% * var(--accent-saturation, 1))) 91%);
+}
+
+:root[data-accent][data-theme="dark"] .library-base.dragging {
+  outline: 2px dashed hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8% / 0.45);
 }
 
 :root[data-accent][data-theme="dark"] .provider-logo-openai,
@@ -6043,6 +6103,58 @@ html[data-accent][data-theme="light"] {
   color: #229b5c;
 }
 
+:root[data-accent][data-theme="light"] .grid-tile {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
+}
+
+:root[data-accent][data-theme="light"] .grid-tile:hover,
+:root[data-accent][data-theme="light"] .grid-tile:focus-visible {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+  background: rgba(26, 26, 26, 0.04);
+}
+
+:root[data-accent][data-theme="light"] .grid-tile:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
+}
+
+:root[data-accent][data-theme="light"] .grid-tile-title {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
+}
+
+:root[data-accent][data-theme="light"] .grid-tile-added {
+  background: #229b5c;
+  box-shadow: 0 0 0 2px hsl(calc(218deg + var(--accent-shift, 0deg)) min(100%, calc(48% * var(--accent-saturation, 1))) 9.8% / 0.45);
+}
+
+:root[data-accent][data-theme="light"] .library-path {
+  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
+}
+
+:root[data-accent][data-theme="light"] .library-path button:hover {
+  background: rgba(26, 26, 26, 0.04);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .library-path button[aria-current="page"] {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .library-move,
+:root[data-accent][data-theme="light"] .library-attach {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.4% * var(--accent-saturation, 1))) 35.9%);
+}
+
+:root[data-accent][data-theme="light"] .library-move select,
+:root[data-accent][data-theme="light"] .library-attach select {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.14);
+  background: rgba(26, 26, 26, 0.03);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .library-base.dragging {
+  outline: 2px dashed hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+}
+
 :root[data-accent][data-theme="light"] .studio-icon {
   color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 41.4%);
 }
@@ -7051,6 +7163,10 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .message-file-figure figcaption button {
   color: #ffffff;
+}
+
+:root[data-accent][data-theme="light"] .grid-tile-added {
+  box-shadow: 0 0 0 2px #ffffff;
 }
 
 @media (max-width: 620px) {

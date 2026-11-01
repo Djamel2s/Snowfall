@@ -46,6 +46,8 @@ export type MockOptions = {
   documentAnswer?: boolean
   /** Réponse qui crée une image (outil generate_image), rattachée à la réponse. */
   imageAnswer?: boolean
+  /** Bases déjà dans la bibliothèque (access : view = partagée en lecture). */
+  knowledgeBases?: { id: string; name: string | null; access?: 'owner' | 'edit' | 'view'; mine?: boolean; confidential?: boolean }[]
 }
 
 const DOC_SOURCE = { n: 1, sourceId: 'doc-1', name: 'Politique de déplacements.pdf', url: null, base: 'agent', section: 'Hôtels', page: 4, excerpt: 'Le plafond de nuit d’hôtel est de 120 € à Paris et 90 € en région, petit-déjeuner compris.' }
@@ -135,6 +137,13 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   let prompts = [{ id: 'p-shared', name: 'Résumé', content: 'Résume ce texte en 3 points.', shared: false, mine: false, canEdit: false, updatedAt: now }]
   // Droits fins : autorisations par ressource, groupes, annuaire.
   const access = new Map<string, unknown[]>()
+  // Bibliothèque de connaissances : bases, dossiers, documents, rattachements.
+  type MockBase = { id: string; name: string | null; confidential: boolean; access: 'owner' | 'edit' | 'view'; mine: boolean }
+  const kbBases: MockBase[] = (options.knowledgeBases ?? []).map((base) => ({ confidential: false, access: 'owner' as const, mine: true, ...base }))
+  const kbFolders: { id: string; baseId: string; parentId: string | null; name: string; createdAt: string }[] = []
+  const kbSources: { id: string; baseId: string; folderId: string | null; kind: 'file' | 'link'; status: 'ready'; errorCode: null; name: string; url: string | null; mediaType: string | null; size: number; chunkCount: number; embeddingModel: null; createdAt: string; updatedAt: string }[] = []
+  const kbLinks = new Map<string, string[]>()
+  const kbCalls: string[] = []
   const accessCalls: { type: string; id: string; grants: unknown[] }[] = []
   const groups: { id: string; name: string; memberIds: string[] }[] = []
   const directory = [
@@ -214,6 +223,104 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     const key = `${method} ${path}`
 
     if (method === 'GET' && path === '/knowledge/sources/doc-1/passages') return json(route, { name: DOC_SOURCE.name, passages: DOC_PASSAGES })
+
+    // ---- Bibliothèque ----------------------------------------------------------------
+    const baseView = (base: MockBase) => ({ id: base.id, name: base.name, confidential: base.confidential, access: base.access, mine: base.mine })
+    if (key === 'GET /knowledge/bases') {
+      return json(route, {
+        bases: kbBases.map((base) => ({
+          ...baseView(base),
+          sourceCount: kbSources.filter((source) => source.baseId === base.id).length,
+          shared: false,
+          usedBy: [...kbLinks.entries()].filter(([, ids]) => ids.includes(base.id)).map(([owner]) => ({ kind: owner.startsWith('agents:') ? 'agent' : 'project', id: owner.split(':')[1] })),
+          updatedAt: now,
+        })),
+      })
+    }
+    if (key === 'POST /knowledge/bases') {
+      const base: MockBase = { id: id(), name: (request.postDataJSON() as { name: string }).name, confidential: false, access: 'owner', mine: true }
+      kbBases.push(base)
+      kbCalls.push(`create:${base.name}`)
+      return json(route, { base: baseView(base) }, 201)
+    }
+    const kbBase = /^\/knowledge\/bases\/([^/]+)(\/[a-z]+)?$/.exec(path)
+    if (kbBase) {
+      const base = kbBases.find((item) => item.id === kbBase[1])
+      if (!base) return json(route, { error: 'Not found' }, 404)
+      const tail = kbBase[2] ?? ''
+      if (method === 'GET' && !tail) {
+        return json(route, { base: { ...baseView(base), embeddingModel: null, linksEnabled: true }, folders: kbFolders.filter((folder) => folder.baseId === base.id), sources: kbSources.filter((source) => source.baseId === base.id) })
+      }
+      if (method === 'PATCH' && !tail) {
+        const body = request.postDataJSON() as { name?: string; confidential?: boolean }
+        if (body.name !== undefined) base.name = body.name
+        if (body.confidential !== undefined) base.confidential = body.confidential
+        kbCalls.push(`update:${JSON.stringify(body)}`)
+        return json(route, { base: baseView(base) })
+      }
+      if (method === 'DELETE' && !tail) {
+        kbBases.splice(kbBases.indexOf(base), 1)
+        return route.fulfill({ status: 204 })
+      }
+      if (method === 'POST' && tail === '/folders') {
+        const body = request.postDataJSON() as { name: string; parentId: string | null }
+        const folder = { id: id(), baseId: base.id, parentId: body.parentId, name: body.name, createdAt: now }
+        kbFolders.push(folder)
+        return json(route, { folder }, 201)
+      }
+      if (method === 'POST' && tail === '/files') {
+        const headers = request.headers()
+        const source = { id: id(), baseId: base.id, folderId: headers['x-folder-id'] ?? null, kind: 'file' as const, status: 'ready' as const, errorCode: null, name: decodeURIComponent(headers['x-file-name'] ?? 'document'), url: null, mediaType: 'text/plain', size: 10, chunkCount: 1, embeddingModel: null, createdAt: now, updatedAt: now }
+        kbSources.push(source)
+        kbCalls.push(`file:${source.name}:${source.folderId ?? 'root'}`)
+        return json(route, { source }, 202)
+      }
+      if (method === 'GET' && tail === '/access') return json(route, { grants: access.get(`knowledge_base:${base.id}`) ?? [] })
+      if (method === 'PUT' && tail === '/access') {
+        const grants = (request.postDataJSON() as { grants: unknown[] }).grants
+        access.set(`knowledge_base:${base.id}`, grants)
+        accessCalls.push({ type: 'knowledge_base', id: base.id, grants })
+        return json(route, { grants })
+      }
+    }
+    const kbFolder = /^\/knowledge\/folders\/([^/]+)$/.exec(path)
+    if (kbFolder) {
+      const folder = kbFolders.find((item) => item.id === kbFolder[1])
+      if (!folder) return json(route, { error: 'Not found' }, 404)
+      if (method === 'PATCH') {
+        Object.assign(folder, request.postDataJSON())
+        return json(route, { folder })
+      }
+      if (method === 'DELETE') {
+        kbFolders.splice(kbFolders.indexOf(folder), 1)
+        return route.fulfill({ status: 204 })
+      }
+    }
+    const kbSource = /^\/knowledge\/sources\/([^/]+)$/.exec(path)
+    if (kbSource && method === 'PATCH') {
+      const source = kbSources.find((item) => item.id === kbSource[1])
+      if (!source) return json(route, { error: 'Not found' }, 404)
+      source.folderId = (request.postDataJSON() as { folderId: string | null }).folderId
+      kbCalls.push(`move:${source.name}:${source.folderId ?? 'root'}`)
+      return json(route, { source })
+    }
+    if (kbSource && method === 'DELETE') {
+      const index = kbSources.findIndex((item) => item.id === kbSource[1])
+      if (index >= 0) kbSources.splice(index, 1)
+      return route.fulfill({ status: 204 })
+    }
+    const kbLinksPath = /^\/(agents|projects)\/([^/]+)\/knowledge-bases$/.exec(path)
+    if (kbLinksPath) {
+      const owner = `${kbLinksPath[1]}:${kbLinksPath[2]}`
+      if (method === 'PUT') {
+        const ids = (request.postDataJSON() as { baseIds: string[] }).baseIds
+        if (kbLinksPath[1] === 'agents' && ids.some((baseId) => kbBases.find((base) => base.id === baseId)?.access === 'view')) return json(route, { error: 'Forbidden' }, 403)
+        kbLinks.set(owner, ids)
+        kbCalls.push(`link:${owner}:${ids.length}`)
+      }
+      const bases = (kbLinks.get(owner) ?? []).map((baseId) => kbBases.find((base) => base.id === baseId)).filter((base): base is MockBase => Boolean(base))
+      return json(route, { bases: bases.map(baseView), canManage: true, readySources: kbSources.filter((source) => bases.some((base) => base.id === source.baseId)).length })
+    }
     if (method === 'GET' && path.startsWith('/favicons/')) {
       return decodeURIComponent(path.slice('/favicons/'.length)) === 'lemonde.fr'
         ? route.fulfill({ status: 200, contentType: 'image/png', body: FAVICON })
@@ -929,5 +1036,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, conversationCreates: () => conversationCreates }
+  return { kbCalls, unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, conversationCreates: () => conversationCreates }
 }

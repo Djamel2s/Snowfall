@@ -22,10 +22,9 @@ import { AgentAvatar, ProviderLogo } from './AgentAvatar'
 import AlienEditor from './AlienEditor'
 import ModelSelect from './ModelSelect'
 import SharePanel from './SharePanel'
-import KnowledgePanel from './KnowledgePanel'
+import BasePicker from './knowledge/BasePicker'
 import AgentQuality from './AgentQuality'
 import AgentCapabilities from './agent/AgentCapabilities'
-import { emptyKnowledgeDraft, submitKnowledgeDraft, type KnowledgeDraft } from '../lib/knowledge-draft'
 
 type Props = {
   agent: Agent | null
@@ -38,9 +37,11 @@ type Props = {
   /** test : ouvrir aussitôt une conversation avec l'agent enregistré. */
   onSaved: (agent: Agent, notice?: string, test?: boolean) => void
   onDeleted: (id: string) => void
+  /** Ouvre une base dans la bibliothèque (Connaissances). */
+  onOpenBase?: (baseId: string) => void
 }
 
-export default function AgentStudio({ agent, agents = [], notice, onClose, onSaved, onDeleted }: Props) {
+export default function AgentStudio({ agent, agents = [], notice, onClose, onSaved, onDeleted, onOpenBase }: Props) {
   const { t } = useI18n()
   const [catalog, setCatalog] = useState<ProviderCatalog[] | null>(null)
   const [name, setName] = useState(agent?.name ?? '')
@@ -71,8 +72,8 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState(notice ?? '')
-  // Nouvel agent : documents en attente, envoyés juste après la création.
-  const [draft, setDraft] = useState<KnowledgeDraft>(emptyKnowledgeDraft)
+  // Nouvel agent : bases choisies, rattachées juste après la création.
+  const [draftBases, setDraftBases] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -176,12 +177,16 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         agent?.id,
       )
       setSavedInstructions(saved.instructions)
-      if (agent || (draft.items.length === 0 && !draft.confidential)) {
+      if (agent || draftBases.length === 0) {
         onSaved(saved, undefined, test)
         return
       }
-      const failures = await submitKnowledgeDraft(api, 'agents', saved.id, draft, t('knowledge.failed.generic'))
-      onSaved(saved, failures.length ? `${t('knowledge.draftFailed')} ${failures.join(' · ')}` : undefined, test)
+      // L'agent est créé même si un rattachement est refusé (base confidentielle, droit manquant).
+      const failure = await api.setAttachedBases('agents', saved.id, draftBases).then(
+        () => undefined,
+        (cause: unknown) => (cause instanceof Error ? cause.message : t('knowledge.failed.generic')),
+      )
+      onSaved(saved, failure ? `${t('knowledge.draftFailed')} ${failure}` : undefined, test)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('studio.saveFailed'))
     } finally {
@@ -301,8 +306,6 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
             onClick={() => {
               setProvider(item.id)
               setModel(item.models[0]?.id ?? '')
-              // Confidentiel exige un modèle local : on ne garde pas le choix ailleurs.
-              if (item.id !== 'local' && draft.confidential) setDraft({ ...draft, confidential: false })
             }}
           >
             <ProviderLogo provider={item.id} size={20} />
@@ -375,11 +378,7 @@ export default function AgentStudio({ agent, agents = [], notice, onClose, onSav
         </div>
       </div>
 
-      {agent ? (
-        <KnowledgePanel kind="agents" ownerId={agent.id} />
-      ) : (
-        <KnowledgePanel kind="agents" draft={draft} onDraftChange={setDraft} confidentialAllowed={provider === 'local'} />
-      )}
+      <BasePicker kind="agents" ownerId={agent?.id} draft={draftBases} onDraftChange={setDraftBases} agents={agents} projects={[]} onOpenBase={onOpenBase} />
 
       {/* Qualité : auteur ou administrateur d'un agent déjà créé. */}
       {agent?.canEdit && (

@@ -539,6 +539,25 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
 - Rotation des clés : la colonne est couverte ; le test de couverture échoue
   si une future colonne chiffrée est oubliée.
 
+## 42. Bibliothèque de connaissances
+
+- Migrations `knowledge_library`, `knowledge_library_backfill`,
+  `knowledge_library_final`, `knowledge_library_enforcement`
+  (`npm run db:migrate`, droits réappliqués). Chaque base d'agent ou de projet
+  devient une base de la bibliothèque, avec son auteur (celui de l'agent, ou le
+  propriétaire du projet), rattachée à son agent ou projet. Nom affiché :
+  « Documents de … » tant qu'on ne la renomme pas.
+- Changements visibles :
+  - les documents d'un agent **privé** ne sont plus lisibles des autres membres ;
+  - supprimer un agent garde ses bases (dans la bibliothèque de leur auteur) ;
+  - rattacher une base à un agent demande de pouvoir modifier la base.
+- Essai de migration : base jetable migrée jusqu'au 31 octobre, données à
+  l'ancien format (base d'agent partagé, base de projet), puis les quatre
+  migrations : bases, auteurs, rattachements, documents et passages intacts ;
+  lecture vérifiée sous le rôle applicatif.
+- Audit : `knowledge.base_create|update|delete`, `knowledge.folder_create|update|delete`,
+  `knowledge.link_update` (refus compris), `access.update` (type `knowledge_base`).
+
 ## 41. Poste de développement : toutes les fonctions en local
 
 - Recherche web : `docker compose --profile web-search up -d searxng`

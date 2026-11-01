@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Building2, Check, Pencil, User, Users, X } from 'lucide-react'
-import { api, type AccessGrant, type SharingDirectory } from '../lib/api'
+import { api, type AccessGrant, type ShareableType, type SharingDirectory } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 
 type Props = {
-  resource: { type: 'agent' | 'prompt' | 'skill'; id: string; name: string }
+  resource: { type: ShareableType; id: string; name: string }
   onError: (message: string) => void
 }
 

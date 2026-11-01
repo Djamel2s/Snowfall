@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from "../auth/auth.js";
 import type { Agent, AgentStore } from "../agents/store.js";
 import type { PromptStore } from "../prompts/store.js";
 import type { SkillStore } from "../skills/store.js";
+import type { KnowledgeStore } from "../knowledge/store.js";
 import { MAX_GRANTS, SharingRuleError, type Grant, type ResourceType, type SharingStore } from "../sharing/store.js";
 import type { RouteKit } from "./kit.js";
 
@@ -23,6 +24,7 @@ type Deps = {
   agents?: AgentStore | undefined;
   prompts: PromptStore;
   skills?: SkillStore | undefined;
+  knowledge?: KnowledgeStore | undefined;
   /** Partager ou supprimer un agent : son auteur ou un administrateur. */
   canManageAgent: (user: AuthenticatedUser, agent: Agent) => boolean;
 };
@@ -51,6 +53,13 @@ export function registerSharingRoutes(api: FastifyInstance, kit: RouteKit, deps:
       if (!deps.canManageAgent(user, agent)) return kit.denyWrite(request, reply, user), false;
       return true;
     }
+    if (type === "knowledge_base") {
+      // Base de connaissances : seul son auteur la partage (pas un administrateur).
+      const base = deps.knowledge ? await deps.knowledge.getBase(user, id) : null;
+      if (!base) return reply.code(404).send({ error: "Not found" }), false;
+      if (base.access !== "owner") return kit.denyWrite(request, reply, user), false;
+      return true;
+    }
     if (type === "skill") {
       // Compétence : seul son auteur la partage.
       const skill = deps.skills ? await deps.skills.get(user, id) : null;
@@ -65,8 +74,9 @@ export function registerSharingRoutes(api: FastifyInstance, kit: RouteKit, deps:
     return true;
   }
 
-  for (const type of ["agent", "prompt", "skill"] as const) {
-    api.get(`/${type}s/:id/access`, async (request, reply) => {
+  const paths: Record<ResourceType, string> = { agent: "/agents", prompt: "/prompts", skill: "/skills", knowledge_base: "/knowledge/bases" };
+  for (const type of ["agent", "prompt", "skill", "knowledge_base"] as const) {
+    api.get(`${paths[type]}/:id/access`, async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
       const params = idParams.safeParse(request.params);
@@ -75,7 +85,7 @@ export function registerSharingRoutes(api: FastifyInstance, kit: RouteKit, deps:
       return { grants: await sharing.grants(user, type, params.data.id) };
     });
 
-    api.put(`/${type}s/:id/access`, async (request, reply) => {
+    api.put(`${paths[type]}/:id/access`, async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
       if (!kit.canWrite(user)) return kit.denyWrite(request, reply, user);

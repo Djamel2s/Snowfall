@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1043 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1059 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -2440,6 +2440,58 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .source-card-reported {
   color: #229b5c;
+}
+
+:root[data-theme="light"] .grid-tile {
+  color: #273446;
+}
+
+:root[data-theme="light"] .grid-tile:hover,
+:root[data-theme="light"] .grid-tile:focus-visible {
+  border-color: rgba(34, 117, 221, 0.12);
+  background: rgba(26, 26, 26, 0.04);
+}
+
+:root[data-theme="light"] .grid-tile:focus-visible {
+  outline: 2px solid rgba(23, 34, 47, 0.5);
+}
+
+:root[data-theme="light"] .grid-tile-title {
+  color: #273446;
+}
+
+:root[data-theme="light"] .grid-tile-added {
+  background: #229b5c;
+  box-shadow: 0 0 0 2px rgba(13, 22, 37, 0.45);
+}
+
+:root[data-theme="light"] .library-path {
+  color: #5b6a82;
+}
+
+:root[data-theme="light"] .library-path button:hover {
+  background: rgba(26, 26, 26, 0.04);
+  color: #111822;
+}
+
+:root[data-theme="light"] .library-path button[aria-current="page"] {
+  color: #111822;
+}
+
+:root[data-theme="light"] .library-move,
+:root[data-theme="light"] .library-attach {
+  color: #475870;
+}
+
+:root[data-theme="light"] .library-move select,
+:root[data-theme="light"] .library-attach select {
+  border: 1px solid rgba(34, 117, 221, 0.14);
+  background: rgba(26, 26, 26, 0.03);
+  color: #111822;
+}
+
+:root[data-theme="light"] .library-base.dragging {
+  outline: 2px dashed rgba(0, 133, 255, 0.45);
 }
 
 :root[data-theme="light"] .studio-icon {

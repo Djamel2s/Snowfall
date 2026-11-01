@@ -586,3 +586,101 @@ describe("OCR local : documents numérisés", () => {
     assert.equal(byName["annexe.pdf"].status, "ready");
   });
 });
+
+describe("Bibliothèque de connaissances : routes", () => {
+  const folderUpload = (baseId: string, name: string, content: string, folderId?: string) => {
+    const request = upload(`/knowledge/bases/${baseId}/files`, name, content);
+    return folderId ? { ...request, headers: { ...request.headers, "x-folder-id": folderId } } : request;
+  };
+
+  it("créer une base, ranger des documents dans des dossiers, renommer, déplacer, supprimer ; audit sans noms", async (t) => {
+    const { app, knowledge, events } = setup();
+    t.after(() => app.close());
+    const created = await app.inject(json("POST", "/knowledge/bases", { name: "  Politiques\nRH  " }));
+    assert.equal(created.statusCode, 201);
+    const base = created.json().base as { id: string; name: string; mine: boolean };
+    assert.deepEqual([base.name, base.mine], ["Politiques RH", true]);
+    assert.equal((await app.inject(json("POST", "/knowledge/bases", { name: "   " }))).statusCode, 400);
+
+    const contrats = (await app.inject(json("POST", `/knowledge/bases/${base.id}/folders`, { name: "Contrats", parentId: null }))).json().folder as { id: string };
+    const annee = (await app.inject(json("POST", `/knowledge/bases/${base.id}/folders`, { name: "2026", parentId: contrats.id }))).json().folder as { id: string };
+    // Un dossier dans son propre descendant : refusé.
+    assert.equal((await app.inject(json("PATCH", `/knowledge/folders/${contrats.id}`, { parentId: annee.id }))).statusCode, 409);
+
+    const added = await app.inject(folderUpload(base.id, "cdi.md", "# CDI\n\nPériode d'essai de quatre mois.", annee.id));
+    assert.equal(added.statusCode, 202);
+    await knowledge.idle();
+    const source = added.json().source as { id: string; folderId: string };
+    assert.equal(source.folderId, annee.id);
+
+    let view = (await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).json();
+    assert.deepEqual(view.folders.map((folder: { name: string }) => folder.name).sort(), ["2026", "Contrats"]);
+    assert.equal(view.sources[0].status, "ready");
+
+    assert.equal((await app.inject(json("PATCH", `/knowledge/sources/${source.id}`, { folderId: contrats.id }))).statusCode, 200);
+    assert.equal((await app.inject(json("PATCH", `/knowledge/bases/${base.id}`, { name: "RH" }))).json().base.name, "RH");
+    view = (await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).json();
+    assert.equal(view.sources[0].folderId, contrats.id);
+
+    const listed = (await app.inject({ method: "GET", url: "/knowledge/bases" })).json().bases as { id: string; sourceCount: number }[];
+    assert.equal(listed.find((item) => item.id === base.id)?.sourceCount, 1);
+
+    // Supprimer le dossier supprime ce qu'il contient.
+    assert.equal((await app.inject({ method: "DELETE", url: `/knowledge/folders/${contrats.id}`, headers: { origin: ORIGIN } })).statusCode, 204);
+    assert.equal((await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).json().sources.length, 0);
+    assert.equal((await app.inject({ method: "DELETE", url: `/knowledge/bases/${base.id}`, headers: { origin: ORIGIN } })).statusCode, 204);
+    assert.equal((await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).statusCode, 404);
+
+    const kinds = events.map((event) => event.eventType);
+    for (const kind of ["knowledge.base_create", "knowledge.folder_create", "knowledge.base_update", "knowledge.folder_delete", "knowledge.base_delete"]) assert.ok(kinds.includes(kind), kind);
+    assert.ok(!JSON.stringify(events).includes("Politiques") && !JSON.stringify(events).includes("Contrats") && !JSON.stringify(events).includes("essai"));
+  });
+
+  it("une base privée ne se lit ni ne se modifie par un collègue ; lecteur de l'organisation : rien n'est écrit", async (t) => {
+    const { app, as } = setup();
+    t.after(() => app.close());
+    const base = (await app.inject(json("POST", "/knowledge/bases", { name: "Privée" }))).json().base as { id: string };
+    as(bob);
+    assert.equal((await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).statusCode, 404);
+    assert.equal((await app.inject(folderUpload(base.id, "x.md", "x"))).statusCode, 404);
+    assert.equal((await app.inject({ method: "GET", url: "/knowledge/bases" })).json().bases.length, 0);
+    as({ ...bob, role: "reader" });
+    assert.equal((await app.inject(json("POST", "/knowledge/bases", { name: "Lecteur" }))).statusCode, 403);
+  });
+
+  it("un agent cherche dans toutes ses bases (dans l'ordre) ; une base confidentielle exige un agent local", async (t) => {
+    const { app, knowledge, calls } = setup();
+    t.after(() => app.close());
+    const agent = await createAgent(app);
+    const rh = (await app.inject(json("POST", "/knowledge/bases", { name: "RH" }))).json().base as { id: string };
+    const it = (await app.inject(json("POST", "/knowledge/bases", { name: "Informatique" }))).json().base as { id: string };
+    await app.inject(folderUpload(rh.id, "conges.md", "# Congés\n\nTrente jours de congés payés par an."));
+    await app.inject(folderUpload(it.id, "vpn.md", "# VPN\n\nLe VPN de l'entreprise utilise WireGuard."));
+    await knowledge.idle();
+
+    const linked = await app.inject(json("PUT", `/agents/${agent.id}/knowledge-bases`, { baseIds: [rh.id, it.id] }));
+    assert.equal(linked.statusCode, 200);
+    assert.deepEqual(linked.json().bases.map((base: { name: string }) => base.name), ["RH", "Informatique"]);
+
+    const conversation = (await app.inject(json("POST", "/conversations", { agentId: agent.id }))).json().conversation;
+    await app.inject(json("POST", `/conversations/${conversation.id}/messages`, { content: "Le VPN utilise quel protocole, et combien de jours de congés ?" }));
+    // Les deux bases ont été consultées.
+    assert.match(calls.at(-1)!.message, /WireGuard/);
+    assert.match(calls.at(-1)!.message, /Trente jours/);
+
+    // Confidentielle : refusée pour un agent qui répond avec un modèle externe.
+    await app.inject(json("PATCH", `/knowledge/bases/${it.id}`, { confidential: true }));
+    assert.equal((await app.inject(json("PUT", `/agents/${agent.id}/knowledge-bases`, { baseIds: [rh.id, it.id] }))).json().reason, "agent_requires_local");
+  });
+
+  it("rattacher une base qu'on ne peut pas modifier : refusé (403) et tracé", async (t) => {
+    const { app, as, events } = setup();
+    t.after(() => app.close());
+    const base = (await app.inject(json("POST", "/knowledge/bases", { name: "Alice" }))).json().base as { id: string };
+    as(bob);
+    const agent = await createAgent(app);
+    const denied = await app.inject(json("PUT", `/agents/${agent.id}/knowledge-bases`, { baseIds: [base.id] }));
+    assert.equal(denied.statusCode, 403);
+    assert.ok(events.some((event) => event.eventType === "knowledge.link_update" && event.outcome === "denied"));
+  });
+});

@@ -162,3 +162,6 @@
 /* Étiquette d'une image générée : reste sombre et lisible par-dessus l'image. */
 :root[data-theme="light"] .message-file-figure figcaption { background: rgba(15, 27, 45, .6); color: #ffffff; }
 :root[data-theme="light"] .message-file-figure figcaption button { color: #ffffff; }
+
+/* Pastille « ajouté » d'une tuile : anneau couleur du fond clair. */
+:root[data-theme="light"] .grid-tile-added { box-shadow: 0 0 0 2px #ffffff; }

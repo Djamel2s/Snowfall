@@ -30,7 +30,7 @@ conversations et les documents, traitement à grande échelle possible.
 |---|---|---|
 | Comptes | Identifiant, e-mail, rôle | Durée de l'appartenance à l'organisation |
 | Conversations et réponses | Texte, pièces jointes, sources citées | Jusqu'à suppression par l'utilisateur ; supprimées au départ du membre |
-| Bases de connaissances | Documents, passages, vecteurs | Jusqu'à suppression de la source ou de l'agent |
+| Bases de connaissances | Documents, passages, vecteurs, noms des bases et des dossiers (chiffrés) | Jusqu'à suppression du document ou de la base (supprimer un agent garde ses bases) ; lisibles de l'auteur, des personnes à qui elles sont partagées, et des utilisateurs des agents auxquels elles sont rattachées |
 | Fichiers produits par le code | Images, tableaux | Avec la conversation ; orphelins purgés sous 24 h |
 | Résumés de compaction | Résumé chiffré des échanges anciens | Avec la conversation |
 | Traces des agents (Langfuse) | Étapes, durées, tokens ; contenu masqué, aucun pour le confidentiel | 30 jours |

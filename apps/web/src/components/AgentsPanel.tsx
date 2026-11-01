@@ -5,7 +5,8 @@ import { useI18n } from '../lib/i18n'
 import { AgentAvatar } from './AgentAvatar'
 import { TemplateDetail } from './AgentTemplates'
 import { useAgentTemplates } from '../hooks/useAgentTemplates'
-import { ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch, RowAction, SectionAction } from './ui/List'
+import { GridTile, ListEmpty, ListGrid, ListRow, ListRows, ListSection, PanelNew, PanelSearch, RowAction, SectionAction, ViewToggle } from './ui/List'
+import { useCatalogView } from '../lib/catalog-view'
 
 type Props = {
   agents: Agent[]
@@ -37,6 +38,7 @@ export default function AgentsPanel(props: Props) {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<string | null>(null)
+  const [catalogView, setCatalogView] = useCatalogView('agents')
   const templates = useAgentTemplates(props.onError)
   const template = templates.find((item) => item.id === open)
 
@@ -128,27 +130,35 @@ export default function AgentsPanel(props: Props) {
       )}
 
       {catalog.length > 0 && (
-        <ListSection label={t('templates.tabCatalog')}>
-          <ListRows>
-            {catalog.map((item) => (
-              <ListRow
-                key={item.id}
-                icon={<AgentAvatar avatar={item.avatar} size={22} />}
-                title={item.name}
-                subtitle={item.tagline}
-                label={t('templates.open', { name: item.name })}
-                tooltip={item.tagline}
-                onClick={() => setOpen(item.id)}
-                trailing={
-                  item.evaluation.measured ? (
-                    <span className="list-row-chip ok" title={t('templates.measuredShort')}>
-                      {item.evaluation.measured.passed}/{item.evaluation.measured.total}
-                    </span>
-                  ) : undefined
-                }
-              />
-            ))}
-          </ListRows>
+        <ListSection label={t('templates.tabCatalog')} actions={<ViewToggle view={catalogView} onChange={setCatalogView} />}>
+          {catalogView === 'grid' ? (
+            <ListGrid label={t('templates.tabCatalog')}>
+              {catalog.map((item) => (
+                <GridTile key={item.id} icon={<AgentAvatar avatar={item.avatar} size={34} />} title={item.name} label={t('templates.open', { name: item.name })} tooltip={item.tagline} onClick={() => setOpen(item.id)} />
+              ))}
+            </ListGrid>
+          ) : (
+            <ListRows>
+              {catalog.map((item) => (
+                <ListRow
+                  key={item.id}
+                  icon={<AgentAvatar avatar={item.avatar} size={22} />}
+                  title={item.name}
+                  subtitle={item.tagline}
+                  label={t('templates.open', { name: item.name })}
+                  tooltip={item.tagline}
+                  onClick={() => setOpen(item.id)}
+                  trailing={
+                    item.evaluation.measured ? (
+                      <span className="list-row-chip ok" title={t('templates.measuredShort')}>
+                        {item.evaluation.measured.passed}/{item.evaluation.measured.total}
+                      </span>
+                    ) : undefined
+                  }
+                />
+              ))}
+            </ListRows>
+          )}
         </ListSection>
       )}
     </div>

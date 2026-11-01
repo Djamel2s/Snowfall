@@ -56,28 +56,24 @@ test('panneaux au même format : « Nouveau … », recherche, sections', async 
   await expect(page.getByText('Aucun prompt trouvé.')).toBeVisible()
 })
 
-test('projet : liste, page du projet (conversations, documents), retour', async ({ page }) => {
-  await mockApi(page)
+test('projet : liste, page du projet (conversations, bases de connaissances), retour', async ({ page }) => {
+  await mockApi(page, { knowledgeBases: [{ id: 'kb-ao', name: 'Appels d’offres' }] })
   await page.route('**/api/projects', (route) =>
     route.request().method() === 'GET'
       ? route.fulfill({ json: { projects: [{ id: 'p1', name: 'Appel d’offres 2027', createdAt: '2026-10-01', updatedAt: '2026-10-01', conversationCount: 0 }] } })
       : route.fallback(),
-  )
-  await page.route('**/api/projects/p1/knowledge', (route) =>
-    route.fulfill({ json: { knowledge: { base: { id: 'b1' }, canManage: true, linksEnabled: true, confidential: false, embeddingModel: null, sources: [{ id: 's1', kind: 'file', name: 'Cahier des charges.pdf', status: 'ready', chunkCount: 42, size: 1200, errorCode: null, url: null, updatedAt: '2026-10-01' }] } } }),
   )
   await page.goto('/')
   await page.getByPlaceholder(/Posez votre question/).waitFor()
   await open(page, 'Projets')
   await page.getByRole('textbox', { name: 'Rechercher un projet' }).fill('offres')
   await page.getByRole('button', { name: /Appel d’offres 2027/ }).click()
-  const documents = page.getByRole('region', { name: 'Connaissances' })
-  await expect(documents.getByRole('button', { name: 'Télécharger Cahier des charges.pdf' })).toBeVisible()
-  await expect(documents.getByRole('button', { name: 'Ajouter des fichiers' })).toBeVisible()
-  // Lien : le champ n'apparaît qu'à la demande.
-  await expect(documents.getByRole('textbox', { name: 'Coller un lien…' })).toHaveCount(0)
-  await documents.getByRole('button', { name: 'Ajouter un lien' }).click()
-  await expect(documents.getByRole('textbox', { name: 'Coller un lien…' })).toBeVisible()
+  // Les documents vivent dans la bibliothèque : le projet y rattache des bases.
+  const bases = page.getByRole('region', { name: 'Bases de connaissances' })
+  await expect(bases).toContainText('Aucune base')
+  await bases.getByRole('button', { name: 'Rattacher une base' }).click()
+  await bases.getByRole('combobox', { name: 'Rattacher une base' }).selectOption({ label: 'Appels d’offres' })
+  await expect(bases.locator('.list-row-wrap', { hasText: 'Appels d’offres' })).toBeVisible()
   await page.getByRole('button', { name: 'Projets', exact: true }).last().click()
   await expect(page.getByRole('button', { name: 'Nouveau projet' })).toBeVisible()
 })
@@ -95,4 +91,17 @@ test('studio d’agent ouvert : aller dans Conversations le referme', async ({ p
   await open(page, 'Conversations')
   await expect(page.getByRole('form', { name: 'Modifier l’agent' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Nouvelle conversation' }).first()).toBeVisible()
+})
+
+test('même gabarit partout : le bouton « Nouveau » et la recherche à la même hauteur dans chaque panneau', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'Mesure sur bureau')
+  await mockApi(page, {})
+  await page.goto('/')
+  const positions: Record<string, number | undefined> = {}
+  for (const name of ['Conversations', 'Projets', 'Agents', 'Connaissances', 'Prompts', 'Compétences', 'Connecteurs']) {
+    await page.getByRole('button', { name, exact: true }).first().click()
+    await expect(page.locator('.sidebar .search-box').first()).toBeVisible()
+    positions[name] = (await page.locator('.sidebar .search-box').first().boundingBox())?.y
+  }
+  expect(new Set(Object.values(positions)).size, JSON.stringify(positions)).toBe(1)
 })

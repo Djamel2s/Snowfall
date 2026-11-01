@@ -1131,7 +1131,7 @@ export function createAppServer(deps: AppDependencies) {
     if (deps.mcp) registerMcpRoutes(api, kit, { ...deps.mcp, redirectUri: deps.mcp.redirectUri ?? `${appOrigin}/mcp/callback` });
     registerPromptRoutes(api, kit, prompts);
     registerPresetRoutes(api, kit, presets);
-    registerSharingRoutes(api, kit, { sharing, agents, prompts, skills: skillStore, canManageAgent });
+    registerSharingRoutes(api, kit, { sharing, agents, prompts, skills: skillStore, knowledge: deps.knowledge?.store, canManageAgent });
     registerSkillRoutes(api, kit, skillStore, deps.scanner);
     registerMemoryRoutes(api, kit, memories);
     registerAudioRoutes(api, kit, deps.speech ?? new OpenAiCompatibleSpeech(undefined, undefined));
@@ -1335,13 +1335,14 @@ export function createAppServer(deps: AppDependencies) {
     async function activeBases(user: AuthenticatedUser, conversation: ConversationSummary, agent: Agent | null) {
       if (!deps.knowledge) return [];
       const bases: ActiveBase[] = [];
+      // Toutes les bases rattachées à l'agent et au projet (une base présente des deux côtés : une fois).
       if (agent && conversation.knowledge.agent) {
-        const base = await deps.knowledge.store.findBase(user, { kind: "agent", agentId: agent.id });
-        if (base) bases.push({ ...base, label: "agent" });
+        for (const base of await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: agent.id })) bases.push({ ...base, label: "agent" });
       }
       if (conversation.projectId && conversation.knowledge.project) {
-        const base = await deps.knowledge.store.findBase(user, { kind: "project", projectId: conversation.projectId });
-        if (base) bases.push({ ...base, label: "project" });
+        for (const base of await deps.knowledge.store.basesFor(user, { kind: "project", projectId: conversation.projectId })) {
+          if (!bases.some((known) => known.id === base.id)) bases.push({ ...base, label: "project" });
+        }
       }
       return bases;
     }
@@ -1735,13 +1736,13 @@ export function createAppServer(deps: AppDependencies) {
       const delegates: Delegate[] = [];
       for (const item of found) {
         if (!item) continue;
-        const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: item.id }) : null;
+        const itemBases = deps.knowledge ? await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: item.id }) : [];
         const provider = models.providerFor({ provider: item.provider, model: item.model });
         delegates.push({
           id: item.id,
           name: item.name,
           summary: item.instructions.replace(/\s+/g, " ").slice(0, 160),
-          confidential: Boolean(base?.confidential),
+          confidential: itemBases.some((base) => base.confidential),
           local: provider === "local" || provider === "echo",
         });
       }
@@ -1800,12 +1801,12 @@ export function createAppServer(deps: AppDependencies) {
       }
       // Jamais plus que l'appelant : intersection des outils permis.
       const permitted = new Set([...(await permittedFor(user, specialist))].filter((id) => team.permitted.has(id)));
-      const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: specialist.id }) : null;
-      const confidential = team.confidential || Boolean(base?.confidential);
+      const specialistBases = deps.knowledge ? await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: specialist.id }) : [];
+      const confidential = team.confidential || specialistBases.some((base) => base.confidential);
       const citations = new CitationRegistry();
       const plan: KnowledgePlan =
-        base && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(selection)
-          ? { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], citations)] }
+        specialistBases.length && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(selection)
+          ? { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge, user, specialistBases.map((base) => ({ ...base, label: "agent" as const })), citations)] }
           : { mode: "none" };
       const threadId = team.threadId ? `${team.threadId}~${subThreadKey(context.callId)}` : undefined;
       const codeRuns = { count: 0 };
@@ -2527,8 +2528,10 @@ export function createAppServer(deps: AppDependencies) {
       if (schedule.kind === "knowledge") {
         // Déclencheur : seulement les documents prêts depuis le dernier passage.
         const since = Date.parse(schedule.checkedAt ?? schedule.createdAt);
-        const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: schedule.agentId }) : null;
-        const fresh = base ? (await deps.knowledge!.store.listSources(user, base.id)).filter((source) => source.status === "ready" && Date.parse(source.updatedAt) > since) : [];
+        // Toutes les bases de l'agent : un document ajouté à l'une d'elles déclenche la tâche.
+        const scheduleBases = deps.knowledge ? await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: schedule.agentId }) : [];
+        const fresh = [];
+        for (const base of scheduleBases) fresh.push(...(await deps.knowledge!.store.listSources(user, base.id)).filter((source) => source.status === "ready" && Date.parse(source.updatedAt) > since));
         if (!fresh.length) return store.finish(user, id, { status: null, nextRunAt: null, ran: false, checked: true });
         // Noms de fichiers : des données, bornées et sur une ligne.
         const names = fresh.slice(0, 10).map((source) => source.name.replace(/[\r\n<>]/g, " ").slice(0, 100));
@@ -3081,11 +3084,12 @@ export function createAppServer(deps: AppDependencies) {
   async function qualityModels(_request: FastifyRequest, user: AuthenticatedUser, agent: Agent): Promise<{ models: QualityModels; judge: string } | { refused: "confidential" | "quota" | "unavailable" }> {
     const own: ModelSelection = { provider: agent.provider, model: agent.model };
     if (!(await isModelPermitted(user, own))) return { refused: "unavailable" };
-    const base = deps.knowledge ? await deps.knowledge.store.findBase(user, { kind: "agent", agentId: agent.id }) : null;
+    const qualityBases = deps.knowledge ? await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: agent.id }) : [];
+    const confidentialBase = qualityBases.some((base) => base.confidential);
     const strong = deps.settings ? (await deps.settings.get(user)).modelRouting?.strong : undefined;
     let judge = strong && (await isModelPermitted(user, strong)) ? strong : own;
-    if (base?.confidential && judge.provider !== "local") judge = own;
-    if (base?.confidential && judge.provider !== "local") return { refused: "confidential" };
+    if (confidentialBase && judge.provider !== "local") judge = own;
+    if (confidentialBase && judge.provider !== "local") return { refused: "confidential" };
 
     const call = async (selection: ModelSelection, input: Parameters<ChatRunner>[0], signal: AbortSignal) => {
       const provider = models.providerFor(selection);
@@ -3108,7 +3112,7 @@ export function createAppServer(deps: AppDependencies) {
       models: {
         answer: (instructions, question, signal) => {
           const citations = new CitationRegistry();
-          const tools = base && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(own) ? [knowledgeTool(deps.knowledge, user, [{ ...base, label: "agent" }], citations)] : [];
+          const tools = qualityBases.length && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(own) ? [knowledgeTool(deps.knowledge, user, qualityBases.map((base) => ({ ...base, label: "agent" as const })), citations)] : [];
           return call(own, { message: question, instructions, ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}) }, signal);
         },
         complete: (prompt, signal) => call(judge, { message: prompt }, signal),
@@ -3226,8 +3230,8 @@ export function createAppServer(deps: AppDependencies) {
 
       // Base confidentielle : l'agent ne peut pas passer à un modèle hors plateforme.
       if (input.provider !== "local" && deps.knowledge) {
-        const base = await deps.knowledge.store.findBase(user, { kind: "agent", agentId: params.data.id });
-        if (base?.confidential) return reply.code(409).send({ error: "Local model required", reason: "agent_requires_local" });
+        const linkedBases = await deps.knowledge.store.basesFor(user, { kind: "agent", agentId: params.data.id });
+        if (linkedBases.some((base) => base.confidential)) return reply.code(409).send({ error: "Local model required", reason: "agent_requires_local" });
       }
 
       const agent = await store.update(user, params.data.id, input);

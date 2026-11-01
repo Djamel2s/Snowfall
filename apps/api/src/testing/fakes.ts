@@ -5,7 +5,7 @@ import { DEFAULT_CONVERSATION_TITLE, provisionalTitle } from "../conversations/s
 import type { AttachmentMeta } from "../attachments/store.js";
 import type { SessionStore } from "../auth/session-store.js";
 import type { TenantContext } from "../db/tenant.js";
-import type { ChunkInput, KnowledgeBase, KnowledgeOwner, KnowledgeSource, KnowledgeStore } from "../knowledge/store.js";
+import type { ChunkInput, KnowledgeBase, KnowledgeFolder, KnowledgeOwner, KnowledgeSource, KnowledgeStore } from "../knowledge/store.js";
 import { contextHeader } from "../knowledge/search.js";
 import {
   normalizeForSearch,
@@ -289,17 +289,29 @@ export function emptySessionStore(): SessionStore {
   };
 }
 
-/** Base de connaissances en mémoire (mêmes règles de visibilité que la RLS). */
+/**
+ * Bibliothèque de connaissances en mémoire. Visibilité proche de la RLS : son
+ * auteur, une base rattachée à un agent (les droits sur l'agent sont vérifiés
+ * par l'API), ou à un de ses projets. Les droits fins (partages) sont couverts
+ * par les tests PostgreSQL.
+ */
 export function createFakeKnowledgeStore(): KnowledgeStore {
-  type Base = KnowledgeBase & { organizationId: string; agentId: string | null; projectId: string | null; userId: string | null };
+  type Base = Omit<KnowledgeBase, "access"> & { organizationId: string; updatedAt: string };
   type Source = KnowledgeSource & { organizationId: string; bytes: Buffer; createdBy: string };
+  type Link = { kind: "agent" | "project"; ownerId: string; baseId: string; userId: string; position: number };
   const bases = new Map<string, Base>();
   const sources = new Map<string, Source>();
+  const folders = new Map<string, KnowledgeFolder & { organizationId: string }>();
+  const links: Link[] = [];
   const chunks = new Map<string, ChunkInput[] & { model?: string | null }>();
   const now = () => new Date().toISOString();
 
   const visible = (tenant: TenantContext, base: Base | undefined): base is Base =>
-    !!base && base.organizationId === tenant.organizationId && (base.userId === null || base.userId === tenant.userId);
+    !!base &&
+    base.organizationId === tenant.organizationId &&
+    (base.createdBy === tenant.userId || links.some((link) => link.baseId === base.id && (link.kind === "agent" || link.userId === tenant.userId)));
+  // Sans rôle ni partage dans ce faux : l'auteur modifie, les autres lisent.
+  const access = (tenant: TenantContext, base: Base): KnowledgeBase["access"] => (base.createdBy === tenant.userId ? "owner" : "view");
   const baseOf = (tenant: TenantContext, id: string) => {
     const base = bases.get(id);
     return visible(tenant, base) ? base : null;
@@ -308,49 +320,136 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
     const source = sources.get(id);
     return source && baseOf(tenant, source.baseId) ? source : null;
   };
-  const publicBase = (base: Base): KnowledgeBase => ({ id: base.id, owner: base.owner, confidential: base.confidential, revision: base.revision });
+  const publicBase = (tenant: TenantContext, base: Base): KnowledgeBase => ({
+    id: base.id,
+    name: base.name,
+    createdBy: base.createdBy,
+    confidential: base.confidential,
+    revision: base.revision,
+    access: access(tenant, base),
+  });
   const publicSource = ({ organizationId: _o, bytes: _b, createdBy: _c, ...source }: Source): KnowledgeSource => ({ ...source });
   const bump = (baseId: string) => {
     const base = bases.get(baseId);
-    if (base) base.revision++;
+    if (base) {
+      base.revision++;
+      base.updatedAt = now();
+    }
   };
-  const find = (tenant: TenantContext, owner: KnowledgeOwner) =>
-    [...bases.values()].find(
-      (base) =>
-        visible(tenant, base) &&
-        (owner.kind === "agent" ? base.agentId === owner.agentId : base.projectId === owner.projectId && base.userId === tenant.userId),
-    ) ?? null;
+  const ownerId = (owner: KnowledgeOwner) => (owner.kind === "agent" ? owner.agentId : owner.projectId);
+  const linked = (tenant: TenantContext, owner: KnowledgeOwner) =>
+    links
+      .filter((link) => link.kind === owner.kind && link.ownerId === ownerId(owner) && (owner.kind === "agent" || link.userId === tenant.userId))
+      .sort((a, b) => a.position - b.position)
+      .map((link) => baseOf(tenant, link.baseId))
+      .filter((base): base is Base => Boolean(base));
+  const create = (tenant: TenantContext, name: string | null): Base => {
+    const base: Base = { id: crypto.randomUUID(), name, createdBy: tenant.userId, confidential: false, revision: 0, organizationId: tenant.organizationId, updatedAt: now() };
+    bases.set(base.id, base);
+    return base;
+  };
+  const descendants = (folderId: string): string[] => [folderId, ...[...folders.values()].filter((folder) => folder.parentId === folderId).flatMap((folder) => descendants(folder.id))];
+  const depth = (folderId: string | null): number => (folderId ? 1 + depth(folders.get(folderId)?.parentId ?? null) : 0);
 
   return {
+    listBases: async (tenant) =>
+      [...bases.values()]
+        .filter((base) => base.organizationId === tenant.organizationId && base.createdBy === tenant.userId)
+        .map((base) => ({
+          ...publicBase(tenant, base),
+          sourceCount: [...sources.values()].filter((source) => source.baseId === base.id).length,
+          shared: false,
+          updatedAt: base.updatedAt,
+          usedBy: links.filter((link) => link.baseId === base.id).map((link) => ({ kind: link.kind, id: link.ownerId })),
+        })),
+    getBase: async (tenant, baseId) => {
+      const base = baseOf(tenant, baseId);
+      return base ? publicBase(tenant, base) : null;
+    },
+    createBase: async (tenant, name) => publicBase(tenant, create(tenant, name)),
+    renameBase: async (tenant, baseId, name) => {
+      const base = baseOf(tenant, baseId);
+      if (!base || access(tenant, base) === "view") return null;
+      base.name = name;
+      return publicBase(tenant, base);
+    },
+    deleteBase: async (tenant, baseId) => {
+      const base = baseOf(tenant, baseId);
+      if (!base || base.createdBy !== tenant.userId) return false;
+      bases.delete(baseId);
+      for (const [id, source] of sources) if (source.baseId === baseId) sources.delete(id);
+      for (const [id, folder] of folders) if (folder.baseId === baseId) folders.delete(id);
+      for (let index = links.length - 1; index >= 0; index--) if (links[index]!.baseId === baseId) links.splice(index, 1);
+      return true;
+    },
+    listFolders: async (tenant, baseId) =>
+      baseOf(tenant, baseId) ? [...folders.values()].filter((folder) => folder.baseId === baseId).map(({ organizationId: _o, ...folder }) => folder) : [],
+    createFolder: async (tenant, baseId, input) => {
+      const base = baseOf(tenant, baseId);
+      if (!base || access(tenant, base) === "view") return null;
+      if (input.parentId && folders.get(input.parentId)?.baseId !== baseId) return null;
+      if (depth(input.parentId) >= 8) return null;
+      const folder = { id: crypto.randomUUID(), baseId, parentId: input.parentId, name: input.name, createdAt: now(), organizationId: tenant.organizationId };
+      folders.set(folder.id, folder);
+      const { organizationId: _o, ...view } = folder;
+      return view;
+    },
+    updateFolder: async (tenant, folderId, input) => {
+      const folder = folders.get(folderId);
+      if (!folder || !baseOf(tenant, folder.baseId)) return null;
+      if (input.parentId !== undefined && input.parentId !== null) {
+        if (folders.get(input.parentId)?.baseId !== folder.baseId || descendants(folderId).includes(input.parentId)) return null;
+      }
+      if (input.name !== undefined) folder.name = input.name;
+      if (input.parentId !== undefined) folder.parentId = input.parentId;
+      const { organizationId: _o, ...view } = folder;
+      return view;
+    },
+    deleteFolder: async (tenant, folderId) => {
+      const folder = folders.get(folderId);
+      if (!folder || !baseOf(tenant, folder.baseId)) return false;
+      const removed = new Set(descendants(folderId));
+      for (const id of removed) folders.delete(id);
+      for (const [id, source] of sources) if (source.folderId && removed.has(source.folderId)) sources.delete(id);
+      bump(folder.baseId);
+      return true;
+    },
+    moveSource: async (tenant, sourceId, folderId) => {
+      const source = sourceOf(tenant, sourceId);
+      if (!source || (folderId && folders.get(folderId)?.baseId !== source.baseId)) return false;
+      source.folderId = folderId;
+      return true;
+    },
+    basesFor: async (tenant, owner) => linked(tenant, owner).map((base) => publicBase(tenant, base)),
+    setBasesFor: async (tenant, owner, baseIds) => {
+      const wanted = [...new Set(baseIds)];
+      if (wanted.some((id) => !baseOf(tenant, id))) return false;
+      for (let index = links.length - 1; index >= 0; index--) {
+        const link = links[index]!;
+        if (link.kind === owner.kind && link.ownerId === ownerId(owner)) links.splice(index, 1);
+      }
+      for (const [position, baseId] of wanted.entries()) links.push({ kind: owner.kind, ownerId: ownerId(owner), baseId, userId: tenant.userId, position });
+      return true;
+    },
     findBase: async (tenant, owner) => {
-      const base = find(tenant, owner);
-      return base ? publicBase(base) : null;
+      const base = linked(tenant, owner)[0];
+      return base ? publicBase(tenant, base) : null;
     },
     ensureBase: async (tenant, owner) => {
-      const existing = find(tenant, owner);
-      if (existing) return publicBase(existing);
+      const existing = linked(tenant, owner)[0];
+      if (existing) return publicBase(tenant, existing);
       // Projet d'un autre membre : invisible, comme sous RLS.
-      const foreign = owner.kind === "project" && [...bases.values()].some((base) => base.projectId === owner.projectId);
-      if (foreign) throw new Error("PROJECT_NOT_FOUND");
-      const base: Base = {
-        id: crypto.randomUUID(),
-        owner: owner.kind,
-        confidential: false,
-        revision: 0,
-        organizationId: tenant.organizationId,
-        agentId: owner.kind === "agent" ? owner.agentId : null,
-        projectId: owner.kind === "project" ? owner.projectId : null,
-        userId: owner.kind === "project" ? tenant.userId : null,
-      };
-      bases.set(base.id, base);
-      return publicBase(base);
+      if (owner.kind === "project" && links.some((link) => link.kind === "project" && link.ownerId === owner.projectId && link.userId !== tenant.userId)) throw new Error("PROJECT_NOT_FOUND");
+      const base = create(tenant, null);
+      links.push({ kind: owner.kind, ownerId: ownerId(owner), baseId: base.id, userId: tenant.userId, position: 0 });
+      return publicBase(tenant, base);
     },
     setConfidential: async (tenant, baseId, confidential) => {
       const base = baseOf(tenant, baseId);
       if (!base) return null;
       base.confidential = confidential;
       base.revision++;
-      return publicBase(base);
+      return publicBase(tenant, base);
     },
     listSources: async (tenant, baseId) =>
       [...sources.values()].filter((source) => source.baseId === baseId && sourceOf(tenant, source.id)).map(publicSource),
@@ -359,6 +458,7 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
       const source: Source = {
         id: crypto.randomUUID(),
         baseId,
+        folderId: input.folderId ?? null,
         kind: input.kind,
         status: "pending",
         errorCode: null,
@@ -381,8 +481,7 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
     getSource: async (tenant, sourceId) => {
       const source = sourceOf(tenant, sourceId);
       if (!source) return null;
-      const base = bases.get(source.baseId)!;
-      return { ...publicSource(source), base: publicBase(base), agentId: base.agentId };
+      return { ...publicSource(source), base: publicBase(tenant, bases.get(source.baseId)!) };
     },
     sourceContent: async (tenant, sourceId) => {
       const source = sourceOf(tenant, sourceId);
@@ -426,7 +525,7 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
       if (!base) return null;
       const ready = [...sources.values()].filter((source) => source.baseId === baseId && source.status === "ready");
       return {
-        base: publicBase(base),
+        base: publicBase(tenant, base),
         sources: new Map(ready.map((source) => [source.id, { name: source.name, url: source.url }])),
         chunks: ready.flatMap((source) =>
           (chunks.get(source.id) ?? []).map((chunk, ordinal) => ({

@@ -258,6 +258,19 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Couleur injectée dans le style (T) | `#rrggbb` seulement (API et base) ; l'application n'en tire que deux nombres (décalage de teinte, facteur de saturation) posés en variables CSS, jamais la chaîne elle-même | F | `branding.test.ts` (« red; background:url(x) » refusée) |
 | Couleur choisie qui rend l'interface illisible ou trompeuse (T) | Luminosité d'origine gardée (contraste inchangé) ; facteur de saturation borné ; vert/orange/rouge (états, alertes) jamais recolorés | F | captures en rouge, vert, violet, thèmes sombre et clair |
 
+### 3.4 vicies Bibliothèque de connaissances (31 octobre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Lecture des documents d'un agent privé par un membre (I) — **corrigé** : avant, une base d'agent était lisible de toute l'organisation au niveau de la base de données | Une base se lit si l'on en est l'auteur, si elle est partagée (personne, groupe, organisation), ou au travers d'un agent qu'on peut voir ou d'un de ses projets ; règle portée par la RLS | F | `store.integration.test.ts` (connaissances : agent privé, puis partagé) |
+| Administrateur qui lit les documents privés d'un membre (I) | Les administrateurs ne lisent pas d'office les bases ; ils ne peuvent pas s'ouvrir une base par un partage (seul l'auteur partage une base) | F | `store.integration.test.ts` (mutations vérifiées : lecture d'office, partage par l'administrateur) |
+| Exposer une base à toute l'organisation en la rattachant à un agent partagé (E) | Rattacher une base à un agent exige de pouvoir modifier l'agent ET la base (règle de la base de données, fonction `snowfall_knowledge_can_edit` pour éviter la récursion des règles) ; refus tracé | F | `store.integration.test.ts`, `knowledge.routes.test.ts` (403 tracé ; mutation vérifiée) |
+| Éditeur d'une base qui s'en approprie le partage (E) | L'auteur est immuable (déclencheur) ; supprimer et partager : l'auteur seul ; l'éditeur ajoute, range, renomme | F | `store.integration.test.ts` |
+| Dossiers en boucle ou trop profonds (D) | Déclencheur : jamais dans soi-même ni un descendant, 8 niveaux ; dossier et document toujours de la même base (clés composées) ; 200 dossiers par base | F | `store.integration.test.ts` (mutation vérifiée) |
+| Document déplacé vers une autre base (T) | Interdit (déclencheur) : ses chiffrés sont liés à sa base | F | trigger `knowledge_sources_base_fixed` |
+| Noms de bases et de dossiers en clair (I) | Chiffrés (AAD liée à l'organisation, la base, le dossier) ; refusés en clair par la base ; rechiffrés par la rotation (couverture vérifiée par les contraintes) | F | `store.integration.test.ts`, `rotation.integration.test.ts` |
+| Migration qui perd ou expose des documents (D, I) | En quatre étapes (ajout, reprise, retrait, contrôles) ; chaque base reprise garde ses documents, son auteur et son rattachement ; vérifié sur une base jetable avec des données à l'ancien format | F | essai documenté dans le RUNBOOK § 42 |
+
 ### 3.4 novodecies Poste de développement : services isolés joints par un pont local (31 octobre)
 
 | Menace | Mesures | Résiduel | Preuve |
