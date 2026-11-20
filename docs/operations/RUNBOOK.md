@@ -564,6 +564,28 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   chez le fournisseur. Rotation des clés de chiffrement : les deux tables sont couvertes.
 - Limite : les embeddings des bases de connaissances utilisent toujours les clés
   de la plateforme.
+- Aperçu des documents produits : il faut les profils `code` (bac à sable) ET
+  `ocr` (en développement, `code`), et **reconstruire l'image OCR** (nouveau
+  point `/render`) : `docker compose --profile code up -d --build ocr`. Sans
+  eux, le panneau affiche « Aperçu indisponible » ; le téléchargement reste.
+- Recherche web en développement : Brave et Wikipédia limitent vite un poste
+  (« too many requests ») ; Bing, roue de secours de `settings.dev.yml`, renvoie
+  parfois n'importe quoi pour un nom rare. Les résultats sans aucun terme de la
+  recherche sont désormais écartés.
+- Contrôle de fidélité : migration `generated_file_review` (colonne `review` de
+  `generated_files`, chiffrée, couverte par la rotation). Les nombres à vérifier
+  s'affichent sous la carte du fichier ; les fichiers produits avant la migration
+  n'en ont pas.
+- Limite d'envoi de nginx : 26 Mo (`client_max_body_size`) ; chaque route garde
+  sa limite côté API (25 Mo bases et import, 10 Mo pièces jointes, 1 Mo par défaut).
+- Fournisseurs personnalisés (« Nouveau fournisseur », administrateurs) : migration
+  `custom_providers` (table `organization_model_providers`, chiffrée, RLS forcée ;
+  « custom » ajouté à la liste blanche des organisations). En production, ouvrir le
+  domaine du serveur dans le proxy de sortie (`infra/egress/allowed-domains.txt`),
+  sinon l'ajout répond « Le serveur n'a pas répondu ». Audit :
+  `model_provider.create` (nom, hôte, nombre de modèles ; jamais la clé),
+  `model_provider.remove`. Retirer « Personnalisé » de la liste blanche coupe tous
+  les fournisseurs personnalisés de l'organisation.
 
 ## 48. Maquettes et contrôle de fidélité
 

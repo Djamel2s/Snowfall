@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createChatRunner, ProviderUnavailableError, type ChatModel, type ChatRunner } from "../graph/chat-graph.js";
 import { createAnthropicModel, listAnthropicModels } from "./anthropic.js";
+import { splitCustomModel, type CustomEndpoint } from "./custom-providers.js";
 import { createGoogleModel, listGoogleModels } from "./google.js";
 import { createMistralModel, listMistralModels } from "./mistral.js";
 import { createOpenAiCompatibleModel, listOpenAiCompatibleModels } from "./openai.js";
@@ -57,8 +58,13 @@ export type KeySource = "platform" | "organization" | "personal";
 export type ScopedKeys = Partial<Record<ProviderId, { apiKey: string; source: "organization" | "personal" }>>;
 
 export interface ScopableRegistry extends ModelRegistry {
-  /** Vue d'une personne : ses clés remplacent celles de la plateforme pour ces fournisseurs. */
-  withKeys(keys: ScopedKeys): ScopedModels;
+  /**
+   * Vue d'une personne : ses clés remplacent celles de la plateforme pour ces fournisseurs ;
+   * les fournisseurs personnalisés de son organisation sont publiés sous « custom ».
+   */
+  withKeys(keys: ScopedKeys, custom?: CustomEndpoint[]): ScopedModels;
+  /** Vérifie un fournisseur personnalisé (liste ses modèles) ; lève s'il ne répond pas. */
+  checkEndpoint(endpoint: Omit<CustomEndpoint, "id" | "name">): Promise<number>;
   /** Vérifie une clé auprès du fournisseur (liste ses modèles) ; lève si elle est refusée. */
   checkKey(provider: ProviderId, apiKey: string): Promise<number>;
   /** Fournisseurs configurés par la plateforme. */
@@ -92,6 +98,11 @@ type RegistryOptions = {
   defaults?: Omit<ProviderSettings, "apiKey" | "baseUrl" | "tools"> | undefined;
   /** Tests : fabrique d'adaptateurs (sans réseau). */
   adapter?: ((id: ProviderId, settings: ProviderSettings) => ProviderAdapter) | undefined;
+  /**
+   * Fournisseurs personnalisés : fetch qui vérifie avant chaque appel que l'adresse
+   * est publique et refuse les redirections (absent : derrière le proxy de sortie, ou tests).
+   */
+  customFetch?: typeof fetch | undefined;
 };
 
 class RegistryView implements ModelRegistry {
@@ -100,10 +111,55 @@ class RegistryView implements ModelRegistry {
     protected readonly platform: Partial<Record<ProviderId, ProviderSettings>>,
     protected readonly options: RegistryOptions,
     private readonly keys: ScopedKeys = {},
+    private readonly custom: CustomEndpoint[] = [],
   ) {}
+
+  /** Adaptateur d'un fournisseur personnalisé, rangé par adresse ET empreinte de clé. */
+  private endpointAdapter(endpoint: CustomEndpoint) {
+    const key = `custom:${endpoint.id}:${fingerprint(`${endpoint.baseUrl}\n${endpoint.apiKey ?? ""}`)}`;
+    const settings: ProviderSettings = {
+      maxOutputTokens: 4096,
+      timeoutMs: 60_000,
+      ...this.options.defaults,
+      // Le client exige une clé : un serveur sans clé reçoit une valeur neutre.
+      apiKey: endpoint.apiKey ?? "none",
+      baseUrl: endpoint.baseUrl,
+      tools: true,
+      fetch: this.options.customFetch,
+    };
+    const adapter = this.core.adapters.get(key) ?? remember(this.core.adapters, key, (this.options.adapter ?? adapterFor)("custom", settings));
+    return { key, adapter };
+  }
+
+  /** Modèles des fournisseurs personnalisés : « <id>/<modèle> », libellés « <nom> · <modèle> ». */
+  private async customModels(): Promise<ModelInfo[] | null> {
+    if (!this.custom.length) return null;
+    const lists = await Promise.all(
+      this.custom.map(async (endpoint) => {
+        const models = (await this.cachedList(this.endpointAdapter(endpoint))) ?? [];
+        return models.map((model) => ({ id: `${endpoint.id}/${model.id}`, label: `${endpoint.name} · ${model.label}` }));
+      }),
+    );
+    return lists.flat();
+  }
+
+  private async cachedList(found: { key: string; adapter: ProviderAdapter }): Promise<ModelInfo[] | null> {
+    const cached = this.core.catalogs.get(found.key);
+    if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.models;
+    try {
+      const models = await found.adapter.list();
+      remember(this.core.catalogs, found.key, { at: Date.now(), models });
+      return models;
+    } catch {
+      // Fournisseur injoignable ou clé refusée : on garde l'ancienne liste
+      // si elle existe, sinon le fournisseur apparaît indisponible.
+      return cached?.models ?? null;
+    }
+  }
 
   /** Clé qui sert ce fournisseur dans cette vue : la sienne, sinon celle de la plateforme. */
   private entry(id: ProviderId): { key: string; settings: ProviderSettings; source: KeySource } | null {
+    if (id === "custom") return null;
     const own = id === "local" ? undefined : this.keys[id];
     if (own) {
       const base = this.platform[id] ?? { maxOutputTokens: 4096, timeoutMs: 60_000, ...this.options.defaults };
@@ -124,25 +180,14 @@ class RegistryView implements ModelRegistry {
   }
 
   keySource(provider: ProviderId | "echo"): KeySource {
+    if (provider === "custom") return "organization";
     return provider === "echo" ? "platform" : (this.entry(provider)?.source ?? "platform");
   }
 
   async listModels(id: ProviderId): Promise<ModelInfo[] | null> {
+    if (id === "custom") return this.customModels();
     const found = this.adapter(id);
-    if (!found) return null;
-
-    const cached = this.core.catalogs.get(found.key);
-    if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.models;
-
-    try {
-      const models = await found.adapter.list();
-      remember(this.core.catalogs, found.key, { at: Date.now(), models });
-      return models;
-    } catch {
-      // Fournisseur injoignable ou clé refusée : on garde l'ancienne liste
-      // si elle existe, sinon le fournisseur apparaît indisponible.
-      return cached?.models ?? null;
-    }
+    return found ? this.cachedList(found) : null;
   }
 
   async catalog(): Promise<ProviderCatalog> {
@@ -170,6 +215,16 @@ class RegistryView implements ModelRegistry {
   private model(selection?: ModelSelection) {
     const target = selection ?? this.options.defaultSelection;
     if (!target) return { key: "fallback", model: this.options.fallback };
+    if (target.provider === "custom") {
+      // « <id>/<modèle> » : seulement un fournisseur de cette organisation.
+      const parts = splitCustomModel(target.model);
+      const endpoint = parts && this.custom.find((item) => item.id === parts.endpointId);
+      if (!parts || !endpoint) return { key: "custom:none", model: undefined };
+      const found = this.endpointAdapter(endpoint);
+      const key = `${found.key}:${parts.model}`;
+      if (!this.core.chatModels.has(key)) remember(this.core.chatModels, key, found.adapter.create(parts.model));
+      return { key, model: this.core.chatModels.get(key) };
+    }
     const found = this.adapter(target.provider);
     if (!found) return { key: `${target.provider}:none`, model: undefined };
     const key = `${found.key}:${target.model}`;
@@ -204,8 +259,15 @@ export class ProviderRegistry extends RegistryView implements ScopableRegistry {
     return providerIds.filter((id) => this.platform[id] !== undefined);
   }
 
-  withKeys(keys: ScopedKeys) {
-    return new RegistryView(this.core, this.platform, this.options, keys);
+  withKeys(keys: ScopedKeys, custom: CustomEndpoint[] = []) {
+    return new RegistryView(this.core, this.platform, this.options, keys, custom);
+  }
+
+  async checkEndpoint(endpoint: Omit<CustomEndpoint, "id" | "name">) {
+    const view = new RegistryView(new RegistryCore(), this.platform, this.options, {}, [{ ...endpoint, id: "check", name: "check" }]);
+    const models = await view.listModels("custom");
+    if (!models?.length) throw new Error("ENDPOINT_REJECTED");
+    return models.length;
   }
 
   async checkKey(provider: ProviderId, apiKey: string) {
@@ -235,6 +297,7 @@ function adapterFor(id: ProviderId, settings: ProviderSettings): ProviderAdapter
       };
     case "openai":
     case "local":
+    case "custom":
       return {
         create: (model) => createOpenAiCompatibleModel(id, model, settings, { tools: settings.tools === true }),
         list: () => listOpenAiCompatibleModels(id, settings),

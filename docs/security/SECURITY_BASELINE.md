@@ -435,6 +435,18 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - The Keycloak login page keeps the Snowfall logo: it is shown before the
   organization is known.
 
+### Document preview, web search integrity (2026-11-20)
+
+- Generated documents (Word, PowerPoint, Excel, PDF) are previewed as PNG
+  images only: Office to PDF in the sandbox (fixed platform script, no
+  network), PDF to PNG in the OCR service (dedicated user, no network). The
+  browser never renders the document itself. Pages are cached in memory
+  (30 min, 20 documents), never stored; 20 previews per minute per person.
+- The injection guard ignores the platform's own wrapper tags (keeping their
+  attribute values, which come from outside) before analysis.
+- Web results that contain none of the query terms are discarded before being
+  numbered as sources.
+
 ### Model provider API keys (2026-11-20)
 
 - Administrators can enter the organization's key for a provider (Mistral,
@@ -452,6 +464,14 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - Usage on a personal key is neither limited nor counted against the
   organization's quotas and budgets; provider allowlists and the local-model
   rule for confidential data still apply.
+- Custom providers (2026-11-20): administrators can add an OpenAI-compatible
+  server for their organization (models published as `custom`, named
+  `<id>/<model>`). Public HTTPS address only (no credentials, query or unusual
+  port), re-checked before every call, redirects refused, egress proxy in
+  production; optional key encrypted with an AAD bound to organization,
+  provider and address; address and key hint shown to administrators only;
+  20 per organization; billed to the organization; never treated as local for
+  confidential data.
 
 ### Prototypes, document fidelity, provider stream integrity (2026-11-19)
 

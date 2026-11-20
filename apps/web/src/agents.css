@@ -18,7 +18,8 @@
 .provider-logo { display: block; flex-shrink: 0; }
 .provider-logo-openai,
 .provider-logo-anthropic,
-.provider-logo-local { filter: invert(1) brightness(.92); }
+.provider-logo-local,
+.provider-logo-custom { filter: invert(1) brightness(.92); }
 
 /* ---- Studio (panneau de la barre latérale) ---------------------------- */
 
@@ -1242,6 +1243,12 @@
 .graph-node-agent .graph-node-core { stroke: rgba(158, 202, 255, .7); }
 .graph-node-connector .graph-node-core { fill: #1a1430; stroke: rgba(198, 155, 255, .6); }
 .graph-node-capability .graph-node-core { fill: #10231f; stroke: rgba(120, 220, 180, .55); }
+/* Satellites : outils et connecteurs en orbite autour de leur agent (aucun trait). */
+.graph-orbit { transition: opacity .25s; pointer-events: none; }
+.graph-orbit.dim { opacity: .18; }
+.graph-orbit-ring { fill: none; stroke: rgba(158, 186, 230, .1); stroke-width: 1; stroke-dasharray: 2 5; }
+.graph-satellite { pointer-events: auto; }
+.graph-satellite-label { font-size: 9.5px; }
 .graph-node-ring { fill: none; stroke: rgba(198, 155, 255, 0); stroke-width: 6; cursor: crosshair; transition: stroke .2s; }
 .graph-node:hover .graph-node-ring { stroke: rgba(198, 155, 255, .35); }
 .graph-node.selected .graph-node-core { stroke: #c69bff; stroke-width: 2.5; }

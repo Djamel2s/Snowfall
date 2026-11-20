@@ -112,3 +112,57 @@ test('choix du modèle : « Connecter un fournisseur » ouvre le panneau Modèle
   await page.getByRole('button', { name: 'Connecter un fournisseur' }).click()
   await expect(tile(page, 'OpenAI')).toBeVisible()
 })
+
+test('administrateur : nouveau fournisseur (adresse refusée puis acceptée), modèle proposé, puis retiré', async ({ page }, info) => {
+  const api = await mockApi(page, { role: 'admin' })
+  await page.goto('/')
+  await openPanel(page, 'Modèles')
+  await page.getByRole('button', { name: 'Nouveau fournisseur' }).click()
+
+  const form = page.getByRole('form', { name: 'Fournisseur personnalisé' })
+  await form.getByLabel('Nom').fill('Routeur')
+  await form.getByLabel('Adresse de l’API (https://…/v1)').fill('https://localhost/v1')
+  await form.getByLabel('Clé d’API (facultative)').fill('sk-routeur-secret-4321')
+  await form.getByRole('button', { name: 'Ajouter' }).click()
+  await expect(page.getByRole('alert')).toContainText('Adresse refusée')
+
+  await form.getByLabel('Adresse de l’API (https://…/v1)').fill('https://openrouter.ai/api/v1')
+  await form.getByRole('button', { name: 'Ajouter' }).click()
+  // Sa fiche s'ouvre : prêt, adresse et indice de la clé (administrateur).
+  const card = page.getByRole('region', { name: 'Routeur', exact: true })
+  await expect(card.locator('.connector-ready-line').first()).toContainText('2 modèles')
+  await expect(card).toContainText('https://openrouter.ai/api/v1')
+  await expect(card).toContainText('••••4321')
+  expect(await page.content()).not.toContain('sk-routeur-secret-4321')
+  await page.screenshot({ path: info.outputPath('modeles-personnalise.png') })
+
+  // Dans la liste, puis dans le choix du modèle.
+  await card.getByRole('button', { name: 'Modèles' }).click()
+  await expect(tile(page, 'Routeur')).toBeVisible()
+  await page.screenshot({ path: info.outputPath('modeles-grille-personnalise.png') })
+  await newConversation(page)
+  await page.getByRole('button', { name: 'Changer d’agent ou de modèle' }).first().click()
+  await expect(page.getByRole('option', { name: /Routeur · llama-70b/ })).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // Retirer : deux clics.
+  await openPanel(page, 'Modèles')
+  await tile(page, 'Routeur').click()
+  await card.getByRole('button', { name: 'Retirer' }).click()
+  await card.getByRole('button', { name: 'Confirmer' }).click()
+  await expect(tile(page, 'Routeur')).toHaveCount(0)
+  expect(api.providerCalls).toEqual(['add:Routeur', 'add:Routeur', 'remove:cp-1'])
+})
+
+test('membre : voit les fournisseurs personnalisés, sans adresse, sans « Nouveau fournisseur » ni retrait', async ({ page }) => {
+  await mockApi(page, { role: 'member', customProviders: [{ id: 'cp-1', name: 'Routeur', baseUrl: 'https://openrouter.ai/api/v1', hint: '4321' }] })
+  await page.goto('/')
+  await openPanel(page, 'Modèles')
+  await expect(page.getByRole('button', { name: 'Nouveau fournisseur' })).toHaveCount(0)
+  await tile(page, 'Routeur').click()
+  const card = page.getByRole('region', { name: 'Routeur', exact: true })
+  await expect(card).toContainText('2 modèles')
+  await expect(card).not.toContainText('openrouter.ai')
+  await expect(card).not.toContainText('4321')
+  await expect(card.getByRole('button', { name: 'Retirer' })).toHaveCount(0)
+})

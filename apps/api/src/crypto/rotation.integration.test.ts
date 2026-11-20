@@ -5,6 +5,7 @@ import { Pool, type PoolClient } from "pg";
 import { PostgresAgentStore } from "../agents/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
 import { PostgresKnowledgeStore } from "../knowledge/store.js";
+import { PostgresCustomProviderStore } from "../llm/custom-providers.js";
 import { PostgresModelKeyStore } from "../llm/keys.js";
 import { PostgresMcpServerStore } from "../mcp/store.js";
 import { PostgresUserMemoryStore } from "../memory/store.js";
@@ -114,6 +115,10 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     const modelKeys = new PostgresModelKeyStore(pool, keyring);
     await modelKeys.set(as(alice), "organization", "mistral", "sk-organisation-rotation-0001");
     await modelKeys.set(as(gone), "personal", "openai", "sk-personnelle-rotation-0002");
+    // Fournisseur personnalisé (l'adresse fait partie de l'AAD) et un autre sans clé.
+    const customProviders = new PostgresCustomProviderStore(pool, keyring);
+    const routerId = await customProviders.create(as(alice), { name: "Routeur", baseUrl: "https://router.example.com/v1", apiKey: "sk-routeur-rotation-0003" });
+    await customProviders.create(as(alice), { name: "Sans clé", baseUrl: "https://open.example.com/v1" });
 
     // Rotation : version 2 de la clé d'organisation.
     await inTenant(null, async (client) => {
@@ -145,5 +150,6 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     assert.equal((await servers.list(as(alice))).find((item) => item.id === server.id)?.icon, icon);
     assert.equal((await modelKeys.secrets(as(alice))).organization.mistral, "sk-organisation-rotation-0001");
     assert.equal((await modelKeys.secrets(as(gone))).personal.openai, "sk-personnelle-rotation-0002");
+    assert.equal((await customProviders.endpoints(as(alice))).find((item) => item.id === routerId)?.apiKey, "sk-routeur-rotation-0003");
   });
 });

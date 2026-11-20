@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1080 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1089 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -1187,23 +1187,49 @@ html[data-theme="light"] {
   color: #111822;
 }
 
+:root[data-theme="light"] .message-file-review {
+  border: 1px solid rgba(255, 163, 0, 0.3);
+  background: rgba(255, 163, 0, 0.08);
+  color: #443521;
+}
+
+:root[data-theme="light"] .message-file-open:hover,
+:root[data-theme="light"] .message-file-download:hover {
+  background: rgba(26, 26, 26, 0.05);
+  color: #111822;
+}
+
+:root[data-theme="light"] .message-file-open:focus-visible,
+:root[data-theme="light"] .message-file-download:focus-visible {
+  outline: 2px solid rgba(23, 34, 47, 0.5);
+}
+
+:root[data-theme="light"] .file-preview-page {
+  background: #1a1a1a;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.158);
+}
+
 :root[data-theme="light"] .message-file small {
   color: #637590;
 }
 
-:root[data-theme="light"] .message-file.pptx svg:first-child {
+:root[data-theme="light"] .message-file.pptx > svg:first-child,
+:root[data-theme="light"] .message-file.pptx .message-file-open > svg:first-child {
   color: #d14d13;
 }
 
-:root[data-theme="light"] .message-file.docx svg:first-child {
+:root[data-theme="light"] .message-file.docx > svg:first-child,
+:root[data-theme="light"] .message-file.docx .message-file-open > svg:first-child {
   color: #0150c4;
 }
 
-:root[data-theme="light"] .message-file.xlsx svg:first-child {
+:root[data-theme="light"] .message-file.xlsx > svg:first-child,
+:root[data-theme="light"] .message-file.xlsx .message-file-open > svg:first-child {
   color: #3ac574;
 }
 
-:root[data-theme="light"] .message-file.pdf svg:first-child {
+:root[data-theme="light"] .message-file.pdf > svg:first-child,
+:root[data-theme="light"] .message-file.pdf .message-file-open > svg:first-child {
   color: #ac0600;
 }
 
@@ -3085,6 +3111,10 @@ html[data-theme="light"] {
 :root[data-theme="light"] .graph-node-capability .graph-node-core {
   fill: #dcefeb;
   stroke: rgba(45, 175, 124, 0.55);
+}
+
+:root[data-theme="light"] .graph-orbit-ring {
+  stroke: rgba(51, 110, 204, 0.1);
 }
 
 :root[data-theme="light"] .graph-node-ring {

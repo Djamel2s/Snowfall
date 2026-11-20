@@ -1153,12 +1153,25 @@
 
 .message-file-figure figcaption button { flex: none; width: 24px; height: 24px; justify-content: center; padding: 0; border-color: transparent; color: #e3eeff; }
 .message-file { height: 30px; padding: 0 11px; }
+/* Fichier dont des nombres ne figurent pas dans les sources : avertissement sous la carte. */
+.message-file-checked { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.message-file-review { display: flex; align-items: flex-start; gap: 5px; max-width: 420px; margin: 0; padding: 4px 9px; border: 1px solid rgba(255, 196, 92, .3); border-radius: 8px; background: rgba(255, 196, 92, .08); color: #ffd59a; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.message-file-review svg { flex: none; margin-top: 2px; }
+/* Carte avec aperçu : la carte ouvre l'aperçu, la flèche à droite télécharge. */
+.message-file.split { padding: 0; overflow: hidden; }
+.message-file-open, .message-file-download { display: inline-flex; height: 100%; align-items: center; gap: 6px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.message-file-open { padding: 0 6px 0 11px; }
+.message-file-download { padding: 0 11px 0 6px; }
+.message-file-open:hover, .message-file-download:hover { background: rgba(255, 255, 255, .05); color: #e3eeff; }
+.message-file-open:focus-visible, .message-file-download:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: -2px; }
+.file-preview .document-body { display: grid; gap: 12px; align-content: start; }
+.file-preview-page { display: block; width: 100%; height: auto; border-radius: 6px; background: #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, .35); }
 .message-file small { color: #6f819c; }
 /* Format reconnu d'un coup d'œil : la couleur de son logiciel, sur l'icône seulement. */
-.message-file.pptx svg:first-child { color: #f08a5d; }
-.message-file.docx svg:first-child { color: #6ea8fe; }
-.message-file.xlsx svg:first-child { color: #5fd08e; }
-.message-file.pdf svg:first-child { color: #ff8a86; }
+.message-file.pptx > svg:first-child, .message-file.pptx .message-file-open > svg:first-child { color: #f08a5d; }
+.message-file.docx > svg:first-child, .message-file.docx .message-file-open > svg:first-child { color: #6ea8fe; }
+.message-file.xlsx > svg:first-child, .message-file.xlsx .message-file-open > svg:first-child { color: #5fd08e; }
+.message-file.pdf > svg:first-child, .message-file.pdf .message-file-open > svg:first-child { color: #ff8a86; }
 .message-file:hover, .message-file-figure figcaption button:hover { border-color: rgba(185, 217, 255, .3); color: #dbe6f5; }
 /* ---- Réglages : Mon compte / Organisation, puis rubriques ---------------- */
 

@@ -231,7 +231,7 @@ export const auditEvents = pgTable(
   ],
 );
 
-export const agentProviders = ["mistral", "openai", "anthropic", "google", "local"] as const;
+export const agentProviders = ["mistral", "openai", "anthropic", "google", "local", "custom"] as const;
 
 // Agents partagés au sein d'une organisation. Nom, avatar et instructions
 // sont chiffrés ensemble (profile_enc) ; seuls fournisseur et modèle restent
@@ -259,7 +259,7 @@ export const agents = pgTable.withRLS(
     unique("agents_id_org_unique").on(table.id, table.organizationId),
     check(
       "agents_provider_check",
-      sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google', 'local')`,
+      sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google', 'local', 'custom')`,
     ),
     check("agents_model_check", sql`length(${table.model}) BETWEEN 1 AND 120`),
     // Lecture : son auteur, un administrateur, ou une autorisation (personne, groupe,
@@ -351,7 +351,7 @@ export const conversations = pgTable.withRLS(
     check(
       "conversations_model_check",
       sql`(${table.modelProvider} IS NULL AND ${table.modelId} IS NULL) OR (
-        ${table.modelProvider} IN ('mistral', 'openai', 'anthropic', 'google', 'local')
+        ${table.modelProvider} IN ('mistral', 'openai', 'anthropic', 'google', 'local', 'custom')
         AND length(${table.modelId}) BETWEEN 1 AND 120
         AND ${table.agentId} IS NULL)`,
     ),
@@ -557,6 +557,34 @@ export const userModelKeys = pgTable.withRLS(
     check("user_model_keys_provider_check", sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google')`),
     check("user_model_keys_hint_check", sql`${table.hint} ~ '^[A-Za-z0-9_-]{0,4}$'`),
     tenantPolicy("user_model_keys_owner", table.organizationId, table.userId),
+  ],
+);
+
+// Fournisseur personnalisé d'une organisation : un serveur compatible OpenAI
+// (OpenRouter, Groq, Azure…) ajouté par un administrateur. Adresse HTTPS publique
+// (vérifiée à l'ajout et avant chaque appel), clé chiffrée, jamais renvoyée.
+export const organizationModelProviders = pgTable.withRLS(
+  "organization_model_providers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    // Chiffrée (contrainte posée dans la migration) ; facultative (serveur sans clé).
+    apiKey: text("api_key"),
+    hint: text("hint"),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("organization_model_providers_org_idx").on(table.organizationId, table.createdAt),
+    check("organization_model_providers_name_check", sql`length(${table.name}) BETWEEN 1 AND 60`),
+    check("organization_model_providers_url_check", sql`${table.baseUrl} LIKE 'https://%' AND length(${table.baseUrl}) <= 500`),
+    check("organization_model_providers_hint_check", sql`${table.hint} IS NULL OR ${table.hint} ~ '^[A-Za-z0-9_-]{0,4}$'`),
+    check("organization_model_providers_key_check", sql`(${table.apiKey} IS NULL) = (${table.hint} IS NULL)`),
+    tenantPolicy("organization_model_providers_tenant", table.organizationId),
   ],
 );
 
@@ -1170,6 +1198,8 @@ export const generatedFiles = pgTable.withRLS(
     sizeBytes: integer("size_bytes").notNull(),
     name: text("name").notNull(),
     content: text("content").notNull(),
+    // Contrôle de fidélité : nombres à vérifier (JSON chiffré) ; NULL : rien à signaler.
+    review: text("review"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

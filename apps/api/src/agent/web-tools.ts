@@ -85,6 +85,34 @@ const asPassage = (result: { url: string; title: string; snippet?: string }): Pa
   ...(result.snippet ? { excerpt: excerptOf(result.snippet) ?? null } : {}),
 });
 
+/** Mots vides ignorés pour juger qu'un résultat parle de la recherche (français, anglais). */
+const STOPWORDS = new Set(
+  "les des une est sur dans pour par avec qui que quoi quel quelle quels quelles comment pourquoi aux ces son sont plus pas ete etre fait faire avoir the and for with what who how why are was were this that from into about est-ce".split(" "),
+);
+
+const fold = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/** Termes significatifs d'une requête : 3 lettres au moins, hors mots vides, coupés à 6 caractères (pluriels, conjugaisons). */
+export function queryTerms(query: string) {
+  const words = fold(query).split(/[^a-z0-9]+/).filter((word) => word.length >= 3 && !STOPWORDS.has(word));
+  return [...new Set(words.map((word) => word.slice(0, 6)))];
+}
+
+/**
+ * Écarte les résultats qui ne contiennent AUCUN terme de la recherche (titre,
+ * extrait, adresse). Un moteur qui ne trouve rien renvoie parfois n'importe quoi
+ * (constaté le 20 novembre : « Djamel Nafisse » → pages sur Google Traduction) ;
+ * sans ce tri, ces pages devenaient les « sources » de la réponse.
+ */
+export function relevantResults(results: WebResult[], query: string) {
+  const terms = queryTerms(query);
+  if (!terms.length) return results;
+  return results.filter((result) => {
+    const haystack = fold(`${result.title} ${result.snippet} ${result.url}`);
+    return terms.some((term) => haystack.includes(term));
+  });
+}
+
 export function webTools(deps: { engine: WebSearchEngine; readPage: PageReader; citations: CitationRegistry; session: WebSession }) {
   const { engine, readPage, citations, session } = deps;
 
@@ -105,7 +133,7 @@ export function webTools(deps: { engine: WebSearchEngine; readPage: PageReader; 
     async execute({ query, language }, { signal }) {
       if (session.searches >= MAX_SEARCHES) return { content: "Limite de recherches atteinte pour cette réponse : réponds avec ce que tu as.", summary: query };
       session.searches++;
-      const results: WebResult[] = await engine.search(query, { language, signal });
+      const results: WebResult[] = relevantResults(await engine.search(query, { language, signal }), query);
       if (results.length === 0) return { content: "Aucun résultat pour cette recherche.", summary: query, data: [], empty: true };
       const numbered = citations.add(results.map(asPassage));
       for (const result of results) session.allowed.add(result.url);

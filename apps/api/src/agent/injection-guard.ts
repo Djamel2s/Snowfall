@@ -1,5 +1,23 @@
-import { detectInjection, flagIfSuspicious, INJECTION_NOTICE, type InjectionVerdict } from "../security/injection.js";
+import { detectInjection, INJECTION_NOTICE, type InjectionVerdict } from "../security/injection.js";
 import type { AgentTool } from "./tools.js";
+
+/**
+ * Balises posées par la PLATEFORME autour des résultats d'outils (web, base,
+ * connecteur, document, agent délégué). Chaque outil retire déjà ces balises du
+ * contenu non fiable qu'il enveloppe : celles qui restent sont les nôtres. Sans
+ * ce retrait, le signal « fausse balise » voyait `<web_results>` et TOUTE
+ * recherche web était déclarée suspecte (constaté le 20 novembre).
+ */
+const PLATFORM_TAGS = /<\/?\s*(web_results|web_result|web_page|knowledge|source|document|mcp_result|agent_result)\b[^>]*>/gi;
+
+/**
+ * Texte analysé : nos balises retirées, mais la valeur de leurs attributs gardée
+ * (un titre de page ou un nom de fichier vient de l'extérieur et peut contenir
+ * une injection).
+ */
+export function untrustedText(content: string) {
+  return content.replace(PLATFORM_TAGS, (tag) => ` ${[...tag.matchAll(/"([^"]*)"/g)].map((match) => match[1]).join(" ")} `);
+}
 
 /** Contenu suspect déjà vu pendant cette réponse (pièce jointe, résultat d'outil, tour précédent). */
 export type TaintState = { tainted: boolean };
@@ -27,14 +45,14 @@ export function guardTools(tools: AgentTool[], state: TaintState, onSuspect: (to
         // Déjà averti plus bas (passage de la base) : pas de second avertissement, mais signalé.
         if (result.content.includes(INJECTION_NOTICE)) {
           state.tainted = true;
-          onSuspect(tool.name, detectInjection(result.content.split(INJECTION_NOTICE).join("")));
+          onSuspect(tool.name, detectInjection(untrustedText(result.content.split(INJECTION_NOTICE).join(""))));
           return result;
         }
-        const { text, verdict } = flagIfSuspicious(result.content);
+        const verdict = detectInjection(untrustedText(result.content));
         if (!verdict.suspicious) return result;
         state.tainted = true;
         onSuspect(tool.name, verdict);
-        return { ...result, content: text };
+        return { ...result, content: `${INJECTION_NOTICE}\n${result.content}` };
       },
     };
   });

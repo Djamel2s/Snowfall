@@ -254,6 +254,17 @@ describe("Exécution durable : PostgreSQL (RLS, chiffrement, bail)", { skip: !ap
       withTenant(owner, a, (client) => client.query("UPDATE generated_files SET name = 'en clair' WHERE id = $1", [created.id])),
       /generated_files_encrypted_check/,
     );
+    // Contrôle de fidélité : nombres à vérifier gardés avec le fichier, chiffrés ; relus par son propriétaire seulement.
+    assert.equal((await files.list(a, conversation.id))[0]?.review, undefined);
+    const flagged = await files.create(a, conversation.id, { name: "rapport.docx", mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: Buffer.from("PK"), review: ["4,2", "1873"] });
+    assert.deepEqual(flagged.review, ["4,2", "1873"]);
+    assert.deepEqual((await files.listAll(a, conversation.id)).find((file) => file.id === flagged.id)?.review, ["4,2", "1873"]);
+    const stored = await withTenant(owner, a, (client) => client.query<{ review: string }>("SELECT review FROM generated_files WHERE id = $1", [flagged.id]));
+    assert.ok(!stored.rows[0]?.review.includes("1873"));
+    await assert.rejects(
+      withTenant(owner, a, (client) => client.query(`UPDATE generated_files SET review = '["1873"]' WHERE id = $1`, [flagged.id])),
+      /generated_files_review_encrypted_check/,
+    );
     await conversations.delete(a, conversation.id);
     const left = await withTenant(owner, a, (client) => client.query("SELECT 1 FROM generated_files WHERE id = $1", [created.id]));
     assert.equal(left.rowCount, 0);

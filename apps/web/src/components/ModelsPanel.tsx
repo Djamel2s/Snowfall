@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ArrowLeft, Check, ExternalLink, KeyRound, Trash2 } from 'lucide-react'
-import { api, type KeyProvider, type ModelKeyStatus, type OrganizationSettings } from '../lib/api'
+import { ArrowLeft, Check, ExternalLink, KeyRound, Plus, Trash2 } from 'lucide-react'
+import { api, type CustomProviderStatus, type KeyProvider, type ModelKeysView, type ModelKeyStatus, type OrganizationSettings } from '../lib/api'
 import { useI18n, type MessageKey } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
 import { useCatalogView } from '../lib/catalog-view'
-import { GridTile, ListEmpty, ListGrid, ListRow, ListRows, ListSection, PanelSearch, ViewToggle } from './ui/List'
+import { GridTile, ListEmpty, ListGrid, ListRow, ListRows, ListSection, PanelNew, PanelSearch, ViewToggle } from './ui/List'
 
 type Props = {
   isAdmin: boolean
@@ -16,6 +16,8 @@ type Props = {
   onError: (message: string) => void
 }
 
+type Open = { kind: 'provider'; id: KeyProvider } | { kind: 'custom'; id: string } | { kind: 'new' } | null
+
 /** Où obtenir une clé, chez chaque fournisseur. */
 const keyPages: Record<KeyProvider, string> = {
   mistral: 'https://console.mistral.ai/api-keys',
@@ -24,23 +26,52 @@ const keyPages: Record<KeyProvider, string> = {
   google: 'https://aistudio.google.com/apikey',
 }
 
+type Translate = (key: MessageKey, params?: Record<string, string | number>) => string
+
 /** Ce qui sert mes réponses, en quelques mots. */
-function sourceLabel(item: ModelKeyStatus, t: (key: MessageKey, params?: Record<string, string | number>) => string) {
+function sourceLabel(item: ModelKeyStatus, t: Translate) {
   if (item.active === 'personal' && item.personal) return t('models.source.personal', { hint: item.personal.hint })
   if (item.active === 'organization') return t('models.source.organization')
   if (item.active === 'platform') return t('models.source.platform')
   return t('models.source.none')
 }
 
+/** Une entrée de la liste : fournisseur intégré ou personnalisé, même présentation. */
+type Entry = { key: string; name: string; logo: 'custom' | KeyProvider; ready: boolean; chip: { label: string; tone: string }; subtitle?: string | undefined; open: Open }
+
+function entries(view: ModelKeysView, t: Translate): Entry[] {
+  const builtIn = view.providers.map((item): Entry => ({
+    key: item.id,
+    name: providerMeta[item.id].label,
+    logo: item.id,
+    ready: Boolean(item.allowed && item.active),
+    chip: !item.allowed ? { label: t('models.chip.off'), tone: 'muted' } : item.active ? { label: t('models.chip.ready'), tone: 'ok' } : { label: t('models.chip.connect'), tone: 'warn' },
+    // La source seulement quand une clé sert : l'état est déjà dans la pastille.
+    subtitle: item.active ? sourceLabel(item, t) : undefined,
+    open: { kind: 'provider', id: item.id },
+  }))
+  const custom = view.custom.map((item): Entry => ({
+    key: item.id,
+    name: item.name,
+    logo: 'custom',
+    ready: item.allowed && item.models > 0,
+    chip: !item.allowed ? { label: t('models.chip.off'), tone: 'muted' } : item.models > 0 ? { label: t('models.chip.ready'), tone: 'ok' } : { label: t('models.chip.down'), tone: 'warn' },
+    subtitle: item.allowed && item.models > 0 ? t('models.custom.count', { count: item.models }) : undefined,
+    open: { kind: 'custom', id: item.id },
+  }))
+  return [...builtIn, ...custom]
+}
+
 /**
  * Modèles (barre latérale) : les fournisseurs, et pour chacun la clé qui sert mes
  * réponses. Un membre pose SA clé si l'organisation l'autorise ; un administrateur
- * pose celle de l'organisation et décide des clés personnelles. Même format que les connecteurs.
+ * pose celle de l'organisation, décide des clés personnelles et ajoute des
+ * fournisseurs personnalisés (serveurs compatibles OpenAI). Même format que les connecteurs.
  */
 export default function ModelsPanel({ isAdmin, openProvider, onChanged, onError }: Props) {
   const { t } = useI18n()
-  const [providers, setProviders] = useState<ModelKeyStatus[] | null>(null)
-  const [open, setOpen] = useState<KeyProvider | null>(openProvider ?? null)
+  const [data, setData] = useState<ModelKeysView | null>(null)
+  const [open, setOpen] = useState<Open>(openProvider ? { kind: 'provider', id: openProvider } : null)
   const [query, setQuery] = useState('')
   const [view, setView] = useCatalogView('models')
 
@@ -48,38 +79,72 @@ export default function ModelsPanel({ isAdmin, openProvider, onChanged, onError 
     let cancelled = false
     api
       .listModelKeys()
-      .then((list) => !cancelled && setProviders(list))
+      .then((value) => !cancelled && setData(value))
       .catch((cause: unknown) => !cancelled && onError(cause instanceof Error ? cause.message : String(cause)))
     return () => {
       cancelled = true
     }
   }, [onError])
 
-  const update = (next: ModelKeyStatus[]) => {
-    setProviders(next)
+  const update = (next: ModelKeysView) => {
+    setData(next)
     onChanged?.()
   }
 
-  const current = open ? providers?.find((item) => item.id === open) : undefined
-  if (current) {
+  if (open?.kind === 'new' && isAdmin) {
     return (
       <div className="settings-panel connectors-panel models-panel">
-        <ProviderDetail key={current.id} item={current} isAdmin={isAdmin} onBack={() => setOpen(null)} onChanged={update} onError={onError} />
+        <NewProvider
+          onBack={() => setOpen(null)}
+          onError={onError}
+          onAdded={(next) => {
+            // Le fournisseur ajouté : celui qui n'existait pas encore.
+            const added = next.custom.find((item) => !data?.custom.some((known) => known.id === item.id))
+            update(next)
+            setOpen(added ? { kind: 'custom', id: added.id } : null)
+          }}
+        />
       </div>
     )
   }
 
-  const chip = (item: ModelKeyStatus) =>
-    !item.allowed ? { label: t('models.chip.off'), tone: 'muted' } : item.active ? { label: t('models.chip.ready'), tone: 'ok' } : { label: t('models.chip.connect'), tone: 'warn' }
+  const provider = open?.kind === 'provider' ? data?.providers.find((item) => item.id === open.id) : undefined
+  if (provider) {
+    return (
+      <div className="settings-panel connectors-panel models-panel">
+        <ProviderDetail key={provider.id} item={provider} isAdmin={isAdmin} onBack={() => setOpen(null)} onChanged={update} onError={onError} />
+      </div>
+    )
+  }
+
+  const custom = open?.kind === 'custom' ? data?.custom.find((item) => item.id === open.id) : undefined
+  if (custom) {
+    return (
+      <div className="settings-panel connectors-panel models-panel">
+        <CustomDetail
+          key={custom.id}
+          item={custom}
+          isAdmin={isAdmin}
+          onBack={() => setOpen(null)}
+          onError={onError}
+          onRemoved={(next) => {
+            update(next)
+            setOpen(null)
+          }}
+        />
+      </div>
+    )
+  }
 
   const needle = query.trim().toLocaleLowerCase()
-  const shown = (providers ?? []).filter((item) => !needle || providerMeta[item.id].label.toLocaleLowerCase().includes(needle))
+  const shown = data ? entries(data, t).filter((item) => !needle || item.name.toLocaleLowerCase().includes(needle)) : []
 
   return (
     <div className="list-panel connectors-panel models-panel">
+      {isAdmin && <PanelNew label={t('models.new')} onClick={() => setOpen({ kind: 'new' })} />}
       <PanelSearch value={query} onChange={setQuery} placeholder={t('models.search')} />
       <ListSection label={t('models.providers')} actions={<ViewToggle view={view} onChange={setView} />}>
-        {providers === null ? (
+        {data === null ? (
           <ListEmpty>{t('common.loading')}</ListEmpty>
         ) : !shown.length ? (
           <ListEmpty>{t('models.noMatch')}</ListEmpty>
@@ -87,33 +152,29 @@ export default function ModelsPanel({ isAdmin, openProvider, onChanged, onError 
           <ListGrid label={t('models.providers')}>
             {shown.map((item) => (
               <GridTile
-                key={item.id}
-                icon={<ProviderLogo provider={item.id} size={28} />}
-                title={providerMeta[item.id].label}
-                label={t('models.open', { name: providerMeta[item.id].label })}
-                tooltip={chip(item).label}
-                onClick={() => setOpen(item.id)}
-                badge={item.active ? <span className="grid-tile-added" aria-label={t('models.chip.ready')} title={t('models.chip.ready')} /> : undefined}
+                key={item.key}
+                icon={<ProviderLogo provider={item.logo} size={28} />}
+                title={item.name}
+                label={t('models.open', { name: item.name })}
+                tooltip={item.chip.label}
+                onClick={() => setOpen(item.open)}
+                badge={item.ready ? <span className="grid-tile-added" aria-label={t('models.chip.ready')} title={t('models.chip.ready')} /> : undefined}
               />
             ))}
           </ListGrid>
         ) : (
           <ListRows>
-            {shown.map((item) => {
-              const state = chip(item)
-              return (
-                <ListRow
-                  key={item.id}
-                  icon={<ProviderLogo provider={item.id} size={20} />}
-                  title={providerMeta[item.id].label}
-                  // La source seulement quand une clé sert : l'état est déjà dans la pastille.
-                  subtitle={item.active ? sourceLabel(item, t) : undefined}
-                  label={t('models.open', { name: providerMeta[item.id].label })}
-                  onClick={() => setOpen(item.id)}
-                  trailing={<span className={`list-row-chip ${state.tone}`}>{state.label}</span>}
-                />
-              )
-            })}
+            {shown.map((item) => (
+              <ListRow
+                key={item.key}
+                icon={<ProviderLogo provider={item.logo} size={20} />}
+                title={item.name}
+                subtitle={item.subtitle}
+                label={t('models.open', { name: item.name })}
+                onClick={() => setOpen(item.open)}
+                trailing={<span className={`list-row-chip ${item.chip.tone}`}>{item.chip.label}</span>}
+              />
+            ))}
           </ListRows>
         )}
       </ListSection>
@@ -122,8 +183,129 @@ export default function ModelsPanel({ isAdmin, openProvider, onChanged, onError 
   )
 }
 
+/** Nouveau fournisseur : un serveur compatible OpenAI, vérifié avant d'être ajouté. */
+function NewProvider({ onBack, onAdded, onError }: { onBack: () => void; onAdded: (next: ModelKeysView) => void; onError: (message: string) => void }) {
+  const { t } = useI18n()
+  const [form, setForm] = useState({ name: '', baseUrl: '', apiKey: '' })
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    onError('')
+    try {
+      const apiKey = form.apiKey.trim()
+      const next = await api.addModelProvider({ name: form.name.trim(), baseUrl: form.baseUrl.trim(), ...(apiKey ? { apiKey } : {}) })
+      // La clé ne reste jamais dans la page.
+      setForm({ name: '', baseUrl: '', apiKey: '' })
+      onAdded(next)
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="connector-detail" aria-label={t('models.custom.title')}>
+      <button type="button" className="connector-back" onClick={onBack}>
+        <ArrowLeft size={14} />
+        {t('models.back')}
+      </button>
+      <h3>{t('models.custom.title')}</h3>
+      <p className="settings-hint">{t('models.custom.how')}</p>
+      <form className="connector-form" aria-label={t('models.custom.title')} onSubmit={(event) => void submit(event)}>
+        <input required aria-label={t('models.custom.name')} placeholder={t('models.custom.name')} value={form.name} maxLength={60} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+        <input required type="url" aria-label={t('models.custom.url')} placeholder={t('models.custom.url')} value={form.baseUrl} maxLength={500} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} />
+        <input type="password" autoComplete="off" spellCheck={false} aria-label={t('models.custom.key')} placeholder={t('models.custom.key')} value={form.apiKey} maxLength={512} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} />
+        <button type="submit" className="settings-save connector-primary" disabled={busy || !form.name.trim() || !form.baseUrl.trim()}>
+          <Plus size={14} />
+          {t('models.custom.add')}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+/** Fiche d'un fournisseur personnalisé : l'état ; pour un administrateur, l'adresse et le retrait. */
+function CustomDetail({ item, isAdmin, onBack, onRemoved, onError }: { item: CustomProviderStatus; isAdmin: boolean; onBack: () => void; onRemoved: (next: ModelKeysView) => void; onError: (message: string) => void }) {
+  const { t } = useI18n()
+  const [busy, setBusy] = useState(false)
+  const [armed, setArmed] = useState(false)
+
+  async function remove() {
+    setBusy(true)
+    onError('')
+    try {
+      onRemoved(await api.removeModelProvider(item.id))
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="connector-detail" aria-label={item.name}>
+      <button type="button" className="connector-back" onClick={onBack}>
+        <ArrowLeft size={14} />
+        {t('models.back')}
+      </button>
+
+      <header className="connector-detail-head">
+        <ProviderLogo provider="custom" size={44} />
+        <div>
+          <h3>{item.name}</h3>
+        </div>
+      </header>
+
+      {!item.allowed ? (
+        <p className="connector-state">{t('models.state.off')}</p>
+      ) : item.models > 0 ? (
+        <p className="connector-state connector-ready-line">
+          <Check size={14} />
+          {t('models.custom.ready', { count: item.models })}
+        </p>
+      ) : (
+        <p className="connector-state">{t('models.custom.down')}</p>
+      )}
+
+      {isAdmin && (
+        <div className="connector-admin" aria-label={t('models.admin.title')}>
+          <div className="connector-action">
+            <p>{t('models.custom.address')}</p>
+            <p className="connector-ready-line">{item.baseUrl}</p>
+            {item.hint && (
+              <p className="connector-ready-line">
+                <KeyRound size={14} />
+                ••••{item.hint}
+              </p>
+            )}
+            <div className="connector-actions">
+              <button
+                type="button"
+                className={`settings-secondary connector-delete${armed ? ' armed' : ''}`}
+                disabled={busy}
+                onBlur={() => setArmed(false)}
+                onClick={() => {
+                  if (!armed) return setArmed(true)
+                  setArmed(false)
+                  void remove()
+                }}
+              >
+                <Trash2 size={13} />
+                {armed ? t('models.confirmRemove') : t('models.remove')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 /** Fiche d'un fournisseur : l'état, UNE action principale (ma clé), puis le bloc administrateur. */
-function ProviderDetail({ item, isAdmin, onBack, onChanged, onError }: { item: ModelKeyStatus; isAdmin: boolean; onBack: () => void; onChanged: (next: ModelKeyStatus[]) => void; onError: (message: string) => void }) {
+function ProviderDetail({ item, isAdmin, onBack, onChanged, onError }: { item: ModelKeyStatus; isAdmin: boolean; onBack: () => void; onChanged: (next: ModelKeysView) => void; onError: (message: string) => void }) {
   const { t } = useI18n()
   const name = providerMeta[item.id].label
   const [busy, setBusy] = useState(false)

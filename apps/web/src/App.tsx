@@ -9,6 +9,7 @@ import {
   type KnowledgeOwnerKind,
   type Message,
   type MessageSource,
+  type GeneratedFile,
   type McpServer,
   type Prompt,
   type MessageFeedback as Feedback,
@@ -43,6 +44,7 @@ import { Citations, citationScope, type CitationIssue } from './lib/citations'
 import { DocumentViewer } from './lib/document-view'
 import { sourceLabel } from './lib/activity'
 import DocumentPanel from './components/DocumentPanel'
+import FilePreviewPanel from './components/FilePreviewPanel'
 import Reasoning from './components/Reasoning'
 import MessageFiles from './components/MessageFiles'
 import BranchSwitcher from './components/BranchSwitcher'
@@ -207,15 +209,25 @@ function App() {
   const { artifact, openArtifact: showArtifact, closeArtifact } = useArtifactPanel()
   // Document cité ouvert à côté de la conversation : un seul panneau à la fois.
   const [openedDocument, setOpenedDocument] = useState<{ source: MessageSource; opening: number } | null>(null)
+  // Aperçu d'un document produit (pages en images) : lui aussi seul panneau ouvert.
+  const [previewedFile, setPreviewedFile] = useState<{ conversationId: string; file: GeneratedFile } | null>(null)
   const openArtifact = useCallback((next: Parameters<typeof showArtifact>[0]) => {
     setOpenedDocument(null)
+    setPreviewedFile(null)
     showArtifact(next)
   }, [showArtifact])
   const openDocument = useCallback((source: MessageSource) => {
     closeArtifact()
+    setPreviewedFile(null)
     setOpenedDocument((current) => ({ source, opening: (current?.opening ?? 0) + 1 }))
   }, [closeArtifact])
   const closeDocument = useCallback(() => setOpenedDocument(null), [])
+  const previewFile = useCallback((conversationId: string, file: GeneratedFile) => {
+    closeArtifact()
+    setOpenedDocument(null)
+    setPreviewedFile({ conversationId, file })
+  }, [closeArtifact])
+  const closePreview = useCallback(() => setPreviewedFile(null), [])
   // Lien de partage ouvert (#partage=…) : vue en lecture seule à la place de la conversation.
   const [sharedToken, setSharedToken] = useState(readShareToken)
   useEffect(() => {
@@ -1132,7 +1144,7 @@ function App() {
     <ArtifactContext.Provider value={openArtifact}>
     <DocumentViewer.Provider value={openDocument}>
     <LinkTrust.Provider value={linkHosts}>
-    <main className={`snowfall-app ${artifact || openedDocument ? 'with-artifact' : ''}`}>
+    <main className={`snowfall-app ${artifact || openedDocument || previewedFile ? 'with-artifact' : ''}`}>
       <Snowfall />
 
       <Sidebar
@@ -1165,7 +1177,11 @@ function App() {
         onSearchChange={setSearch}
         onSidebarOpenChange={setSidebarOpen}
         onSidebarCollapsedChange={setSidebarCollapsed}
-        onSidebarPanelChange={setSidebarPanel}
+        onSidebarPanelChange={(panel) => {
+          // Changer de panneau ferme la carte des agents (elle remplace la conversation).
+          setGraphOpen(false)
+          setSidebarPanel(panel)
+        }}
         onModelsChanged={refreshCatalog}
         onProjectSelect={(id) => {
           setActiveProjectId(id)
@@ -1502,7 +1518,7 @@ function App() {
                           {activeConversation &&
                             (() => {
                               const files = (generatedFiles[activeConversation.id] ?? []).filter((file) => file.messageId === message.id)
-                              return files.length ? <MessageFiles conversationId={activeConversation.id} files={files} /> : null
+                              return files.length ? <MessageFiles conversationId={activeConversation.id} files={files} onPreview={(file) => previewFile(activeConversation.id, file)} /> : null
                             })()}
                           {message.sources?.length ? (
                             <Citations.Provider value={citationScope(message.sources, message.activity?.steps, message.activity?.consulted, (source, issue) => reportCitation(message.id, source, issue))}>
@@ -1817,6 +1833,7 @@ function App() {
       </section>
       {artifact && <ArtifactPanel key={artifact.opening} artifact={artifact} onClose={closeArtifact} />}
       {openedDocument && <DocumentPanel key={openedDocument.opening} source={openedDocument.source} onClose={closeDocument} />}
+      {previewedFile && <FilePreviewPanel key={previewedFile.file.id} conversationId={previewedFile.conversationId} file={previewedFile.file} onClose={closePreview} />}
     </main>
     </LinkTrust.Provider>
     </DocumentViewer.Provider>

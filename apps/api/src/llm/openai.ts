@@ -6,11 +6,15 @@ import { conversationTurns, imageDataUrl, parseToolArguments } from "./content.j
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
 
-// Sert à OpenAI et aux serveurs locaux compatibles (Ollama, vLLM, LM Studio).
+// Sert à OpenAI, aux serveurs locaux compatibles (Ollama, vLLM, LM Studio) et aux
+// fournisseurs personnalisés d'une organisation (OpenRouter, Groq, Azure…).
+export type OpenAiCompatibleProvider = "openai" | "local" | "custom";
+
 function client(settings: ProviderSettings, timeout = settings.timeoutMs) {
   return new OpenAI({
     apiKey: settings.apiKey,
     ...(settings.baseUrl ? { baseURL: settings.baseUrl } : {}),
+    ...(settings.fetch ? { fetch: settings.fetch } : {}),
     maxRetries: 2,
     timeout,
   });
@@ -57,7 +61,7 @@ export const toOpenAiTools = (tools: ToolSpec[]): ChatCompletionTool[] =>
   tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
 
 export function createOpenAiCompatibleModel(
-  provider: "openai" | "local",
+  provider: OpenAiCompatibleProvider,
   model: string,
   settings: ProviderSettings,
   options: { tools?: boolean } = {},
@@ -127,17 +131,24 @@ export function createOpenAiCompatibleModel(
 // L'API OpenAI liste aussi les modèles audio, image, embeddings… : on ne
 // garde que les modèles de chat textuel.
 const OPENAI_CHAT = /^(gpt-|o\d|chatgpt-)/;
+/** Modèles gardés par fournisseur, et longueur d'un nom (« <id>/<modèle> » tient en 120 caractères). */
+const MAX_LISTED_MODELS = 500;
+const MAX_MODEL_ID = 80;
 const OPENAI_EXCLUDED = /(audio|realtime|tts|transcribe|whisper|image|embedding|search|instruct|moderation|codex|computer)/;
 
 export async function listOpenAiCompatibleModels(
-  provider: "openai" | "local",
+  provider: OpenAiCompatibleProvider,
   settings: ProviderSettings,
 ): Promise<ModelInfo[]> {
   const ids: string[] = [];
-  for await (const item of client(settings, 5_000).models.list()) ids.push(item.id);
+  for await (const item of client(settings, 5_000).models.list()) {
+    ids.push(item.id);
+    // Un catalogue tiers peut être immense (ou hostile) : borné.
+    if (ids.length >= MAX_LISTED_MODELS) break;
+  }
 
   return ids
-    .filter((id) => provider === "local" || (OPENAI_CHAT.test(id) && !OPENAI_EXCLUDED.test(id)))
+    .filter((id) => (provider === "openai" ? OPENAI_CHAT.test(id) && !OPENAI_EXCLUDED.test(id) : id.length > 0 && id.length <= MAX_MODEL_ID))
     .sort()
     .reverse()
     .map((id) => ({ id, label: id }));

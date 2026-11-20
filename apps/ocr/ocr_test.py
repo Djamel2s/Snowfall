@@ -54,6 +54,18 @@ def main():
         outcome = True
     results.append(check("PDF corrompu : refus ou texte vide, rien ne reste", outcome and os.listdir(server.WORK_ROOT) == []))
 
+    # Aperçu : pages en PNG, lues sous l'utilisateur de l'emplacement ; rien ne reste.
+    preview = server.render(pdf_with_text("Apercu 2026"), uid)
+    import base64
+    first = base64.b64decode(preview["pages"][0]) if preview["pages"] else b""
+    results.append(check("aperçu : une page PNG, total connu", preview["total"] == 1 and len(preview["pages"]) == 1 and first.startswith(b"\x89PNG")))
+    results.append(check("aperçu : dossier de travail effacé", os.listdir(server.WORK_ROOT) == []))
+    try:
+        broken = server.render(b"%PDF-1.4\n" + zlib.compress(os.urandom(2000)), uid)["pages"] == []
+    except RuntimeError:
+        broken = True
+    results.append(check("aperçu d'un PDF corrompu : refus ou rien, rien ne reste", broken and os.listdir(server.WORK_ROOT) == []))
+
     # Le type annoncé doit correspondre au contenu.
     results.append(check("signature vérifiée (PNG annoncé, PDF reçu)", not server.MAGIC["image/png"](b"%PDF-1.4")))
 

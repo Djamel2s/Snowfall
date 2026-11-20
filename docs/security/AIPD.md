@@ -50,6 +50,7 @@ conversations et les documents, traitement à grande échelle possible.
 | Destinataire | Données | Condition |
 |---|---|---|
 | Fournisseurs d'IA (Mistral, OpenAI, Anthropic, Google) | Message, historique récent, extraits des documents | Seulement les fournisseurs autorisés par l'organisation ; **jamais** pour une base confidentielle (modèle local exigé) |
+| Fournisseur personnalisé (serveur compatible OpenAI ajouté par un administrateur) | Mêmes données qu'une réponse | Choisi par l'organisation : contrat avec ce fournisseur à vérifier par elle ; jamais pour une base confidentielle (modèle local exigé) ; adresse HTTPS publique |
 | Fournisseur d'IA, sous le compte personnel d'un membre (clé personnelle) | Mêmes données qu'une réponse | Seulement si un administrateur l'autorise pour ce fournisseur (désactivé par défaut) ; les données partent alors sous le contrat du membre, hors du contrat de sous-traitance de l'organisation : décision de l'organisation, à porter à la connaissance des membres |
 | Moteurs de recherche (via SearXNG) | Requête de recherche formulée par l'agent | Si l'organisation active la recherche web ; jamais en confidentiel |
 | Serveurs MCP | Arguments des appels d'outils | Serveurs approuvés par un administrateur ; écritures validées par l'utilisateur ; jamais en confidentiel |

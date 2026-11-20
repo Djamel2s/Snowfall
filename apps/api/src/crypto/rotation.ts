@@ -8,6 +8,7 @@ import { conversationFieldAad, feedbackAad, messageAad, messageActivityAad, mess
 import type { TenantContext } from "../db/tenant.js";
 import { exampleAad, headAad } from "../decision/workshop.js";
 import { generatedFileAad } from "../files/generated.js";
+import { customProviderAad } from "../llm/custom-providers.js";
 import { organizationKeyAad, personalKeyAad } from "../llm/keys.js";
 import { baseIconAad, baseNameAad, chunkAad, folderNameAad, sourceAad } from "../knowledge/store.js";
 import { tokenAad, verifierAad } from "../mcp/connections.js";
@@ -158,7 +159,7 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
     table: "generated_files",
     scope: "user",
     keys: ["id"],
-    fields: (["name", "content"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => generatedFileAad(t, s(row.id), field) })),
+    fields: (["name", "content", "review"] as const).map((field) => ({ column: field, aad: (row: Row, t: TenantContext) => generatedFileAad(t, s(row.id), field) })),
   },
   {
     table: "prompts",
@@ -189,6 +190,13 @@ export const ENCRYPTED_TABLES: EncryptedTable[] = [
   { table: "user_preferences", scope: "user", keys: ["user_id"], fields: [{ column: "instructions_enc", aad: (_row, t) => instructionsAad(t) }] },
   { table: "organization_model_keys", scope: "organization", keys: ["provider"], fields: [{ column: "api_key", aad: (row, t) => organizationKeyAad(t.organizationId, s(row.provider)) }] },
   { table: "user_model_keys", scope: "user", keys: ["provider"], fields: [{ column: "api_key", aad: (row, t) => personalKeyAad(t, s(row.provider)) }] },
+  // L'adresse fait partie de l'AAD : la changer en base rend la clé indéchiffrable.
+  {
+    table: "organization_model_providers",
+    scope: "organization",
+    keys: ["id", "base_url"],
+    fields: [{ column: "api_key", aad: (row, t) => customProviderAad(t.organizationId, s(row.id), s(row.base_url)) }],
+  },
   {
     table: "mcp_user_tokens",
     scope: "user",

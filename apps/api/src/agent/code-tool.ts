@@ -1,7 +1,7 @@
 import http from "node:http";
 import { z } from "zod";
 import { generatedFileMediaTypes, GENERATED_FILE_MAX_BYTES } from "../db/schema.js";
-import type { GeneratedFileMeta } from "../files/generated.js";
+import type { GeneratedFileInput, GeneratedFileMeta } from "../files/generated.js";
 import { checkOoxml, OOXML_TYPES } from "../files/ooxml.js";
 import { knownNumbers, officeText, unsupportedNumbers } from "./fidelity.js";
 import type { MalwareScanner } from "../security/antivirus.js";
@@ -94,7 +94,7 @@ export type SandboxDeps = {
   sandbox: CodeSandbox;
   scanner?: MalwareScanner | undefined;
   /** Enregistre un fichier produit (chiffré), pour la réponse en cours. */
-  saveFile: (input: { name: string; mediaType: string; bytes: Buffer }) => Promise<GeneratedFileMeta>;
+  saveFile: (input: GeneratedFileInput) => Promise<GeneratedFileMeta>;
   /** Exécutions de la réponse (code du modèle et scripts de compétence : même plafond). */
   runs: { count: number };
 };
@@ -170,12 +170,11 @@ export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, 
         continue;
       }
     }
-    saved.push(await deps.saveFile({ name: safeName(file.name), mediaType: file.mediaType, bytes }));
     // Fidélité : chiffres du document absents de ce que le modèle a reçu (ni déduits).
-    if (known && OOXML_TYPES.has(file.mediaType)) {
-      const numbers = unsupportedNumbers(officeText(bytes), known, { exact: [today.getDate(), today.getMonth() + 1] });
-      if (numbers.length) unsupported.push({ file: safeName(file.name), numbers });
-    }
+    // Gardés avec le fichier : la carte du fichier les montre à la personne.
+    const numbers = known && OOXML_TYPES.has(file.mediaType) ? unsupportedNumbers(officeText(bytes), known, { exact: [today.getDate(), today.getMonth() + 1] }) : [];
+    if (numbers.length) unsupported.push({ file: safeName(file.name), numbers });
+    saved.push(await deps.saveFile({ name: safeName(file.name), mediaType: file.mediaType, bytes, ...(numbers.length ? { review: numbers } : {}) }));
   }
 
   const status = result.timedOut ? "délai dépassé" : result.exitCode === 0 ? "terminé" : `erreur (code ${result.exitCode})`;

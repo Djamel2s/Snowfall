@@ -24,6 +24,7 @@ import shutil
 import signal
 import socketserver
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -43,6 +44,30 @@ PAGE_SECONDS = 30
 TOTAL_SECONDS = 180
 MAX_CHARS = 400_000
 MEMORY_BYTES = 1024 * 1024 * 1024
+
+# Aperçu d'un document (pages en images) : nombre de pages, taille, poids bornés.
+RENDER_PAGES = 20
+RENDER_SIDE = 1600
+RENDER_BYTES = 12 * 1024 * 1024
+
+# Lecture des pages rendues, lancée SOUS l'utilisateur de l'emplacement (le
+# service, sans privilège, ne peut pas lire ses fichiers) : PNG seulement, dans
+# l'ordre, poids total borné ; ni lien symbolique ni autre fichier.
+PAGE_READER = r"""
+import base64, json, os, sys
+workdir, budget = sys.argv[1], int(sys.argv[2])
+pages, total = [], 0
+for entry in sorted(os.scandir(workdir), key=lambda item: item.name):
+    if not (entry.name.startswith("page") and entry.name.endswith(".png")) or entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+        continue
+    with open(entry.path, "rb") as handle:
+        data = handle.read(budget + 1)
+    if not data.startswith(b"\x89PNG") or total + len(data) > budget:
+        break
+    total += len(data)
+    pages.append(base64.b64encode(data).decode("ascii"))
+json.dump(pages, sys.stdout)
+"""
 
 MEDIA_TYPES = {
     "application/pdf": ".pdf",
@@ -204,6 +229,33 @@ def recognize(data, media_type, uid):
         wipe(workdir, uid)
 
 
+def render(data, uid):
+    """PDF → images des premières pages (aperçu). Mêmes protections que la lecture."""
+    workdir = os.path.join(WORK_ROOT, uuid.uuid4().hex)
+    os.makedirs(workdir, mode=0o700)
+    os.chmod(workdir, 0o770)
+    try:
+        source = os.path.join(workdir, "source.pdf")
+        with open(source, "wb") as handle:
+            handle.write(data)
+        os.chown(source, uid, uid)
+        os.chown(workdir, uid, 0)
+
+        info = run_tool(["pdfinfo", source], 20, uid, workdir).decode("utf-8", errors="replace")
+        total = next((int(line.split()[1]) for line in info.splitlines() if line.startswith("Pages:") and line.split()[1].isdigit()), 0)
+        run_tool(
+            ["pdftoppm", "-png", "-r", "110", "-scale-to", str(RENDER_SIDE), "-f", "1", "-l", str(RENDER_PAGES), source, "page"],
+            90,
+            uid,
+            workdir,
+        )
+        pages = json.loads(run_tool([sys.executable, "-I", "-c", PAGE_READER, workdir, str(RENDER_BYTES)], 20, uid, workdir))
+        return {"pages": pages, "total": max(total, len(pages))}
+    finally:
+        kill_user(uid)
+        wipe(workdir, uid)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "snowfall-ocr"
     sys_version = ""
@@ -222,10 +274,11 @@ class Handler(BaseHTTPRequestHandler):
         return self.reply(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path != "/ocr":
+        if self.path not in ("/ocr", "/render"):
             return self.reply(404, {"error": "not_found"})
         media_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if media_type not in MEDIA_TYPES:
+        # Aperçu : PDF seulement (Word, Excel, PowerPoint sont convertis avant, dans le bac à sable).
+        if media_type not in MEDIA_TYPES or (self.path == "/render" and media_type != "application/pdf"):
             return self.reply(415, {"error": "unsupported"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -240,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
         if uid is None:
             return self.reply(429, {"error": "busy"})
         try:
+            if self.path == "/render":
+                return self.reply(200, render(data, uid))
             return self.reply(200, recognize(data, media_type, uid))
         except TimeoutError:
             return self.reply(504, {"error": "timeout"})

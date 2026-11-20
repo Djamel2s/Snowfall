@@ -6,4 +6,5 @@ export const providerLabels: Record<ProviderId, string> = {
   anthropic: 'Anthropic',
   google: 'Google',
   local: 'Local',
+  custom: 'Personnalisé',
 }

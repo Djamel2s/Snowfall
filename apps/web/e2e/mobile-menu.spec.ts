@@ -5,28 +5,34 @@ import { mockApi } from './mock-api'
 // le referme) ; conversation temporaire : contour du champ en pointillés.
 
 /**
- * Position horizontale du menu à chaque image, pendant 1,5 s, relevée DANS la
- * page (aucun aller-retour : fiable même quand la machine est chargée). Le relevé
- * démarre avant l'action qui déclenche l'animation.
+ * Le menu glisse-t-il ? Écoute, DANS la page, le début d'une transition CSS de
+ * « transform » sur le menu, et relève aussi sa position à chaque image pendant
+ * 1,5 s. L'événement est la preuve fiable : sur une machine chargée, le
+ * navigateur peut sauter les images intermédiaires (le relevé seul échouait
+ * parfois quand toute la suite tournait). L'écoute démarre avant l'action.
  */
 async function track(page: Page, action: () => Promise<void>) {
-  const sampling = page.evaluate(
-    () =>
-      new Promise<number[]>((resolve) => {
-        const sidebar = document.querySelector('aside.sidebar')!
-        const xs: number[] = []
-        const start = performance.now()
-        const step = () => {
-          xs.push(Math.round(sidebar.getBoundingClientRect().x))
-          if (performance.now() - start < 1_500) requestAnimationFrame(step)
-          else resolve(xs)
-        }
-        requestAnimationFrame(step)
-      }),
-  )
+  await page.evaluate(() => {
+    const sidebar = document.querySelector('aside.sidebar')!
+    const state = { transform: false, xs: [] as number[] }
+    ;(window as unknown as { __slide: typeof state }).__slide = state
+    sidebar.addEventListener('transitionstart', (event) => {
+      if ((event as TransitionEvent).propertyName === 'transform') state.transform = true
+    })
+    const start = performance.now()
+    const step = () => {
+      state.xs.push(Math.round(sidebar.getBoundingClientRect().x))
+      if (performance.now() - start < 1_500) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  })
   await action()
-  return sampling
+  await page.waitForTimeout(1_600)
+  return page.evaluate(() => (window as unknown as { __slide: { transform: boolean; xs: number[] } }).__slide)
 }
+
+/** Une transition de « transform » a démarré, ou une position intermédiaire a été vue. */
+const slid = (track: { transform: boolean; xs: number[] }) => track.transform || track.xs.some((x) => x < 0 && x > -300)
 
 test('téléphone : le menu glisse à l’ouverture et à la fermeture ; le logo le referme', async ({ page, isMobile }, info) => {
   test.skip(!isMobile, 'Menu du téléphone')
@@ -37,15 +43,15 @@ test('téléphone : le menu glisse à l’ouverture et à la fermeture ; le logo
   await page.evaluate(() => document.documentElement.classList.remove('reduce-motion'))
 
   const opening = await track(page, () => page.getByRole('button', { name: 'Ouvrir le menu' }).click())
-  // Des positions intermédiaires : le menu glisse, il n'apparaît pas d'un coup.
-  expect(opening.some((x) => x < 0 && x > -300)).toBe(true)
+  // Le menu glisse (transition), il n'apparaît pas d'un coup.
+  expect(slid(opening)).toBe(true)
   await expect.poll(() => page.locator('aside.sidebar').evaluate((element) => Math.round(element.getBoundingClientRect().x))).toBe(0)
   await expect(page.locator('.mobile-scrim')).toHaveCSS('opacity', '1')
   await page.screenshot({ path: info.outputPath('menu-ouvert.png') })
 
   // Le logo en haut à gauche referme le menu, en glissant aussi.
   const closing = await track(page, () => page.getByRole('button', { name: 'Snowfall', exact: true }).click())
-  expect(closing.some((x) => x < 0 && x > -300)).toBe(true)
+  expect(slid(closing)).toBe(true)
   await expect.poll(() => page.locator('aside.sidebar').evaluate((element) => Math.round(element.getBoundingClientRect().x))).toBeLessThan(-250)
   await expect(page.locator('aside.sidebar')).not.toHaveClass(/sidebar-open/)
   await expect(page.locator('.mobile-scrim')).toHaveCSS('opacity', '0')

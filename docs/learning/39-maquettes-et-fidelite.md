@@ -72,8 +72,13 @@ fidèles. Limite assumée : « 4 postes » passe si « 4,2 » figure dans la dem
 - le modèle **ignore l'alerte**, même placée en tête du résultat et formulée
   « À FAIRE AVANT DE RÉPONDRE » : 0 correction sur 4. Un petit modèle ne
   suit pas une consigne de correction ; c'est donc au **code** d'avertir
-  l'utilisateur (aujourd'hui : « chiffres à vérifier : 4, 12, 24 » dans le
-  détail de l'étape, encore trop discret).
+  l'utilisateur (au départ : « chiffres à vérifier : 4, 12, 24 » dans le
+  détail de l'étape, trop discret).
+
+Correction (20 novembre) : les nombres à vérifier sont gardés **avec le
+fichier** (colonne chiffrée, comme son nom et son contenu) et affichés sous sa
+carte : « Chiffres à vérifier : 4 h · 25,8 % ». La personne les voit au moment
+où elle télécharge le document, même des jours plus tard.
 
 Leçon : un contrôle qui renvoie l'erreur au modèle n'est fiable que si on a
 mesuré que le modèle corrige. Sinon, l'avertissement doit atteindre l'humain.

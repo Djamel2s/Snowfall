@@ -33,6 +33,7 @@ import {
   type ScopedModels,
 } from "./llm/registry.js";
 import { keyProviders, PostgresModelKeyStore, type ModelKeyStore } from "./llm/keys.js";
+import { guardedFetch, PostgresCustomProviderStore, type CustomProviderStore } from "./llm/custom-providers.js";
 import { providerIds, type ModelSelection, type ProviderId, type ProviderSettings } from "./llm/types.js";
 import { agentProfileSchema, generationOf } from "./agents/profile.js";
 import { PostgresAgentStore, type Agent, type AgentStore } from "./agents/store.js";
@@ -142,7 +143,7 @@ import { registerMcpRoutes, type McpDependencies } from "./routes/mcp.js";
 import { PostgresMcpConnectionStore } from "./mcp/connections.js";
 import { bearerFor } from "./mcp/user-token.js";
 import { PostgresMcpServerStore } from "./mcp/store.js";
-import { publicAddressOnly } from "./mcp/client.js";
+import { publicAddressOnly, validateMcpUrl } from "./mcp/client.js";
 import { mcpToolsFor } from "./mcp/tools.js";
 import { registerAttachmentRoutes } from "./routes/attachments.js";
 import { parseSse, registerPublicApiRoutes } from "./routes/public-api.js";
@@ -169,7 +170,8 @@ import { CitationRegistry, knowledgeTool } from "./agent/knowledge-tool.js";
 import { knowledgeWriteTool } from "./agent/knowledge-write-tool.js";
 import { webTools, WebSession } from "./agent/web-tools.js";
 import { codeTool, generatedFileIds, UnixSocketSandbox, type CodeSandbox } from "./agent/code-tool.js";
-import { MemoryGeneratedFileStore, PostgresGeneratedFileStore, type GeneratedFileStore } from "./files/generated.js";
+import { MemoryGeneratedFileStore, PostgresGeneratedFileStore, type GeneratedFileInput, type GeneratedFileStore } from "./files/generated.js";
+import { FilePreviewer, PreviewError, type PreviewPages } from "./files/preview.js";
 import { SearxngClient, type WebSearchEngine } from "./web/searxng.js";
 import { EncryptedCheckpointSaver } from "./agent/checkpointer.js";
 import {
@@ -247,6 +249,8 @@ export type AppDependencies = {
   models?: ModelRegistry;
   /** Clés d'API saisies dans l'interface (organisation, personnelles) ; absent : celles de la configuration seulement. */
   modelKeys?: ModelKeyStore;
+  /** Fournisseurs personnalisés des organisations (serveurs compatibles OpenAI). */
+  modelProviders?: CustomProviderStore;
   agents?: AgentStore;
   settings?: SettingsStore;
   members?: MemberStore;
@@ -415,6 +419,11 @@ export function createAppServer(deps: AppDependencies) {
   const summaries = deps.summaries ?? new MemorySummaryStore();
   const tracer = deps.tracer ?? noopTracer;
   const generatedFiles = deps.generatedFiles ?? new MemoryGeneratedFileStore();
+  // Aperçu des documents produits : pages en images, calculées une fois puis gardées
+  // en mémoire (30 min, 20 documents au plus), jamais en base.
+  const previewer = new FilePreviewer({ sandbox: deps.sandbox, ocr: deps.ocr });
+  const previews = new Map<string, { at: number; value: PreviewPages }>();
+  const PREVIEW_TTL_MS = 30 * 60 * 1000;
   const toolUsage = deps.toolUsage ?? new MemoryToolUsageStore();
   const shares = deps.shares ?? new MemoryShareStore();
   const prompts = deps.prompts ?? new MemoryPromptStore();
@@ -453,7 +462,11 @@ export function createAppServer(deps: AppDependencies) {
     if (cached && Date.now() - cached.at < 5_000) return cached.view;
     const keyStore = deps.modelKeys;
     const view = (async () => {
-      const [secrets, settings] = await Promise.all([keyStore.secrets(user), deps.settings ? deps.settings.get(user) : defaultSettings]);
+      const [secrets, settings, custom] = await Promise.all([
+        keyStore.secrets(user),
+        deps.settings ? deps.settings.get(user) : defaultSettings,
+        deps.modelProviders ? deps.modelProviders.endpoints(user) : [],
+      ]);
       const keys: ScopedKeys = {};
       for (const provider of keyProviders) {
         const personal = settings.personalKeyProviders.includes(provider) ? secrets.personal[provider] : undefined;
@@ -461,7 +474,7 @@ export function createAppServer(deps: AppDependencies) {
         if (personal) keys[provider] = { apiKey: personal, source: "personal" };
         else if (organization) keys[provider] = { apiKey: organization, source: "organization" };
       }
-      return models.withKeys(keys);
+      return models.withKeys(keys, custom);
     })();
     modelViews.set(id, { at: Date.now(), view });
     if (modelViews.size > 2_000) modelViews.delete(modelViews.keys().next().value!);
@@ -1201,6 +1214,14 @@ export function createAppServer(deps: AppDependencies) {
         platformProviders: () => registry.platformProviders(),
         checkKey: (provider, apiKey) => registry.checkKey(provider, apiKey),
         changed: forgetModelViews,
+        custom: deps.modelProviders
+          ? {
+              store: deps.modelProviders,
+              validateUrl: (raw) => validateMcpUrl(raw),
+              check: (endpoint) => registry.checkEndpoint(endpoint),
+              models: async (user) => (await (await modelsFor(user)).catalog()).find((provider) => provider.id === "custom")?.models ?? [],
+            }
+          : undefined,
       });
     }
     registerPromptRoutes(api, kit, prompts);
@@ -1694,7 +1715,7 @@ export function createAppServer(deps: AppDependencies) {
           ? {
               sandbox: deps.sandbox,
               scanner: deps.scanner,
-              saveFile: (file: { name: string; mediaType: string; bytes: Buffer }) => generatedFiles.create(user, run.conversationId, file),
+              saveFile: (file: GeneratedFileInput) => generatedFiles.create(user, run.conversationId, file),
               runs: run.codeRuns,
               inputs: scriptInputs(user, run.conversationId, run.attachmentIds ?? []),
             }
@@ -2877,6 +2898,40 @@ export function createAppServer(deps: AppDependencies) {
     });
 
     /**
+     * Aperçu d'un document produit (Word, PowerPoint, Excel, PDF) : ses premières
+     * pages en PNG. Jamais le fichier dans le navigateur : une image n'exécute rien.
+     * Conversion dans le bac à sable, rendu dans le service OCR, tous deux sans réseau.
+     */
+    api.get("/conversations/:id/files/:fileId/preview", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      const params = z.object({ id: z.uuid(), fileId: z.uuid() }).safeParse(request.params);
+      if (!params.success) return reply.code(400).send({ error: "Invalid request" });
+      // Le fichier de CETTE personne, dans CETTE conversation (RLS) : sinon introuvable.
+      const file = await generatedFiles.content(user, params.data.id, params.data.fileId);
+      if (!file) return reply.code(404).send({ error: "Not found" });
+      if (!previewer.supports(file.mediaType)) return reply.code(415).send({ error: "Unsupported", reason: "preview_unsupported" });
+      if (!previewer.available(file.mediaType)) return reply.code(503).send({ error: "Unavailable", reason: "preview_unavailable" });
+
+      const key = `${user.organizationId}:${user.userId}:${params.data.fileId}`;
+      const cached = previews.get(key);
+      let value = cached && Date.now() - cached.at < PREVIEW_TTL_MS ? cached.value : null;
+      if (!value) {
+        try {
+          value = await previewer.render(file, AbortSignal.timeout(120_000));
+        } catch (error) {
+          const reason = error instanceof PreviewError ? error.reason : "failed";
+          request.log.warn({ reason }, "Aperçu impossible");
+          return reply.code(reason === "busy" ? 503 : 422).send({ error: "Preview failed", reason: reason === "busy" ? "preview_busy" : "preview_failed" });
+        }
+        previews.delete(key);
+        previews.set(key, { at: Date.now(), value });
+        if (previews.size > 20) previews.delete(previews.keys().next().value!);
+      }
+      return { pages: value.pages.map((page) => page.toString("base64")), total: value.total };
+    });
+
+    /**
      * Contenu d'un fichier produit. Seules les images matricielles s'affichent ;
      * tout le reste (SVG compris, qui peut contenir du script) se télécharge.
      * CSP « sandbox » : ouvert directement, rien ne s'exécute dans l'origine de Snowfall.
@@ -3633,6 +3688,9 @@ export function createProductionServer() {
     defaults: { ...llmLimits, thinkingLevel: config.llm.googleThinkingLevel },
     // Modèle echo local, uniquement hors production (refusé par loadConfig).
     fallback: config.nodeEnv === "production" ? undefined : echoModel,
+    // Fournisseurs personnalisés : HTTPS, sans redirection ; derrière le proxy de sortie
+    // (qui refuse les adresses internes), sinon chaque nom doit viser une adresse publique.
+    customFetch: guardedFetch(process.env.HTTPS_PROXY && process.env.NODE_USE_ENV_PROXY === "1" ? async () => {} : publicAddressOnly),
   });
   const keyring = new OrganizationKeyring(createKeyEncryption(config.kms, masterKey));
 
@@ -3713,6 +3771,7 @@ export function createProductionServer() {
     checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
     modelKeys: new PostgresModelKeyStore(pool, keyring),
+    modelProviders: new PostgresCustomProviderStore(pool, keyring),
     settings: settingsStore,
     knowledge,
     embeddingProviders: () => embeddings.available(),

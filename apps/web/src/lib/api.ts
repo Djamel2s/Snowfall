@@ -39,7 +39,16 @@ export type MessageActivity = {
 }
 
 /** Fichier produit par l'interpréteur de code, rattaché à une réponse. */
-export type GeneratedFile = { id: string; name: string; mediaType: string; size: number; messageId: string; createdAt: string }
+export type GeneratedFile = {
+  id: string
+  name: string
+  mediaType: string
+  size: number
+  messageId: string
+  createdAt: string
+  /** Contrôle de fidélité : nombres du document absents des sources, à vérifier. */
+  review?: string[]
+}
 
 export type Message = {
   id: string
@@ -232,8 +241,8 @@ export type Project = {
   updatedAt: string
 }
 
-export type ProviderId = 'mistral' | 'openai' | 'anthropic' | 'google' | 'local'
-export const providerIds = ['mistral', 'openai', 'anthropic', 'google', 'local'] as const
+export type ProviderId = 'mistral' | 'openai' | 'anthropic' | 'google' | 'local' | 'custom'
+export const providerIds = ['mistral', 'openai', 'anthropic', 'google', 'local', 'custom'] as const
 
 export type ModelSelection = { provider: ProviderId; model: string }
 
@@ -453,6 +462,20 @@ export type ModelKeyStatus = {
   personal: { hint: string; updatedAt: string } | null
 }
 
+/** Fournisseur personnalisé (serveur compatible OpenAI) ajouté par un administrateur. */
+export type CustomProviderStatus = {
+  id: string
+  name: string
+  allowed: boolean
+  /** Modèles publiés : 0, le serveur ne répond pas. */
+  models: number
+  /** Administrateur seulement. */
+  baseUrl?: string
+  hint?: string | null
+}
+
+export type ModelKeysView = { providers: ModelKeyStatus[]; custom: CustomProviderStatus[] }
+
 /** Catégories d'outils comptées (code, web, MCP) et l'outil qui les active. */
 export const toolMeters = [
   { id: 'code', tool: 'code_interpreter' },
@@ -556,6 +579,12 @@ async function errorMessage(response: Response) {
   if (body.reason === 'quota_exceeded') return t('error.quota')
   if (body.reason === 'key_rejected') return t('models.error.rejected')
   if (body.reason === 'personal_keys_disabled') return t('models.error.personalOff')
+  if (body.reason === 'invalid_endpoint') return t('models.error.invalidUrl')
+  if (body.reason === 'preview_unavailable') return t('preview.unavailable')
+  if (body.reason === 'preview_busy') return t('preview.busy')
+  if (body.reason === 'preview_failed' || body.reason === 'preview_unsupported') return t('preview.failed')
+  if (body.reason === 'endpoint_rejected') return t('models.error.endpointRejected')
+  if (body.reason === 'too_many_providers') return t('models.error.tooMany')
   if (body.error === 'Provider not allowed') return t('error.providerNotAllowed')
   if (body.error === 'Malware detected') return t('error.malware')
   if (body.error === 'Scanner unavailable') return t('error.scanner')
@@ -1124,6 +1153,8 @@ export const api = {
   listGeneratedFiles: async (conversationId: string) =>
     (await request<{ files: GeneratedFile[] }>(`/conversations/${conversationId}/files`)).files,
   generatedFileBlob: async (conversationId: string, id: string) => (await send(`/conversations/${conversationId}/files/${id}`)).blob(),
+  /** Aperçu d'un document produit : premières pages en PNG (base64), nombre total de pages. */
+  generatedFilePreview: (conversationId: string, id: string) => request<{ pages: string[]; total: number }>(`/conversations/${conversationId}/files/${id}/preview`),
 
   /** Arrêter la réponse (fermer l'onglet ne l'arrête pas) ; le partiel est gardé. */
   cancelRun: (conversationId: string) => request<void>(`/conversations/${conversationId}/run/cancel`, json('POST', {})),
@@ -1226,11 +1257,14 @@ export const api = {
   setBrandColor: (color: string | null) => request<{ color: string | null }>('/branding/color', { method: 'PUT', body: JSON.stringify({ color }), headers: { 'Content-Type': 'application/json' } }),
   getOrganization: () => request<Organization>('/organization'),
   // Clés d'API des fournisseurs de modèles (la mienne ; celle de l'organisation pour un administrateur).
-  listModelKeys: async () => (await request<{ providers: ModelKeyStatus[] }>('/me/model-keys')).providers,
-  setModelKey: async (scope: 'personal' | 'organization', provider: KeyProvider, apiKey: string) =>
-    (await request<{ providers: ModelKeyStatus[] }>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, json('PUT', { apiKey }))).providers,
-  removeModelKey: async (scope: 'personal' | 'organization', provider: KeyProvider) =>
-    (await request<{ providers: ModelKeyStatus[] }>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, { method: 'DELETE' })).providers,
+  listModelKeys: () => request<ModelKeysView>('/me/model-keys'),
+  setModelKey: (scope: 'personal' | 'organization', provider: KeyProvider, apiKey: string) =>
+    request<ModelKeysView>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, json('PUT', { apiKey })),
+  removeModelKey: (scope: 'personal' | 'organization', provider: KeyProvider) =>
+    request<ModelKeysView>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, { method: 'DELETE' }),
+  // Fournisseurs personnalisés (serveurs compatibles OpenAI) : administrateurs seulement.
+  addModelProvider: (input: { name: string; baseUrl: string; apiKey?: string }) => request<ModelKeysView>('/organization/model-providers', json('POST', input)),
+  removeModelProvider: (id: string) => request<ModelKeysView>(`/organization/model-providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   saveOrganizationSettings: async (settings: OrganizationSettings) =>
     (await request<{ settings: OrganizationSettings }>('/organization/settings', json('PUT', settings))).settings,
   saveSso: (sso: { alias: string | null; defaultRole: 'member' | 'reader' }) =>

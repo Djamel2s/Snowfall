@@ -4,9 +4,10 @@ import google from '../assets/providers/google.svg'
 import local from '../assets/providers/local.svg'
 import mistral from '../assets/providers/mistral.svg'
 import openai from '../assets/providers/openai.svg'
+import custom from '../assets/providers/custom.svg'
 import { providerLabels } from './provider-labels'
 
-const logos: Record<ProviderId, string> = { mistral, openai, anthropic, google, local }
+const logos: Record<ProviderId, string> = { mistral, openai, anthropic, google, local, custom }
 
 export const providerMeta = Object.fromEntries(
   (Object.keys(logos) as ProviderId[]).map((id) => [id, { label: providerLabels[id], logo: logos[id] }]),

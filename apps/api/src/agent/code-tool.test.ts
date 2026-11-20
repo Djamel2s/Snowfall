@@ -96,10 +96,14 @@ describe("Interpréteur de code", () => {
     assert.match(checked.summary ?? "", /chiffres à vérifier : 4, 12, 24$/);
     assert.deepEqual((checked.data as { unsupported: unknown }).unsupported, [{ file: "rapport.docx", numbers: ["4", "12", "24"] }]);
     assert.equal(generatedFileIds([{ role: "tool", name: "run_code", data: checked.data }]).length, 1);
+    // Gardés avec le fichier : sa carte les montre à la personne (le modèle ignore l'alerte).
+    const [flagged] = await files.listAll(tenant, conversation);
+    assert.deepEqual(flagged?.review, ["4", "12", "24"]);
 
     // Si la demande donnait ces délais, rien n'est signalé.
     const given = await runTool([tool], call, signal, undefined, undefined, undefined, [...known, 4, 12, 24]);
     assert.doesNotMatch(given.content, /fidélité/);
+    assert.equal((await files.listAll(tenant, conversation)).at(-1)?.review, undefined);
 
     // Ni s'ils viennent d'un fichier fourni au code (CSV joint).
     const csv = Buffer.from("gravite,delai_h\nmineur,4\nmajeur,12\ncritique,24");

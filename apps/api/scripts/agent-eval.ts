@@ -66,6 +66,8 @@ const keys: Record<ProviderId, string | undefined> = {
   anthropic: process.env.ANTHROPIC_API_KEY,
   google: process.env.GOOGLE_API_KEY,
   local: process.env.LOCAL_LLM_BASE_URL ? (process.env.LOCAL_LLM_API_KEY ?? "local") : undefined,
+  // Fournisseurs personnalisés : propres à une organisation, hors des évaluations.
+  custom: undefined,
 };
 const providers: Partial<Record<ProviderId, ProviderSettings>> = {};
 for (const { provider } of [...models, ...(judge ? [judge] : [])]) {

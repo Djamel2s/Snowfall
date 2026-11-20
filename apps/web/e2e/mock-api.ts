@@ -54,6 +54,8 @@ export type MockOptions = {
   knowledgeBases?: { id: string; name: string | null; access?: 'owner' | 'edit' | 'view'; mine?: boolean; confidential?: boolean }[]
   /** Fournisseurs pour lesquels l'organisation autorise les clés personnelles. */
   personalKeys?: string[]
+  /** Fournisseurs personnalisés déjà ajoutés par un administrateur. */
+  customProviders?: { id: string; name: string; baseUrl: string; hint: string | null }[]
 }
 
 const DOC_SOURCE = { n: 1, sourceId: 'doc-1', name: 'Politique de déplacements.pdf', url: null, base: 'agent', section: 'Hôtels', page: 4, excerpt: 'Le plafond de nuit d’hôtel est de 120 € à Paris et 90 € en région, petit-déjeuner compris.' }
@@ -201,7 +203,13 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const modelKeys = { organization: new Map<string, string>(), personal: new Map<string, string>() }
   let personalKeyProviders = [...(options.personalKeys ?? [])]
   const keyCalls: string[] = []
+  // Fournisseurs personnalisés (serveurs compatibles OpenAI) : adresse et indice pour un administrateur.
+  const customProviders: { id: string; name: string; baseUrl: string; hint: string | null }[] = [...(options.customProviders ?? [])]
+  const providerCalls: string[] = []
+  const previewCalls: string[] = []
+  const isAdmin = () => role === 'admin' || role === 'owner'
   const keyStatus = () => ({
+    custom: customProviders.map((item) => ({ id: item.id, name: item.name, allowed: true, models: 2, ...(isAdmin() ? { baseUrl: item.baseUrl, hint: item.hint } : {}) })),
     providers: ['mistral', 'openai', 'anthropic', 'google'].map((provider) => {
       const allowed = ['mistral', 'openai', 'anthropic', 'google'].includes(provider)
       const personalAllowed = personalKeyProviders.includes(provider)
@@ -569,11 +577,36 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         providers: [
           { id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] },
           ...opened.map((item) => ({ id: item.id, available: item.active !== null, allowed: true, models: item.active ? [{ id: `${item.id}-m1`, label: `${item.id}-m1` }] : [] })),
+          {
+            id: 'custom',
+            available: customProviders.length > 0,
+            allowed: true,
+            models: customProviders.flatMap((item) => [{ id: `${item.id}/llama-70b`, label: `${item.name} · llama-70b` }]),
+          },
         ],
         defaultModel: { provider: 'mistral', model: 'mistral-small-latest' },
       })
     }
     if (key === 'GET /me/model-keys') return json(route, keyStatus())
+    if (key === 'POST /organization/model-providers') {
+      if (!isAdmin()) return json(route, { error: 'Forbidden' }, 403)
+      const body = request.postDataJSON() as { name: string; baseUrl: string; apiKey?: string }
+      providerCalls.push(`add:${body.name}`)
+      // Comme l'API : HTTPS publique, sans paramètres ; « bad » dans la clé : serveur qui refuse.
+      if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(\/[^?#]*)?$/i.test(body.baseUrl) || /localhost|127\.0\.0\.1/.test(body.baseUrl)) return json(route, { error: 'Invalid URL', reason: 'invalid_endpoint' }, 400)
+      if (body.apiKey?.includes('bad')) return json(route, { error: 'Endpoint rejected', reason: 'endpoint_rejected' }, 400)
+      customProviders.push({ id: `cp-${customProviders.length + 1}`, name: body.name, baseUrl: body.baseUrl.replace(/\/+$/, ''), hint: body.apiKey ? body.apiKey.slice(-4) : null })
+      return json(route, keyStatus())
+    }
+    const customPath = /^\/organization\/model-providers\/([^/]+)$/.exec(path)
+    if (customPath && method === 'DELETE') {
+      if (!isAdmin()) return json(route, { error: 'Forbidden' }, 403)
+      providerCalls.push(`remove:${customPath[1]}`)
+      const index = customProviders.findIndex((item) => item.id === customPath[1])
+      if (index < 0) return json(route, { error: 'Not found' }, 404)
+      customProviders.splice(index, 1)
+      return json(route, keyStatus())
+    }
     const keyPath = /^\/(me|organization)\/model-keys\/([a-z]+)$/.exec(path)
     if (keyPath && (method === 'PUT' || method === 'DELETE')) {
       const scope = keyPath[1] === 'me' ? 'personal' : 'organization'
@@ -938,6 +971,14 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         feedbackCalls.push({ messageId: feedbackPath[1]!, ...body })
         return json(route, { feedback: body.rating ? body : null })
       }
+      // Aperçu d'un document produit : pages en PNG (comme l'API) ; PDF « bilan » : indisponible.
+      const previewPath = /^\/files\/([^/]+)\/preview$/.exec(rest)
+      if (method === 'GET' && previewPath) {
+        previewCalls.push(previewPath[1]!)
+        if (previewPath[1] === 'doc-bilan.pdf') return json(route, { error: 'Unavailable', reason: 'preview_unavailable' }, 503)
+        const page = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
+        return json(route, { pages: [page, page], total: 3 })
+      }
       if (method === 'GET' && rest === '/files') {
         const last = (messages.get(conversationId!) ?? []).filter((item) => item.role === 'assistant').at(-1)
         if (options.officeAnswer && last) {
@@ -945,7 +986,8 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
           return json(route, {
             files: [
               office('bilan.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 38_000),
-              office('audit.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 41_000),
+              // Contrôle de fidélité : deux nombres absents des sources.
+              { ...office('audit.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 41_000), review: ['4 h', '25,8 %'] },
               office('ventes.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 9_000),
               office('bilan.pdf', 'application/pdf', 52_000),
             ],
@@ -1153,5 +1195,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { kbCalls, unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, keyCalls, conversationCreates: () => conversationCreates }
+  return { kbCalls, unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, keyCalls, providerCalls, previewCalls, conversationCreates: () => conversationCreates }
 }

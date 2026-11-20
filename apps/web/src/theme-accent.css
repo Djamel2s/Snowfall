@@ -1,4 +1,4 @@
-/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1607 déclarations) : ne pas modifier à la main.
+/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1613 déclarations) : ne pas modifier à la main.
    Active seulement sous :root[data-accent] (couleur choisie par l'organisation). */
 
 :root[data-accent][data-theme="dark"] {
@@ -1322,23 +1322,56 @@ html[data-accent][data-theme="dark"] {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
 }
 
+:root[data-accent][data-theme="dark"] .message-file-review {
+  border: 1px solid rgba(255, 196, 92, .3);
+  background: rgba(255, 196, 92, .08);
+  color: #ffd59a;
+}
+
+:root[data-accent][data-theme="dark"] .message-file-open,
+:root[data-accent][data-theme="dark"] .message-file-download {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+:root[data-accent][data-theme="dark"] .message-file-open:hover,
+:root[data-accent][data-theme="dark"] .message-file-download:hover {
+  background: rgba(255, 255, 255, .05);
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 94.5%);
+}
+
+:root[data-accent][data-theme="dark"] .message-file-open:focus-visible,
+:root[data-accent][data-theme="dark"] .message-file-download:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
+}
+
+:root[data-accent][data-theme="dark"] .file-preview-page {
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .35);
+}
+
 :root[data-accent][data-theme="dark"] .message-file small {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
 }
 
-:root[data-accent][data-theme="dark"] .message-file.pptx svg:first-child {
+:root[data-accent][data-theme="dark"] .message-file.pptx > svg:first-child,
+:root[data-accent][data-theme="dark"] .message-file.pptx .message-file-open > svg:first-child {
   color: #f08a5d;
 }
 
-:root[data-accent][data-theme="dark"] .message-file.docx svg:first-child {
+:root[data-accent][data-theme="dark"] .message-file.docx > svg:first-child,
+:root[data-accent][data-theme="dark"] .message-file.docx .message-file-open > svg:first-child {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(98.6% * var(--accent-saturation, 1))) 71.4%);
 }
 
-:root[data-accent][data-theme="dark"] .message-file.xlsx svg:first-child {
+:root[data-accent][data-theme="dark"] .message-file.xlsx > svg:first-child,
+:root[data-accent][data-theme="dark"] .message-file.xlsx .message-file-open > svg:first-child {
   color: #5fd08e;
 }
 
-:root[data-accent][data-theme="dark"] .message-file.pdf svg:first-child {
+:root[data-accent][data-theme="dark"] .message-file.pdf > svg:first-child,
+:root[data-accent][data-theme="dark"] .message-file.pdf .message-file-open > svg:first-child {
   color: #ff8a86;
 }
 
@@ -2799,7 +2832,8 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .provider-logo-openai,
 :root[data-accent][data-theme="dark"] .provider-logo-anthropic,
-:root[data-accent][data-theme="dark"] .provider-logo-local {
+:root[data-accent][data-theme="dark"] .provider-logo-local,
+:root[data-accent][data-theme="dark"] .provider-logo-custom {
   filter: invert(1) brightness(.92);
 }
 
@@ -3404,6 +3438,11 @@ html[data-accent][data-theme="dark"] {
 :root[data-accent][data-theme="dark"] .graph-node-capability .graph-node-core {
   fill: #10231f;
   stroke: rgba(120, 220, 180, .55);
+}
+
+:root[data-accent][data-theme="dark"] .graph-orbit-ring {
+  fill: none;
+  stroke: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(59% * var(--accent-saturation, 1))) 76.1% / 0.1);
 }
 
 :root[data-accent][data-theme="dark"] .graph-node-ring {
@@ -4936,23 +4975,49 @@ html[data-accent][data-theme="light"] {
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
+:root[data-accent][data-theme="light"] .message-file-review {
+  border: 1px solid rgba(255, 163, 0, 0.3);
+  background: rgba(255, 163, 0, 0.08);
+  color: #443521;
+}
+
+:root[data-accent][data-theme="light"] .message-file-open:hover,
+:root[data-accent][data-theme="light"] .message-file-download:hover {
+  background: rgba(26, 26, 26, 0.05);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .message-file-open:focus-visible,
+:root[data-accent][data-theme="light"] .message-file-download:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
+}
+
+:root[data-accent][data-theme="light"] .file-preview-page {
+  background: #1a1a1a;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.158);
+}
+
 :root[data-accent][data-theme="light"] .message-file small {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
 }
 
-:root[data-accent][data-theme="light"] .message-file.pptx svg:first-child {
+:root[data-accent][data-theme="light"] .message-file.pptx > svg:first-child,
+:root[data-accent][data-theme="light"] .message-file.pptx .message-file-open > svg:first-child {
   color: #d14d13;
 }
 
-:root[data-accent][data-theme="light"] .message-file.docx svg:first-child {
+:root[data-accent][data-theme="light"] .message-file.docx > svg:first-child,
+:root[data-accent][data-theme="light"] .message-file.docx .message-file-open > svg:first-child {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(99% * var(--accent-saturation, 1))) 38.6%);
 }
 
-:root[data-accent][data-theme="light"] .message-file.xlsx svg:first-child {
+:root[data-accent][data-theme="light"] .message-file.xlsx > svg:first-child,
+:root[data-accent][data-theme="light"] .message-file.xlsx .message-file-open > svg:first-child {
   color: #3ac574;
 }
 
-:root[data-accent][data-theme="light"] .message-file.pdf svg:first-child {
+:root[data-accent][data-theme="light"] .message-file.pdf > svg:first-child,
+:root[data-accent][data-theme="light"] .message-file.pdf .message-file-open > svg:first-child {
   color: #ac0600;
 }
 
@@ -6834,6 +6899,10 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .graph-node-capability .graph-node-core {
   fill: #dcefeb;
   stroke: rgba(45, 175, 124, 0.55);
+}
+
+:root[data-accent][data-theme="light"] .graph-orbit-ring {
+  stroke: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(60% * var(--accent-saturation, 1))) 50% / 0.1);
 }
 
 :root[data-accent][data-theme="light"] .graph-node-ring {

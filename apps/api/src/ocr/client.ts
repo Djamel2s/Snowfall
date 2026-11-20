@@ -14,11 +14,15 @@ export class OcrError extends Error {
 
 export interface DocumentOcr {
   recognize(bytes: Buffer, mediaType: OcrMediaType): Promise<string>;
+  /** Aperçu : premières pages d'un PDF en PNG (au plus 20), et le nombre total de pages. */
+  render?(pdf: Buffer): Promise<{ pages: Buffer[]; total: number }>;
 }
 
-/** Réponse bornée : le service renvoie au plus 400 000 caractères. */
+/** Réponse bornée : texte (400 000 caractères au plus) ou pages (12 Mo de PNG, en base64). */
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_RENDER_BYTES = 17 * 1024 * 1024;
 const TIMEOUT_MS = 200_000;
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
 export class UnixSocketOcr implements DocumentOcr {
   private readonly endpoint: LocalEndpoint;
@@ -27,12 +31,26 @@ export class UnixSocketOcr implements DocumentOcr {
     this.endpoint = localEndpoint(socketPath);
   }
 
-  recognize(bytes: Buffer, mediaType: OcrMediaType): Promise<string> {
+  async recognize(bytes: Buffer, mediaType: OcrMediaType): Promise<string> {
+    const body = (await this.post("/ocr", bytes, mediaType, MAX_RESPONSE_BYTES)) as { text?: unknown };
+    if (typeof body.text !== "string") throw new OcrError("INVALID_RESPONSE");
+    return body.text;
+  }
+
+  async render(pdf: Buffer): Promise<{ pages: Buffer[]; total: number }> {
+    const body = (await this.post("/render", pdf, "application/pdf", MAX_RENDER_BYTES)) as { pages?: unknown; total?: unknown };
+    if (!Array.isArray(body.pages) || typeof body.total !== "number") throw new OcrError("INVALID_RESPONSE");
+    // Seulement des PNG : le service est isolé, mais sa réponse reste vérifiée.
+    const pages = body.pages.filter((page): page is string => typeof page === "string").map((page) => Buffer.from(page, "base64")).filter((page) => page.subarray(0, 4).equals(PNG));
+    return { pages, total: Math.max(body.total, pages.length) };
+  }
+
+  private post(path: string, bytes: Buffer, mediaType: string, limit: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
           ...this.endpoint,
-          path: "/ocr",
+          path,
           method: "POST",
           headers: { "Content-Type": mediaType, "Content-Length": bytes.length },
           timeout: TIMEOUT_MS,
@@ -42,15 +60,13 @@ export class UnixSocketOcr implements DocumentOcr {
           let size = 0;
           response.on("data", (chunk: Buffer) => {
             size += chunk.length;
-            if (size > MAX_RESPONSE_BYTES) request.destroy(new OcrError("RESPONSE_TOO_LARGE"));
+            if (size > limit) request.destroy(new OcrError("RESPONSE_TOO_LARGE"));
             else chunks.push(chunk);
           });
           response.on("end", () => {
             if (response.statusCode !== 200) return reject(new OcrError(String(response.statusCode)));
             try {
-              const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { text?: unknown };
-              if (typeof body.text !== "string") return reject(new OcrError("INVALID_RESPONSE"));
-              resolve(body.text);
+              resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
             } catch {
               reject(new OcrError("INVALID_RESPONSE"));
             }

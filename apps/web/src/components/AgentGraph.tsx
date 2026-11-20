@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type WheelEvent } from 'react'
-import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
-import { Code2, Globe, ImagePlus, MessageSquarePlus, Pencil, Plug, Users, X } from 'lucide-react'
+import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force'
+import { Code2, Globe, ImagePlus, LocateFixed, MessageSquarePlus, Pencil, Plug, Users, X } from 'lucide-react'
 import type { Agent, McpServer, ToolId } from '../lib/api'
-import { agentInput, buildAgentGraph, canAddToTeam, neighbors, type GraphLink, type GraphNode } from '../lib/agent-graph'
+import { agentInput, buildAgentGraph, canAddToTeam, neighbors, orbit, ORBIT, type GraphLink, type GraphNode } from '../lib/agent-graph'
 import { api } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { AgentAvatar, ProviderLogo } from './AgentAvatar'
@@ -23,18 +23,19 @@ type Props = {
   onError: (message: string) => void
 }
 
-const RADIUS = { agent: 34, connector: 17, capability: 17 } as const
+const RADIUS = { agent: 34, satellite: 15 } as const
 const CAPABILITY_ICON: Partial<Record<ToolId, typeof Globe>> = { web_search: Globe, code_interpreter: Code2, image_generation: ImagePlus }
 
 /**
- * Carte vivante de l'organisation : agents, équipes, connecteurs, capacités.
- * Survol : voisins allumés, reste estompé. Glisser : déplacer. Maj + glisser
- * (ou depuis l'anneau d'un agent) : l'ajouter à l'équipe d'un autre.
+ * Carte vivante de l'organisation : agents et équipes ; les outils et connecteurs
+ * de chaque agent gravitent autour de lui (sans trait). Survol : voisins allumés,
+ * reste estompé. Glisser : déplacer. Maj + glisser (ou depuis l'anneau d'un
+ * agent) : l'ajouter à l'équipe d'un autre.
  */
-/** Vue qui contient tous les nœuds (marge pour les étiquettes), sans jamais agrandir au-delà de 1. */
+/** Vue qui contient tous les agents ET leurs satellites (marge pour les étiquettes), sans jamais agrandir au-delà de 1. */
 function fit(nodes: SimNode[], width: number, height: number) {
   if (!nodes.length || !width || !height) return { x: 0, y: 0, k: 1 }
-  const margin = 70
+  const margin = 70 + ORBIT
   const xs = nodes.map((node) => node.x ?? 0)
   const ys = nodes.map((node) => node.y ?? 0)
   const [left, right, top, bottom] = [Math.min(...xs) - margin, Math.max(...xs) + margin, Math.min(...ys) - margin, Math.max(...ys) + margin]
@@ -60,6 +61,8 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
 
   const label = (tool: ToolId) => t(`tool.${tool}`)
   const graph = useMemo(() => buildAgentGraph(agents, servers, label), [agents, servers]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Rotation lente des satellites (arrêtée si les animations sont réduites).
+  const [phase, setPhase] = useState(0)
 
   // Taille du canevas : suit le conteneur.
   useEffect(() => {
@@ -73,39 +76,66 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
   // Simulation de forces : positions gardées d'un rendu à l'autre (par identifiant).
   useEffect(() => {
     const previous = new Map(nodes.current.map((node) => [node.id, node]))
-    nodes.current = graph.nodes.map((node) => {
+    // Nouveaux agents répartis en cercle (pas tassés au centre : sinon ils se repoussent
+    // si fort qu'ils sortent de la fenêtre avant que le rappel n'agisse).
+    const ring = 90 * Math.sqrt(graph.nodes.length)
+    nodes.current = graph.nodes.map((node, index) => {
       const old = previous.get(node.id)
-      return { ...node, x: old?.x ?? size.width / 2 + (Math.random() - 0.5) * 200, y: old?.y ?? size.height / 2 + (Math.random() - 0.5) * 200, vx: old?.vx, vy: old?.vy }
+      const angle = (2 * Math.PI * index) / Math.max(1, graph.nodes.length)
+      return { ...node, x: old?.x ?? size.width / 2 + Math.cos(angle) * ring, y: old?.y ?? size.height / 2 + Math.sin(angle) * ring, vx: old?.vx, vy: old?.vy }
     })
     links.current = graph.links.map((link) => ({ ...link }))
+    // Un agent avec des satellites occupe son orbite : on l'écarte d'autant.
+    const reach = (node: SimNode) => RADIUS.agent + (graph.satellites.has(node.id) ? ORBIT + RADIUS.satellite + 18 : 34)
     const sim = forceSimulation<SimNode, SimLink>(nodes.current)
-      .force('link', forceLink<SimNode, SimLink>(links.current).id((node) => node.id).distance((link) => (link.kind === 'team' ? 230 : 140)).strength((link) => (link.kind === 'team' ? 0.6 : 0.3)))
-      .force('charge', forceManyBody<SimNode>().strength((node) => (node.kind === 'agent' ? -1100 : -320)))
-      .force('collide', forceCollide<SimNode>().radius((node) => RADIUS[node.kind] + 34))
+      .force('link', forceLink<SimNode, SimLink>(links.current).id((node) => node.id).distance(260).strength(0.5))
+      .force('charge', forceManyBody<SimNode>().strength(-700).distanceMax(700))
+      .force('collide', forceCollide<SimNode>().radius(reach))
       .force('center', forceCenter(size.width / 2, size.height / 2).strength(0.05))
-      .alphaDecay(reduceMotion ? 0.2 : 0.03)
-    // Léger mouvement permanent (« ça respire »), sauf animations réduites.
-    if (!reduceMotion) sim.alphaTarget(0.012)
+      // Rappel vers le centre : un agent isolé ne part plus hors de la fenêtre.
+      .force('x', forceX<SimNode>(size.width / 2).strength(0.06))
+      .force('y', forceY<SimNode>(size.height / 2).strength(0.06))
+      .alphaDecay(0.03)
+    if (reduceMotion) {
+      // Animations réduites : la disposition est calculée jusqu'au bout, puis affichée
+      // une fois (avant : la simulation s'arrêtait en vol, agents hors de la fenêtre).
+      sim.stop()
+      sim.tick(300)
+    } else {
+      // Léger mouvement permanent (« ça respire »).
+      sim.alphaTarget(0.012)
+    }
     let pending = 0
     sim.on('tick', () => {
       if (pending) return
       pending = requestAnimationFrame(() => {
         pending = 0
         setLayout({ nodes: nodes.current, links: links.current })
+        if (!reduceMotion) setPhase(performance.now() / 24_000)
         if (framed.current) setView(fit(nodes.current, size.width, size.height))
       })
     })
     simulation.current = sim
+    if (reduceMotion) {
+      setLayout({ nodes: nodes.current, links: links.current })
+      if (framed.current) setView(fit(nodes.current, size.width, size.height))
+    }
     return () => {
       sim.stop()
       cancelAnimationFrame(pending)
     }
   }, [graph, size.width, size.height, reduceMotion])
 
+  /** Tout remettre dans la fenêtre (et suivre de nouveau le cadrage automatique). */
+  function recenter() {
+    framed.current = true
+    setView(fit(nodes.current, size.width, size.height))
+  }
+
   const byId = new Map(layout.nodes.map((node) => [node.id, node]))
   const lit = hover ? neighbors(graph.links, hover) : null
   const selectedNode = selected ? byId.get(selected) : undefined
-  const selectedAgent = selectedNode?.kind === 'agent' ? selectedNode.agent : null
+  const selectedAgent = selectedNode?.agent ?? null
 
   /** Coordonnées du graphe sous le pointeur (zoom et déplacement appliqués). */
   function toGraph(event: { clientX: number; clientY: number }) {
@@ -114,7 +144,7 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
   }
 
   function agentAt(point: { x: number; y: number }) {
-    return nodes.current.find((node) => node.kind === 'agent' && Math.hypot((node.x ?? 0) - point.x, (node.y ?? 0) - point.y) <= RADIUS.agent + 6)
+    return nodes.current.find((node) => Math.hypot((node.x ?? 0) - point.x, (node.y ?? 0) - point.y) <= RADIUS.agent + 6)
   }
 
   function onWheel(event: WheelEvent) {
@@ -129,7 +159,7 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
   function startNode(event: ReactPointerEvent, node: SimNode, ring = false) {
     event.stopPropagation()
     ;(event.target as Element).setPointerCapture?.(event.pointerId)
-    const link = node.kind === 'agent' && (ring || event.shiftKey) && node.agent.canEdit
+    const link = (ring || event.shiftKey) && node.agent.canEdit
     gesture.current = { kind: link ? 'link' : 'drag', id: node.id, startX: event.clientX, startY: event.clientY, moved: false, viewX: view.x, viewY: view.y }
     if (link) setLinking({ from: node.id, ...toGraph(event) })
   }
@@ -179,7 +209,7 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
     setLinking(null)
     const owner = byId.get(current.id!)
     const target = agentAt(toGraph(event))
-    if (owner?.kind !== 'agent' || target?.kind !== 'agent') return
+    if (!owner || !target) return
     if (!canAddToTeam(owner.agent, target.agent)) return onError(t('graph.cannotLink'))
     await saveTeam(owner.agent, [...(owner.agent.delegates ?? []), target.agent.id])
   }
@@ -212,6 +242,9 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
       <header className="agent-graph-bar">
         <strong>{t('graph.title')}</strong>
         <span className="agent-graph-hint">{t('graph.hint')}</span>
+        <button type="button" className="icon-button" aria-label={t('graph.recenter')} title={t('graph.recenter')} onClick={recenter}>
+          <LocateFixed size={16} />
+        </button>
         <button type="button" className="icon-button" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}>
           <X size={16} />
         </button>
@@ -249,16 +282,46 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
                 <path
                   key={link.id}
                   d={linkPath(link)}
-                  className={`graph-link graph-link-${link.kind}${off ? ' dim' : ''}${link.kind === 'team' && (activeAgentIds.has(source.slice(6)) || activeAgentIds.has(target.slice(6))) ? ' live' : ''}`}
-                  markerEnd={link.kind === 'team' ? 'url(#graph-arrow)' : undefined}
+                  className={`graph-link graph-link-team${off ? ' dim' : ''}${activeAgentIds.has(source.slice(6)) || activeAgentIds.has(target.slice(6)) ? ' live' : ''}`}
+                  markerEnd="url(#graph-arrow)"
                 />
               )
             })}
             {linking && byId.get(linking.from) && <line className="graph-link-draft" x1={byId.get(linking.from)!.x} y1={byId.get(linking.from)!.y} x2={linking.x} y2={linking.y} />}
+            {/* Satellites : les outils et connecteurs de chaque agent, en orbite autour de lui. Étiquette au survol ou à la sélection. */}
             {layout.nodes.map((node) => {
-              const r = RADIUS[node.kind]
-              const active = node.kind === 'agent' && activeAgentIds.has(node.agent.id)
-              const Icon = node.kind === 'connector' ? Plug : node.kind === 'capability' ? (CAPABILITY_ICON[node.tool] ?? Globe) : null
+              const own = graph.satellites.get(node.id)
+              if (!own) return null
+              const named = hover === node.id || selected === node.id
+              return (
+                <g key={`orbit-${node.id}`} className={`graph-orbit${dim(node.id)}`} transform={`translate(${node.x ?? 0},${node.y ?? 0})`} aria-hidden="true">
+                  <circle r={ORBIT} className="graph-orbit-ring" />
+                  {own.map((satellite, index) => {
+                    const { x, y } = orbit(index, own.length, phase)
+                    const Icon = satellite.kind === 'connector' ? Plug : (CAPABILITY_ICON[satellite.tool!] ?? Globe)
+                    return (
+                      <g key={satellite.id} className={`graph-satellite graph-node-${satellite.kind}`} transform={`translate(${x},${y})`}>
+                        <title>{satellite.label}</title>
+                        <circle r={RADIUS.satellite} className="graph-node-core" />
+                        <foreignObject x={-8} y={-8} width={16} height={16} pointerEvents="none">
+                          <div className="graph-node-face">
+                            <Icon size={12} />
+                          </div>
+                        </foreignObject>
+                        {named && (
+                          <text y={RADIUS.satellite + 12} className="graph-node-label graph-satellite-label">
+                            {satellite.label.length > 18 ? `${satellite.label.slice(0, 17)}…` : satellite.label}
+                          </text>
+                        )}
+                      </g>
+                    )
+                  })}
+                </g>
+              )
+            })}
+            {layout.nodes.map((node) => {
+              const r = RADIUS.agent
+              const active = activeAgentIds.has(node.agent.id)
               return (
                 <g
                   key={node.id}
@@ -268,25 +331,23 @@ export default function AgentGraph({ agents, servers, activeAgentIds, reduceMoti
                   onPointerLeave={() => setHover((current) => (current === node.id ? null : current))}
                   onPointerDown={(event) => startNode(event, node)}
                   // Clavier et lecteurs d'écran : chaque agent est un bouton (Entrée ou Espace ouvre sa fiche).
-                  {...(node.kind === 'agent'
-                    ? {
-                        tabIndex: 0,
-                        role: 'button',
-                        'aria-label': node.label,
-                        'aria-pressed': selected === node.id,
-                        onKeyDown: (event: KeyboardEvent<SVGGElement>) => {
-                          if (event.key !== 'Enter' && event.key !== ' ') return
-                          event.preventDefault()
-                          setSelected((current) => (current === node.id ? null : node.id))
-                        },
-                      }
-                    : { 'aria-hidden': true })}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={node.label}
+                  aria-pressed={selected === node.id}
+                  onKeyDown={(event: KeyboardEvent<SVGGElement>) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setSelected((current) => (current === node.id ? null : node.id))
+                  }}
                 >
                   <circle r={r * 2.1} className="graph-node-glow" fill="url(#graph-glow)" />
-                  {node.kind === 'agent' && node.agent.canEdit && <circle r={r + 7} className="graph-node-ring" onPointerDown={(event) => startNode(event, node, true)} />}
+                  {node.agent.canEdit && <circle r={r + 7} className="graph-node-ring" onPointerDown={(event) => startNode(event, node, true)} />}
                   <circle r={r} className="graph-node-core" />
                   <foreignObject x={-r * 0.75} y={-r * 0.75} width={r * 1.5} height={r * 1.5} pointerEvents="none">
-                    <div className="graph-node-face">{node.kind === 'agent' ? <AgentAvatar avatar={node.agent.avatar} size={Math.round(r * 1.5)} mood={active ? 'talking' : 'idle'} /> : Icon && <Icon size={14} />}</div>
+                    <div className="graph-node-face">
+                      <AgentAvatar avatar={node.agent.avatar} size={Math.round(r * 1.5)} mood={active ? 'talking' : 'idle'} />
+                    </div>
                   </foreignObject>
                   <text y={r + 16} className="graph-node-label">
                     {node.label.length > 22 ? `${node.label.slice(0, 21)}…` : node.label}

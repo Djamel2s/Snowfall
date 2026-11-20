@@ -5,6 +5,27 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **20 novembre — carte des agents** : les outils et connecteurs gravitent
+  autour de CHAQUE agent (satellites, sans trait) ; seuls les liens d'équipe sont
+  dessinés. Agents ramenés vers le centre (ils sortaient de la fenêtre : avec les
+  animations réduites, la simulation s'arrêtait en vol), bouton « Recentrer ».
+  Changer de panneau dans la barre latérale ferme la carte.
+- **20 novembre — aperçu des documents et recherche web** : bouton « Aperçu » à
+  côté de chaque document produit (Word, PowerPoint, Excel, PDF) : ses pages en
+  images dans le panneau latéral (conversion dans le bac à sable, rendu dans le
+  service OCR, sans réseau). Recherche web : faux « contenu suspect » sur TOUS les
+  résultats corrigé (le détecteur prenait nos propres balises pour des fausses),
+  résultats sans rapport avec la recherche écartés.
+- **20 novembre — correctifs** : « Chiffres à vérifier » affiché sous la carte
+  d'un document généré (nombres gardés chiffrés avec le fichier, migration
+  `generated_file_review`) ; nginx porté à 26 Mo (aligné sur les 25 Mo de l'API) ;
+  `sharing.integration.test.ts` enfin lancé, et un test qui échoue si un fichier
+  de test est oublié dans la liste ; test d'animation du menu mobile fiabilisé.
+- **20 novembre — fournisseurs personnalisés** : « Nouveau fournisseur » dans
+  Modèles (administrateurs) : un serveur compatible OpenAI (OpenRouter, Groq,
+  Azure…), vérifié avant l'ajout, ses modèles proposés à toute l'organisation.
+  Adresse HTTPS publique revérifiée à chaque appel, sans redirection ; clé
+  chiffrée liée à l'adresse. Migration `custom_providers` à appliquer.
 - **20 novembre — barre latérale en trois groupes** : utiliser (conversations,
   projets), les agents, puis ce qui les équipe (modèles, connecteurs, prompts,
   compétences, connaissances, mémoire). La mémoire quitte les paramètres pour
