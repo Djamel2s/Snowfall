@@ -163,7 +163,7 @@ describe("Flux d'appels d'outils", () => {
     let sent: { tools?: { functionDeclarations: { parametersJsonSchema: unknown }[] }[] } | undefined;
     globalThis.fetch = (async (_url: string, init: RequestInit) => {
       sent = JSON.parse(String(init.body));
-      const event = { candidates: [{ content: { parts: [{ functionCall: { name: "weather", args: { city: "Lyon" } }, thoughtSignature: "sig" }] } }] };
+      const event = { candidates: [{ content: { parts: [{ functionCall: { name: "weather", args: { city: "Lyon" } }, thoughtSignature: "sig" }] }, finishReason: "STOP" }] };
       return new Response(`data: ${JSON.stringify(event)}\n\n`, { status: 200 });
     }) as typeof fetch;
 

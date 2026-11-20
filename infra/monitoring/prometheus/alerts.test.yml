@@ -1,0 +1,191 @@
+# Tests unitaires des alertes (promtool test rules) : chaque alerte se déclenche
+# quand il le faut, pas avant (durée « for »), et se tait sous son seuil.
+#
+#   scripts/monitoring-test.sh
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # API injoignable : critique après 2 minutes, pas avant.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="snowfall-api", instance="api:9464"}'
+        values: "1 1 0x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SnowfallApiInjoignable
+        exp_alerts: []
+      - eval_time: 3m30s
+        alertname: SnowfallApiInjoignable
+        exp_alerts:
+          - exp_labels: { severity: critical, job: snowfall-api, instance: "api:9464" }
+            exp_annotations:
+              summary: "L'API Snowfall ne répond plus à Prometheus."
+
+  # Erreurs serveur : 10 % pendant plus de 10 minutes → avertissement ; 1 % → rien.
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_http_request_duration_seconds_count{status="500", route="/api/x"}'
+        values: "0+10x30"
+      - series: 'snowfall_http_request_duration_seconds_count{status="200", route="/api/x"}'
+        values: "0+90x30"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SnowfallErreursServeur
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: SnowfallErreursServeur
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Plus de 5 % de réponses en erreur serveur depuis 10 minutes."
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_http_request_duration_seconds_count{status="500", route="/api/x"}'
+        values: "0+1x30"
+      - series: 'snowfall_http_request_duration_seconds_count{status="200", route="/api/x"}'
+        values: "0+99x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SnowfallErreursServeur
+        exp_alerts: []
+
+  # Modèles en échec : plus de 20 % pendant 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_llm_generation_seconds_count{provider="mistral", outcome="error"}'
+        values: "0+3x30"
+      - series: 'snowfall_llm_generation_seconds_count{provider="mistral", outcome="success"}'
+        values: "0+7x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SnowfallEchecsModeles
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Plus de 20 % des réponses des modèles échouent (fournisseur indisponible ?)."
+
+  # PostgreSQL : injoignable (1 min), connexions saturées (10 min).
+  - interval: 30s
+    input_series:
+      - series: 'pg_up{job="postgres"}'
+        values: "1 0x6"
+      - series: 'pg_stat_activity_count{datname="snowfall"}'
+        values: "90x30"
+      - series: 'pg_settings_max_connections{job="postgres"}'
+        values: "100x30"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: PostgresInjoignable
+        exp_alerts:
+          - exp_labels: { severity: critical, job: postgres }
+            exp_annotations:
+              summary: "PostgreSQL ne répond plus à l'exporteur."
+      - eval_time: 12m
+        alertname: PostgresConnexionsSaturees
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Plus de 80 % des connexions PostgreSQL utilisées."
+
+  # Sécurité : un fichier infecté suffit ; 20 accès croisés ne suffisent pas, 25 oui.
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="security.malware_detected", outcome="denied"}'
+        values: "0 0 1 1 1"
+      - series: 'snowfall_audit_events_total{event="conversation.access", outcome="denied"}'
+        values: "0 5 10 15 20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SnowfallMenaceDetectee
+        exp_alerts:
+          - exp_labels: { severity: critical, event: security.malware_detected, outcome: denied }
+            exp_annotations:
+              summary: "L'antivirus a bloqué un fichier infecté (voir l'audit : security.malware_detected)."
+      - eval_time: 4m
+        alertname: SnowfallAccesCroises
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="conversation.access", outcome="denied"}'
+        values: "0 10 20 30"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SnowfallAccesCroises
+        exp_alerts:
+          - exp_labels: { severity: critical, event: conversation.access, outcome: denied }
+            exp_annotations:
+              summary: "Nombreux accès refusés à des conversations d'autrui (énumération possible)."
+
+  # Force brute : échecs d'authentification au-delà de 30 en 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="auth.login", outcome="failure"}'
+        values: "0+5x12"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SnowfallEchecsConnexion
+        exp_alerts:
+          - exp_labels: { severity: warning, event: auth.login, outcome: failure }
+            exp_annotations:
+              summary: "Pic d'échecs d'authentification (attaque par force brute ?)."
+
+  # Base confidentielle interrogée avec un modèle externe : une fois suffit.
+  - interval: 5m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="knowledge.confidential_denied", outcome="denied"}'
+        values: "0 1 1"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SnowfallDonneesConfidentielles
+        exp_alerts:
+          - exp_labels: { severity: warning, event: knowledge.confidential_denied, outcome: denied }
+            exp_annotations:
+              summary: "Base confidentielle interrogée avec un modèle externe (refusé)."
+
+  # Coûts et limites : une réponse refusée (budget) suffit ; 10 outils refusés non, 15 oui.
+  - interval: 5m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="quota.denied", outcome="denied"}'
+        values: "0 0 1"
+      - series: 'snowfall_audit_events_total{event="quota.tool_exceeded", outcome="denied"}'
+        values: "0 5 10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SnowfallBudgetAtteint
+        exp_alerts:
+          - exp_labels: { severity: warning, event: quota.denied, outcome: denied }
+            exp_annotations:
+              summary: "Des réponses sont refusées : budget, quota de jetons ou fournisseur interdit (audit : quota.denied)."
+      - eval_time: 10m
+        alertname: SnowfallOutilsPlafonnes
+        exp_alerts: []
+  - interval: 5m
+    input_series:
+      - series: 'snowfall_audit_events_total{event="quota.tool_exceeded", outcome="denied"}'
+        values: "0 8 15"
+      - series: 'snowfall_audit_events_total{event="agent.run_limit", outcome="denied"}'
+        values: "0 3 6"
+      - series: 'snowfall_audit_events_total{event="agent.injection_suspected", outcome="success"}'
+        values: "0 6 12"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SnowfallOutilsPlafonnes
+        exp_alerts:
+          - exp_labels: { severity: warning, event: quota.tool_exceeded, outcome: denied }
+            exp_annotations:
+              summary: "Plus de 10 appels d'outils refusés en une heure (quota ou budget atteint)."
+      - eval_time: 10m
+        alertname: SnowfallReponsesInterrompues
+        exp_alerts:
+          - exp_labels: { severity: warning, event: agent.run_limit, outcome: denied }
+            exp_annotations:
+              summary: "Plus de 5 réponses coupées par la durée maximale en une heure (modèle lent, outil bloqué ?)."
+      - eval_time: 10m
+        alertname: SnowfallInjectionsSuspectees
+        exp_alerts:
+          - exp_labels: { severity: warning, event: agent.injection_suspected, outcome: success }
+            exp_annotations:
+              summary: "Plus de 10 contenus suspects (injection de consignes) en une heure : campagne ciblée ?"

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { isRateLimit, ModelRefusalError, ProviderRateLimitError, type ChatChunk } from "../graph/chat-graph.js";
+import { isRateLimit, ModelRefusalError, ProviderRateLimitError, ProviderUnavailableError, type ChatChunk } from "../graph/chat-graph.js";
 import { createGoogleModel, listGoogleModels } from "./google.js";
 
 const settings = { apiKey: "test-key", maxOutputTokens: 1000, timeoutMs: 5_000 };
@@ -66,7 +66,7 @@ describe("Google Gemini", () => {
   it("niveau de réflexion imposé : seulement aux modèles qui le comprennent (Gemini 3+)", async () => {
     const levels: unknown[] = [];
     for (const model of ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]) {
-      mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+      mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }));
       await collect(createGoogleModel(model, { ...settings, thinkingLevel: "low" }).stream({ history: [], message: "x" }));
       levels.push(JSON.parse(String(calls.at(-1)!.init.body)).generationConfig.thinkingConfig);
     }
@@ -75,7 +75,7 @@ describe("Google Gemini", () => {
   });
 
   it("niveau de réflexion refusé par le modèle (HTTP 400) : nouvel essai sans niveau", async () => {
-    mockFetch(400, sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    mockFetch(400, sse({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }));
     const chunks = await collect(createGoogleModel("gemini-3-pro-preview", { ...settings, thinkingLevel: "minimal" }).stream({ history: [], message: "x" }));
     assert.deepEqual(chunks, [{ type: "token", text: "ok" }]);
     const configs = calls.map((call) => JSON.parse(String(call.init.body)).generationConfig.thinkingConfig);
@@ -83,14 +83,14 @@ describe("Google Gemini", () => {
   });
 
   it("réglages de l'agent : température et longueur (plafonnée par la plateforme)", async () => {
-    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }));
     await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x", generation: { temperature: 0.1, maxOutputTokens: 9_999 } }));
     const config = JSON.parse(String(calls.at(-1)!.init.body)).generationConfig;
     assert.deepEqual([config.temperature, config.maxOutputTokens], [0.1, 1000]);
   });
 
   it("passe la clé en en-tête, jamais dans l'URL", async () => {
-    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    mockFetch(sse({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }] }));
     await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" }));
 
     assert.ok(!calls[0]!.url.includes("test-key"));
@@ -170,6 +170,25 @@ describe("Limite de débit (429)", () => {
 });
 
 describe("Google Gemini : réponse coupée", () => {
+  it("erreur ou coupure EN COURS de réponse : levée, jamais une réponse tronquée présentée comme complète", async () => {
+    const model = () => createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" });
+    const start = sse({ candidates: [{ content: { parts: [{ text: "Début de la maquette" }] } }] });
+    // Vu le 19 novembre : JSON brut d'erreur après 247 jetons (pas un événement SSE).
+    mockFetch(`${start}{\n  "error": {\n    "code": 503,\n    "message": "This model is currently experiencing high demand.",\n    "status": "UNAVAILABLE"\n  }\n}\n`);
+    await assert.rejects(collect(model()), ProviderUnavailableError);
+    // Même erreur sous forme d'événement ; limite de débit.
+    mockFetch(start + sse({ error: { code: 503, status: "UNAVAILABLE" } }));
+    await assert.rejects(collect(model()), ProviderUnavailableError);
+    mockFetch(start + sse({ error: { code: 429, status: "RESOURCE_EXHAUSTED" } }));
+    await assert.rejects(collect(model()), ProviderRateLimitError);
+    // Flux coupé sans raison de fin.
+    mockFetch(start);
+    await assert.rejects(collect(model()), ProviderUnavailableError);
+    // Dernier événement sans ligne vide finale : lu normalement.
+    mockFetch(`${start}data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: " complète" }] }, finishReason: "STOP" }] })}`);
+    assert.deepEqual(await collect(model()), [{ type: "token", text: "Début de la maquette" }, { type: "token", text: " complète" }]);
+  });
+
   it("longueur maximale atteinte : signalée (la réponse pourra être continuée)", async () => {
     mockFetch(sse({ candidates: [{ content: { parts: [{ text: "Début" }] }, finishReason: "MAX_TOKENS" }] }));
     const chunks = await collect(createGoogleModel("gemini-2.5-flash", settings).stream({ history: [], message: "x" }));

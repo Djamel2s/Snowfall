@@ -21,7 +21,8 @@ import { defaultAgentTools, type ToolId } from "./catalog.js";
 import { MemoryRunStore } from "./runs.js";
 import { MemorySummaryStore, type Summarizer } from "../conversations/compaction.js";
 import type { Titler } from "../conversations/title.js";
-import type { CodeSandbox } from "./code-tool.js";
+import type { CodeSandbox, SkillRun } from "./code-tool.js";
+import type { ImageGenerator } from "./image-tool.js";
 import { MemoryMcpServerStore } from "../mcp/store.js";
 import type { McpDependencies } from "../routes/mcp.js";
 import { startFakeMcpServer } from "../testing/fake-mcp.js";
@@ -118,6 +119,7 @@ async function instance(
     summarize?: Summarizer;
     title?: Titler;
     sandbox?: CodeSandbox;
+    images?: ImageGenerator;
     mcp?: McpDependencies;
     tracer?: RunTracer;
     preferences?: Partial<Preferences>;
@@ -131,6 +133,8 @@ async function instance(
     scimUsers?: MemoryScimUserStore;
     members?: MemberStore;
     favicons?: FaviconService;
+    /** Dépenses du mois en euros (organisation, membre), lues à chaque vérification. */
+    spend?: () => { organization: number; mine: number };
   } = {},
 ) {
   let current = alice;
@@ -138,7 +142,17 @@ async function instance(
   const settingsStore: SettingsStore = {
     get: async () => settings,
     update: async (_tenant, next) => next,
-    usage: async () => ({ period: "2026-10-01", total: { inputTokens: 0, outputTokens: 0 }, byProvider: {}, mine: { inputTokens: 0, outputTokens: 0 } }),
+    usage: async () => {
+      const spend = options.spend?.();
+      const of = (euros: number) => ({ euros, tokens: euros, tools: 0, unpriced: [] });
+      return {
+        period: "2026-10-01",
+        total: { inputTokens: 0, outputTokens: 0 },
+        byProvider: {},
+        mine: { inputTokens: 0, outputTokens: 0 },
+        ...(spend ? { spend: { organization: of(spend.organization), mine: of(spend.mine) } } : {}),
+      };
+    },
     usageByMember: async () => [],
     record: async () => undefined,
   };
@@ -161,6 +175,7 @@ async function instance(
     ...(options.summarize ? { summarize: options.summarize } : {}),
     ...(options.title ? { title: options.title } : {}),
     ...(options.sandbox ? { sandbox: options.sandbox } : {}),
+    ...(options.images ? { images: options.images } : {}),
     ...(options.mcp ? { mcp: options.mcp } : {}),
     ...(options.tracer ? { tracer: options.tracer } : {}),
     ...(options.preferences ? { preferences: { get: async () => ({ ...defaultPreferences, ...options.preferences }), update: async (_tenant, next) => next } } : {}),
@@ -571,6 +586,55 @@ describe("Exécution durable : runs", () => {
     assert.equal((await api.get(`/conversations/${conversationId}/files/${files[0]!.id}`)).status, 404);
   });
 
+  it("images créées puis mises dans un document : run_code reprend les images de la conversation par leur nom, jamais celles d'une autre", async (t) => {
+    const db = sharedDatabase();
+    const shades = [1, 2, 3, 4].map((n) => Buffer.from(`89504e470d0a1a0a0${n}`, "hex"));
+    let drawn = 0;
+    const images: ImageGenerator = { generate: async () => shades[drawn++]! };
+    const runs: (SkillRun | undefined)[] = [];
+    const pdf = Buffer.from("%PDF-1.4 rapport");
+    const sandbox: CodeSandbox = {
+      run: async (_code, options) => {
+        runs.push(options.skill);
+        return { exitCode: 0, timedOut: false, durationMs: 300, stdout: "", stderr: "", files: [{ name: "rapport.pdf", mediaType: "application/pdf", size: pdf.length, data: pdf.toString("base64") }] };
+      },
+    };
+    const writer: ChatModel = {
+      id: "writer",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        const turns = request.turns ?? [];
+        const tools = turns.slice(turns.map((turn) => turn.role).lastIndexOf("user")).filter((turn) => turn.role === "tool");
+        if (tools.length === 0) yield { type: "tool_call", call: { id: "i1", name: "generate_image", arguments: { prompt: "dancing alien" } } };
+        else if (tools.length === 1) yield { type: "tool_call", call: { id: "i2", name: "generate_image", arguments: { prompt: "another dancing alien" } } };
+        // « rapport.pdf » n'existe, au moment de l'appel, que dans l'AUTRE conversation.
+        else if (tools.length === 2) yield { type: "tool_call", call: { id: "py", name: "run_code", arguments: { code: "from fpdf import FPDF", files: ["image-1.png", "image-2.png", "rapport.pdf"] } } };
+        else yield { type: "token", text: tools.at(-1)!.content.includes("rapport.pdf") ? "Voici le PDF." : "Échec." };
+      },
+    };
+    const api = await instance(db, { model: writer, sandbox, images, settings: { tools: ["code_interpreter", "image_generation"] } });
+    t.after(() => api.close());
+    const ask = async (conversationId: string) =>
+      (await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Un PDF avec deux aliens qui dansent" }))).at(-1)!.data as { assistantMessage: { content: string } };
+
+    // Une première conversation : ses images (1 et 2) et son PDF.
+    const first = await agentConversation(api, ["code_interpreter", "image_generation"]);
+    await ask(first.conversationId);
+    // Une seconde : run_code reçoit SES images (3 et 4), sous des noms distincts ; le PDF de l'autre, jamais.
+    const { conversationId } = await agentConversation(api, ["code_interpreter", "image_generation"]);
+    assert.equal((await ask(conversationId)).assistantMessage.content, "Voici le PDF.");
+    const copied = runs[1]!.files.filter((file) => file.path.startsWith("inputs/"));
+    assert.deepEqual(
+      copied.map((file) => [file.path, "data" in file ? Buffer.from(file.data, "base64").toString("hex") : null]),
+      [
+        ["inputs/image-1.png", shades[2]!.toString("hex")],
+        ["inputs/image-2.png", shades[3]!.toString("hex")],
+      ],
+    );
+    const files = ((await (await api.get(`/conversations/${conversationId}/files`)).json()) as { files: { name: string }[] }).files;
+    assert.deepEqual(files.map((file) => file.name), ["image-1.png", "image-2.png", "rapport.pdf"]);
+  });
+
   it("MCP : outil d'un serveur approuvé, écriture validée par l'utilisateur, puis bloqué s'il change", async (t) => {
     const fake = await startFakeMcpServer({
       tools: [{ name: "create_ticket", description: "Crée un ticket.", inputSchema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] } }],
@@ -664,6 +728,65 @@ describe("Exécution durable : runs", () => {
     assert.deepEqual([usage.usage.tools, usage.limits.tools], [{ code: 1 }, { code: 1 }]);
   });
 
+  it("quota d'outils par membre, et budget en euros vérifié avant CHAQUE outil (même au milieu d'une réponse)", async (t) => {
+    const runs: string[] = [];
+    let spent = 0;
+    // Chaque exécution coûte 1 € (prix de l'outil) : la dépense est relue avant l'appel suivant.
+    const sandbox: CodeSandbox = { run: async (code) => (runs.push(code), (spent += 1), { exitCode: 0, timedOut: false, durationMs: 5, stdout: "ok\n", stderr: "", files: [] }) };
+    const twice: ChatModel = {
+      id: "twice",
+      supportsTools: true,
+      async *stream(request: ChatRequest) {
+        const turns = request.turns ?? [];
+        const tools = turns.slice(turns.map((turn) => turn.role).lastIndexOf("user")).filter((turn) => turn.role === "tool");
+        if (tools.length < 2) {
+          yield { type: "tool_call", call: { id: `py-${tools.length}`, name: "run_code", arguments: { code: `print(${tools.length})` } } };
+          return;
+        }
+        yield { type: "token", text: tools.map((turn) => (/budget/i.test(turn.content) ? "budget" : /quota/i.test(turn.content) ? "quota" : "ok")).join(",") };
+      },
+    };
+    const db = sharedDatabase();
+    // Budget du membre : 1 €. La 1re exécution passe (0 € dépensé), la 2e de la MÊME réponse est refusée.
+    const api = await instance(db, { model: twice, sandbox, settings: { tools: ["code_interpreter"], memberMonthlyBudget: 1 }, spend: () => ({ organization: spent, mine: spent }) });
+    t.after(() => api.close());
+    const { conversationId } = await agentConversation(api, ["code_interpreter"]);
+    const answer = async (content: string) =>
+      (await events(await api.post(`/conversations/${conversationId}/messages`, { content }))).at(-1)!;
+    assert.equal(((await answer("Deux calculs")).data as { assistantMessage: { content: string } }).assistantMessage.content, "ok,budget");
+    assert.equal(runs.length, 1);
+    assert.ok(db.events.some((event) => event.eventType === "quota.tool_exceeded" && event.details?.scope === "member_budget"));
+    // Réponse suivante : refusée avant de commencer (429, raison donnée à l'interface).
+    const refused = await api.post(`/conversations/${conversationId}/messages`, { content: "Encore" });
+    assert.equal(refused.status, 429);
+    assert.equal(((await refused.json()) as { reason: string }).reason, "member_budget_exceeded");
+
+    // Plafond d'outils par membre (sans budget) : la 2e exécution du mois est refusée.
+    const capped = await instance(sharedDatabase(), { model: twice, sandbox, settings: { tools: ["code_interpreter"], memberToolLimits: { code: 1 } } });
+    t.after(() => capped.close());
+    const other = await agentConversation(capped, ["code_interpreter"]);
+    const seen = await events(await capped.post(`/conversations/${other.conversationId}/messages`, { content: "Deux calculs" }));
+    assert.equal((seen.at(-1)!.data as { assistantMessage: { content: string } }).assistantMessage.content, "ok,quota");
+  });
+
+  it("plafonds d'une réponse fixés par l'organisation : appliqués, jamais au-delà de ceux de la plateforme", async (t) => {
+    const seen: (number | undefined)[] = [];
+    const runChat: ChatRunner = async (input) => {
+      seen.push(input.maxTokens);
+      return { content: "ok", model: "test" };
+    };
+    for (const responseMaxTokens of [5_000, 9_000_000]) {
+      const sandbox: CodeSandbox = { run: async () => ({ exitCode: 0, timedOut: false, durationMs: 1, stdout: "", stderr: "", files: [] }) };
+      const api = await instance(sharedDatabase(), { runChat, sandbox, settings: { tools: ["code_interpreter"], responseMaxTokens } });
+      const { conversationId } = await agentConversation(api, ["code_interpreter"]);
+      await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Bonjour" }));
+      await api.close();
+    }
+    // 5 000 : celui de l'organisation ; 9 M : borné à celui de la plateforme (400 000 par défaut).
+    assert.deepEqual(seen, [5_000, 400_000]);
+    void t;
+  });
+
   it("durée maximale d'une réponse : arrêtée, la partie déjà écrite est gardée avec un avertissement", async (t) => {
     const slow: ChatModel = {
       id: "slow",
@@ -678,7 +801,8 @@ describe("Exécution durable : runs", () => {
       },
     };
     const db = sharedDatabase();
-    const api = await instance(db, { model: slow, timing: { maxActiveMs: 200 } });
+    // Une organisation ne prolonge jamais une réponse au-delà de la plateforme (ici 200 ms).
+    const api = await instance(db, { model: slow, timing: { maxActiveMs: 200 }, settings: { responseMaxSeconds: 3_600 } });
     t.after(() => api.close());
     const { conversationId } = await agentConversation(api, ["search_knowledge"]);
     const seen = await events(await api.post(`/conversations/${conversationId}/messages`, { content: "Longue question" }));
@@ -2063,7 +2187,7 @@ describe("Compétences des agents", () => {
       },
     ]);
     // Fichiers demandés hors de la conversation : jamais copiés, et le modèle le sait.
-    assert.match(scriptResult, /introuvables dans la conversation \(ou trop lourdes\) : \.\.\/\.\.\/etc\/passwd, rapport-rh\.pdf/);
+    assert.match(scriptResult, /introuvables dans la conversation \(ou trop lourds\) : \.\.\/\.\.\/etc\/passwd, rapport-rh\.pdf/);
     const files = ((await (await api.get(`/conversations/${withCode}/files`)).json()) as { files: { name: string }[] }).files;
     assert.deepEqual(files.map((file) => file.name), ["note.md"]);
     // Même quota que le code du modèle : au-delà du plafond mensuel, refusé et tracé.

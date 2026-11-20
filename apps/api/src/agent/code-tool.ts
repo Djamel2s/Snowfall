@@ -2,6 +2,8 @@ import http from "node:http";
 import { z } from "zod";
 import { generatedFileMediaTypes, GENERATED_FILE_MAX_BYTES } from "../db/schema.js";
 import type { GeneratedFileMeta } from "../files/generated.js";
+import { checkOoxml, OOXML_TYPES } from "../files/ooxml.js";
+import { knownNumbers, officeText, unsupportedNumbers } from "./fidelity.js";
 import type { MalwareScanner } from "../security/antivirus.js";
 import { sandboxPath } from "../skills/scripts.js";
 import { defineTool } from "./tools.js";
@@ -14,6 +16,8 @@ import { localEndpoint, type LocalEndpoint } from "../security/local-endpoint.js
 // stockés chiffrés, rattachés à la réponse.
 
 export const MAX_RUNS = 5;
+/** Délai d'une exécution : une conversion en PDF (LibreOffice) prend quelques secondes. */
+export const CODE_SECONDS = 60;
 const OUTPUT_TO_MODEL = 8_000;
 
 export type SandboxResult = {
@@ -129,7 +133,7 @@ export async function copyInputs(wanted: string[], inputs: ScriptInputs | undefi
   }
   const notes = [
     ...(copied.length ? [`Pièces jointes copiées : ${copied.join(", ")}.`] : []),
-    ...(missing.length ? [`Pièces jointes introuvables dans la conversation (ou trop lourdes) : ${missing.join(", ")}.`] : []),
+    ...(missing.length ? [`Fichiers introuvables dans la conversation (ou trop lourds) : ${missing.join(", ")}.`] : []),
   ];
   return { total, copied: copied.length, note: notes.join("\n") };
 }
@@ -140,13 +144,21 @@ export const RUNS_EXHAUSTED = "Limite d'exécutions atteinte pour cette réponse
  * Résultat d'une exécution, pour le modèle : fichiers produits passés à
  * l'antivirus puis enregistrés (chiffrés), sorties tronquées.
  */
-export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, "scanner" | "saveFile">) {
+export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, "scanner" | "saveFile">, known?: number[]) {
+  // Date du jour : une source légitime (« au 19 novembre »), admise telle quelle.
+  const today = new Date();
   const saved: GeneratedFileMeta[] = [];
+  const unsupported: { file: string; numbers: string[] }[] = [];
   const refused: string[] = [];
   for (const file of result.files.slice(0, 8)) {
     const bytes = Buffer.from(file.data, "base64");
     const allowed = (generatedFileMediaTypes as readonly string[]).includes(file.mediaType);
     if (!allowed || bytes.length === 0 || bytes.length > GENERATED_FILE_MAX_BYTES) {
+      refused.push(file.name);
+      continue;
+    }
+    // Word, PowerPoint, Excel : ni macro, ni objet incorporé, ni lien sortant (hors liens hypertextes).
+    if (OOXML_TYPES.has(file.mediaType) && !checkOoxml(bytes).ok) {
       refused.push(file.name);
       continue;
     }
@@ -159,6 +171,11 @@ export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, 
       }
     }
     saved.push(await deps.saveFile({ name: safeName(file.name), mediaType: file.mediaType, bytes }));
+    // Fidélité : chiffres du document absents de ce que le modèle a reçu (ni déduits).
+    if (known && OOXML_TYPES.has(file.mediaType)) {
+      const numbers = unsupportedNumbers(officeText(bytes), known, { exact: [today.getDate(), today.getMonth() + 1] });
+      if (numbers.length) unsupported.push({ file: safeName(file.name), numbers });
+    }
   }
 
   const status = result.timedOut ? "délai dépassé" : result.exitCode === 0 ? "terminé" : `erreur (code ${result.exitCode})`;
@@ -167,10 +184,18 @@ export async function deliverRun(result: SandboxResult, deps: Pick<SandboxDeps, 
   if (result.stderr.trim()) parts.push(`Erreurs :\n${shorten(result.stderr)}`);
   if (saved.length) parts.push(`Fichiers donnés à l'utilisateur (affichés sous ta réponse) : ${saved.map((file) => file.name).join(", ")}.`);
   if (refused.length) parts.push(`Fichiers refusés (type, taille ou analyse) : ${refused.join(", ")}.`);
+  // En tête : placée après la sortie du script, l'alerte était ignorée (mesuré le 20 novembre).
+  for (const item of unsupported.reverse()) {
+    parts.unshift(
+      `À FAIRE AVANT DE RÉPONDRE — contrôle de fidélité : ${item.file} contient des nombres absents de la demande, des pièces jointes et des résultats d'outils ` +
+        `(et qui ne s'en déduisent pas) : ${item.numbers.join(", ")}. S'ils sont inventés, retire-les ou remplace-les et relance le code ; ` +
+        `s'ils sont justes, dis d'où ils viennent dans ta réponse.`,
+    );
+  }
   return {
     content: parts.join("\n\n"),
-    summary: saved.length ? `${status} · ${saved.length} fichier(s)` : status,
-    data: { files: saved.map((file) => file.id) },
+    summary: (saved.length ? `${status} · ${saved.length} fichier(s)` : status) + (unsupported.length ? ` · chiffres à vérifier : ${unsupported.flatMap((item) => item.numbers).slice(0, 8).join(", ")}` : ""),
+    data: { files: saved.map((file) => file.id), ...(unsupported.length ? { unsupported } : {}) },
   };
 }
 
@@ -180,13 +205,18 @@ export function codeTool(deps: SandboxDeps & { inputs?: ScriptInputs | undefined
     description:
       "Exécute du code Python 3.13 dans un bac à sable isolé, SANS accès au réseau. " +
       (deps.inputs
-        ? "Les pièces jointes de la conversation nommées dans « files » sont copiées dans inputs/ : lis-les depuis ce dossier " +
-          "(ex. pd.read_csv(\"inputs/ventes.csv\"), pd.read_excel(\"inputs/budget.xlsx\")) plutôt que de recopier leurs données dans le code. "
+        ? "Les fichiers de la conversation nommés dans « files » (pièces jointes, images créées, fichiers produits) sont copiés dans inputs/ : " +
+          "lis-les depuis ce dossier (ex. pd.read_csv(\"inputs/ventes.csv\"), pdf.image(\"inputs/image-1.png\")) plutôt que de recopier leurs données dans le code. "
         : "Il n'a pas accès aux fichiers de l'utilisateur. ") +
-      "Bibliothèques : numpy, pandas, matplotlib, openpyxl (et la bibliothèque standard). Utilise-le pour calculer, analyser " +
-      "des données, faire un graphique ou produire un fichier. Affiche les résultats avec print(). Pour donner un fichier à " +
+      "Documents soignés (présentation, rapport Word, classeur Excel, PDF) : module snowfall_docs (Deck, Report, Workbook, Theme, to_pdf, " +
+      "fill_template) ; lis d'abord son mode d'emploi complet, en une seule exécution : print(snowfall_docs.guide()) ; " +
+      "et suis-le (thème cohérent, titres qui donnent la conclusion, mises en page variées). Il suit aussi un modèle fourni par l'utilisateur. " +
+      "Dans un document, n'invente aucun chiffre, délai, répartition ni source absents de la demande ou des fichiers : un document plus court vaut mieux. " +
+      "Autres bibliothèques : numpy, pandas, matplotlib, openpyxl, python-docx, python-pptx, xlsxwriter, pillow, fpdf2, pypdf " +
+      "et la bibliothèque standard. Utilise-le pour calculer, analyser des données, faire un graphique ou produire un fichier. Affiche les résultats avec print(). Pour donner un fichier à " +
       "l'utilisateur, enregistre-le dans le dossier courant (ex. plt.savefig(\"graphique.png\"), df.to_csv(\"donnees.csv\")) : " +
-      "png, jpg, svg, csv, txt, md, json, xlsx, pdf. Chaque exécution repart de zéro (aucun état conservé). Délai : 30 s.",
+      "png, jpg, svg, csv, txt, md, json, xlsx, docx, pptx, pdf (5 Mo par fichier). Chaque exécution repart de zéro (aucun état conservé). " +
+      "Délai : 60 s. Si l'exécution échoue, lis l'erreur, corrige et réessaie.",
     parameters: z
       .object({
         code: z.string().min(1).max(50_000).describe("Programme Python complet."),
@@ -194,27 +224,46 @@ export function codeTool(deps: SandboxDeps & { inputs?: ScriptInputs | undefined
           .array(z.string().min(1).max(120))
           .max(MAX_SCRIPT_INPUTS)
           .default([])
-          .describe("Noms exacts de pièces jointes de la conversation à copier dans inputs/."),
+          .describe("Noms exacts de fichiers de la conversation (pièces jointes, images créées) à copier dans inputs/."),
       })
       .strict(),
     access: "read",
-    async execute({ code, files: wanted }, { signal }) {
+    grounded: true,
+    // Au-delà du délai commun des outils (30 s) : l'exécution elle-même dure jusqu'à CODE_SECONDS.
+    timeoutMs: (CODE_SECONDS + 15) * 1000,
+    async execute({ code, files: wanted }, { signal, known }) {
       if (deps.runs.count >= MAX_RUNS) return { content: RUNS_EXHAUSTED, summary: "limite" };
       if (!wanted.length) {
         deps.runs.count++;
-        return deliverRun(await deps.sandbox.run(code, { timeoutSeconds: 30, signal }), deps);
+        return deliverRun(await deps.sandbox.run(code, { timeoutSeconds: CODE_SECONDS, signal }), deps, known);
       }
       // Avec des fichiers : même chemin que les scripts de compétence (code dans skill/,
       // fichiers dans inputs/, jamais rendus comme résultats). Le bac à sable ne change pas.
       const files: SkillRunFile[] = [{ path: "skill/main.py", content: code }];
       const { note, copied } = await copyInputs(wanted, deps.inputs, files, Buffer.byteLength(code, "utf8"));
       deps.runs.count++;
-      const result = await deliverRun(await deps.sandbox.run("", { timeoutSeconds: 30, signal, skill: { files, entry: "skill/main.py", args: [] } }), deps);
+      // Les fichiers fournis (un CSV de ventes…) sont des sources : leurs nombres aussi.
+      const provided = known && [...known, ...files.filter((file) => file.path.startsWith("inputs/")).flatMap((file) => inputNumbers(file))];
+      const result = await deliverRun(await deps.sandbox.run("", { timeoutSeconds: CODE_SECONDS, signal, skill: { files, entry: "skill/main.py", args: [] } }), deps, provided);
       // `inputs` : la sortie dérive d'un fichier de l'utilisateur (non fiable ET privé), comme
       // une pièce jointe — même si celle-ci n'est plus dans la fenêtre (règle de deux, exposure.ts).
       return { ...result, content: `${note}\n\n${result.content}`, data: { ...result.data, inputs: copied } };
     },
   });
+}
+
+/** Nombres d'un fichier fourni au code : texte (CSV, JSON…) ou document Office. */
+function inputNumbers(file: SkillRunFile): number[] {
+  if ("content" in file) return knownNumbers(file.content);
+  const bytes = Buffer.from(file.data, "base64");
+  if (bytes.subarray(0, 2).toString("latin1") === "PK") return knownNumbers(officeText(bytes));
+  const text = bytes.toString("utf8");
+  if (/\.(csv|tsv)$/i.test(file.path)) {
+    // Une cellule par ligne : « mineur,4 » n'est pas le nombre « ,4 ». Point-virgule (CSV français), sinon virgule ou tabulation.
+    const separator = text.includes(";") ? ";" : /\.tsv$/i.test(file.path) || text.includes("\t") ? "\t" : ",";
+    return knownNumbers(text.split(/\r?\n/).flatMap((line) => line.split(separator)).map((cell) => cell.replace(/^"|"$/g, "")).join("\n"));
+  }
+  return /\.(txt|md|json)$/i.test(file.path) ? knownNumbers(text) : [];
 }
 
 /** Identifiants des fichiers produits pendant une réponse (pour les rattacher à son message). */

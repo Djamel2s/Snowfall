@@ -145,7 +145,7 @@ function StepItem({ node, lookup, cited }: { node: StepNode; lookup: Map<number,
   const { t, locale } = useI18n()
   const kind = stepKind(node.name)
   const Icon = ICONS[kind]
-  const detail = stepDetail(node)
+  const detail = node.empty && node.status === 'done' ? t('activity.noResults') : stepDetail(node)
   // Numéros d'un sous-agent : sa propre numérotation, sans lien avec les sources de la réponse.
   const found = node.parent ? [] : (node.found ?? []).map((n) => lookup.get(n)).filter((source): source is MessageSource => Boolean(source))
   const shown = found.slice(0, MAX_FOUND)

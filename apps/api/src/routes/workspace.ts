@@ -1,10 +1,12 @@
+import { PRICE_KEY, MAX_PRICED_MODELS, MAX_TOKEN_PRICE, MAX_TOOL_PRICE, priceOf, tokenCost } from "../workspace/costs.js";
 import type { FastifyInstance } from "fastify";
 import { detectSensitive } from "../security/sensitive.js";
 import { detectInjection } from "../security/injection.js";
 import { z } from "zod";
 import { knownTools, toolIds, type ToolId } from "../agent/catalog.js";
-import { organizationRoles } from "../auth/auth.js";
+import { organizationRoles, type AuthenticatedUser } from "../auth/auth.js";
 import { embeddingProviders, type EmbeddingProvider } from "../knowledge/embeddings.js";
+import { keyProviders } from "../llm/keys.js";
 import { providerIds, type ProviderId } from "../llm/types.js";
 import type { ProjectStore } from "../projects/store.js";
 import { MemberRuleError, type MemberStore } from "../workspace/members.js";
@@ -18,7 +20,8 @@ export type WorkspaceDependencies = {
   preferences?: PreferencesStore | undefined;
   projects?: ProjectStore | undefined;
   /** Fournisseurs configurés sur la plateforme (clé d'API présente). */
-  configuredProviders: () => Promise<ProviderId[]>;
+  /** Fournisseurs disponibles pour cette personne (clés de la plateforme, de l'organisation, la sienne). */
+  configuredProviders: (user: AuthenticatedUser) => Promise<ProviderId[]>;
   /** Fournisseurs configurés pour les embeddings. */
   embeddingProviders?: () => EmbeddingProvider[];
   /** Outils que la plateforme sait fournir (la recherche web exige SearXNG). */
@@ -26,7 +29,8 @@ export type WorkspaceDependencies = {
   /** Appels d'outils du mois (quotas des outils). */
   toolUsage?: ToolUsageStore | undefined;
   /** Le modèle existe chez ce fournisseur (catalogue de la plateforme). */
-  isModelAllowed?: (selection: { provider: ProviderId; model: string }) => Promise<boolean>;
+  isModelAllowed?: (user: AuthenticatedUser, selection: { provider: ProviderId; model: string }) => Promise<boolean>;
+  settingsChanged?: (organizationId: string) => void;
 };
 
 const uuidParams = z.object({ id: z.uuid() });
@@ -34,6 +38,10 @@ const memberParams = z.object({ userId: z.uuid() });
 const MAX_TOKEN_LIMIT = 1_000_000_000_000;
 
 const tokenLimit = z.number().int().positive().max(MAX_TOKEN_LIMIT);
+/** Tarif : euros, au millième de centime près (prix au million de jetons). */
+const price = (max: number) => z.number().min(0).max(max).transform((value) => Math.round(value * 100_000) / 100_000);
+/** Budget mensuel : euros, au centime (au moins un centime). */
+const budget = z.number().min(0.01).max(100_000_000).transform((value) => Math.round(value * 100) / 100);
 
 const settingsSchema = z.object({
   allowedProviders: z.array(z.enum(providerIds)).max(providerIds.length),
@@ -55,6 +63,8 @@ const settingsSchema = z.object({
   sensitiveData: z.enum(["local", "off"]).optional(),
   // Pseudonymisation avant un fournisseur externe ; absent = inchangé.
   pseudonymize: z.boolean().optional(),
+  // Clés d'API personnelles autorisées (par fournisseur) ; absent = inchangé.
+  personalKeyProviders: z.array(z.enum(keyProviders)).max(keyProviders.length).optional(),
   // Routage automatique : null = désactivé ; absent = inchangé.
   modelRouting: z
     .object({
@@ -64,6 +74,21 @@ const settingsSchema = z.object({
     .strict()
     .nullable()
     .optional(),
+  // Coûts et limites ; absents = inchangés.
+  prices: z
+    .object({
+      models: z
+        .record(z.string().regex(PRICE_KEY), z.object({ input: price(MAX_TOKEN_PRICE), output: price(MAX_TOKEN_PRICE) }).strict())
+        .refine((models) => Object.keys(models).length <= MAX_PRICED_MODELS),
+      tools: z.partialRecord(z.enum(toolMeters), price(MAX_TOOL_PRICE)),
+    })
+    .strict()
+    .optional(),
+  monthlyBudget: budget.nullable().optional(),
+  memberMonthlyBudget: budget.nullable().optional(),
+  memberToolLimits: z.partialRecord(z.enum(toolMeters), z.number().int().positive().max(10_000_000)).optional(),
+  responseMaxTokens: z.number().int().min(1_000).max(5_000_000).nullable().optional(),
+  responseMaxSeconds: z.number().int().min(10).max(3_600).nullable().optional(),
 }).strict();
 
 /** Instructions personnalisées refusées : donnée sensible ou tentative d'injection. */
@@ -124,10 +149,59 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
     api.get("/usage", async (request, reply) => {
       const user = kit.principal(request);
       kit.privateResponse(reply);
-      const [usage, current, tools] = await Promise.all([settings.usage(user), settings.get(user), deps.toolUsage?.toolUsage(user) ?? {}]);
+      const [usage, current, tools, myTools] = await Promise.all([
+        settings.usage(user),
+        settings.get(user),
+        deps.toolUsage?.toolUsage(user) ?? {},
+        deps.toolUsage?.memberToolUsage(user) ?? {},
+      ]);
       return {
-        usage: { ...usage, tools },
-        limits: { monthly: current.monthlyTokenLimit, providers: current.providerTokenLimits, tools: current.toolLimits },
+        usage: {
+          period: usage.period,
+          total: usage.total,
+          byProvider: usage.byProvider,
+          mine: usage.mine,
+          tools,
+          myTools,
+          ...(usage.spend ? { mySpend: Math.round(usage.spend.mine.euros * 100) / 100 } : {}),
+          ...(usage.spend && kit.isAdmin(user) ? { spend: Math.round(usage.spend.organization.euros * 100) / 100 } : {}),
+        },
+        limits: {
+          monthly: current.monthlyTokenLimit,
+          providers: current.providerTokenLimits,
+          tools: current.toolLimits,
+          memberTools: current.memberToolLimits,
+          memberBudget: current.memberMonthlyBudget,
+          ...(kit.isAdmin(user) ? { budget: current.monthlyBudget } : {}),
+        },
+      };
+    });
+
+    // Coûts du mois par modèle et par outil, aux tarifs actuels (administrateurs).
+    api.get("/organization/costs", async (request, reply) => {
+      const user = kit.principal(request);
+      kit.privateResponse(reply);
+      if (!kit.isAdmin(user)) return reply.code(403).send({ error: "Forbidden" });
+      const [usage, current] = await Promise.all([settings.usage(user), settings.get(user)]);
+      const round = (value: number) => Math.round(value * 100) / 100;
+      const models = (usage.models ?? [])
+        .filter((row) => row.provider !== "echo" && row.inputTokens + row.outputTokens > 0)
+        .map((row) => {
+          const rate = priceOf(current.prices, row.provider, row.model);
+          return { ...row, euros: rate ? round(tokenCost(rate, row)) : null };
+        })
+        .sort((a, b) => (b.euros ?? 0) - (a.euros ?? 0) || b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens));
+      const tools = toolMeters
+        .filter((meter) => usage.tools?.[meter])
+        .map((meter) => ({ meter, calls: usage.tools![meter]!, euros: round((current.prices.tools[meter] ?? 0) * usage.tools![meter]!) }));
+      return {
+        period: usage.period,
+        models,
+        tools,
+        total: round(usage.spend?.organization.euros ?? 0),
+        unpriced: usage.spend?.organization.unpriced ?? [],
+        budget: current.monthlyBudget,
+        prices: current.prices,
       };
     });
   }
@@ -139,7 +213,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       const [organization, current, configured] = await Promise.all([
         members.organization(user),
         settings.get(user),
-        deps.configuredProviders(),
+        deps.configuredProviders(user),
       ]);
       return {
         organization: {
@@ -180,7 +254,7 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       if (modelRouting && JSON.stringify(modelRouting) !== JSON.stringify(current.modelRouting)) {
         for (const selection of [modelRouting.fast, modelRouting.strong]) {
           const allowedHere = selection.provider === "local" || body.data.allowedProviders.includes(selection.provider);
-          if (!allowedHere || (deps.isModelAllowed && !(await deps.isModelAllowed(selection)))) return reply.code(400).send({ error: "Invalid request", reason: "routing_model" });
+          if (!allowedHere || (deps.isModelAllowed && !(await deps.isModelAllowed(user, selection)))) return reply.code(400).send({ error: "Invalid request", reason: "routing_model" });
         }
       }
       const sensitiveData = body.data.sensitiveData ?? current.sensitiveData;
@@ -192,7 +266,13 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
       if (pseudonymize !== current.pseudonymize) {
         await kit.record(request, user, { eventType: "security.pseudonymize_policy", details: { value: pseudonymize } });
       }
+      const personalKeyProviders = body.data.personalKeyProviders ? [...new Set(body.data.personalKeyProviders)] : current.personalKeyProviders;
+      // Autoriser les clés personnelles fait sortir des données du contrat de l'organisation : tracé à part.
+      if (personalKeyProviders.join(",") !== current.personalKeyProviders.join(",")) {
+        await kit.record(request, user, { eventType: "security.personal_keys_policy", details: { providers: personalKeyProviders.join(",") } });
+      }
       const saved = await settings.update(user, {
+        personalKeyProviders,
         pseudonymize,
         sensitiveData,
         modelRouting,
@@ -204,7 +284,14 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
         linkDomains: body.data.linkDomains ? [...new Set(body.data.linkDomains)] : current.linkDomains,
         tools: body.data.tools ? knownTools(body.data.tools) : current.tools,
         toolLimits: body.data.toolLimits ?? current.toolLimits,
+        prices: body.data.prices ?? current.prices,
+        monthlyBudget: body.data.monthlyBudget === undefined ? current.monthlyBudget : body.data.monthlyBudget,
+        memberMonthlyBudget: body.data.memberMonthlyBudget === undefined ? current.memberMonthlyBudget : body.data.memberMonthlyBudget,
+        memberToolLimits: body.data.memberToolLimits ?? current.memberToolLimits,
+        responseMaxTokens: body.data.responseMaxTokens === undefined ? current.responseMaxTokens : body.data.responseMaxTokens,
+        responseMaxSeconds: body.data.responseMaxSeconds === undefined ? current.responseMaxSeconds : body.data.responseMaxSeconds,
       });
+      deps.settingsChanged?.(user.organizationId);
       await kit.record(request, user, {
         eventType: "organization.settings_update",
         targetType: "organization",
@@ -217,6 +304,12 @@ export function registerWorkspaceRoutes(api: FastifyInstance, kit: RouteKit, dep
           linkDomains: saved.linkDomains.length,
           tools: saved.tools.join(","),
           toolLimits: toolMeters.map((meter) => `${meter}:${saved.toolLimits[meter] ?? "-"}`).join(","),
+          memberToolLimits: toolMeters.map((meter) => `${meter}:${saved.memberToolLimits[meter] ?? "-"}`).join(","),
+          monthlyBudget: saved.monthlyBudget ?? 0,
+          memberMonthlyBudget: saved.memberMonthlyBudget ?? 0,
+          pricedModels: Object.keys(saved.prices.models).length,
+          responseMaxTokens: saved.responseMaxTokens ?? 0,
+          responseMaxSeconds: saved.responseMaxSeconds ?? 0,
         },
       });
       return { settings: saved };

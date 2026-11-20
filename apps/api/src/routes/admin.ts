@@ -1,6 +1,7 @@
+import { emptyPrices } from "../workspace/costs.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AdminForbiddenError, OVERVIEW_PERIODS, type AdminOverviewStore } from "../admin/overview.js";
+import { AdminForbiddenError, monthlyCosts, OVERVIEW_PERIODS, type AdminOverviewStore } from "../admin/overview.js";
 import type { AgentRating, AgentRatingStore } from "../agents/ratings.js";
 import type { AgentStore } from "../agents/store.js";
 import type { MemberStore } from "../workspace/members.js";
@@ -56,6 +57,9 @@ export function registerAdminRoutes(api: FastifyInstance, kit: RouteKit, deps: A
       tokens: data.tokens,
       monthlyTokenLimit: settings?.monthlyTokenLimit ?? null,
       tools: data.tools,
+      // Euros aux tarifs actuels (saisis par l'administrateur) ; modèles externes sans tarif signalés.
+      costs: monthlyCosts(data, settings?.prices ?? emptyPrices),
+      monthlyBudget: settings?.monthlyBudget ?? null,
     };
   });
 }

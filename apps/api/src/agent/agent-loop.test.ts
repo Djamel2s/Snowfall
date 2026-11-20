@@ -103,6 +103,37 @@ describe("Boucle d'agent", () => {
     assert.equal(result.content, "Voici ce que j'ai.");
   });
 
+  it("modèle qui demande encore un outil alors qu'on ne lui en propose plus : appel ignoré, la réponse se termine", async () => {
+    // Vu avec Gemini : des appels de fonction émis sans outils proposés. Avant, la boucle
+    // les exécutait et finissait en erreur (limite de récursion) : aucune réponse.
+    let executed = 0;
+    const counted = defineTool({ ...weather, execute: async (input, context) => (executed++, weather.execute(input, context)) });
+    const { model, requests } = scripted([
+      (request) => [...(request.tools ? [] : [{ type: "token" as const, text: "Voici le bilan." }]), call(`c${requests.length}`, "weather", { city: "Lyon" })],
+    ]);
+    const result = await createChatRunner(model)({ message: "Boucle !", tools: [counted], maxSteps: 2 });
+
+    assert.equal(executed, 2);
+    assert.equal(requests.length, 3);
+    assert.equal(result.steps, 2);
+    assert.equal(result.content, "Voici le bilan.");
+  });
+
+  it("nombres connus de la conversation (demande, historique, résultats d'outils) : remis aux seuls outils « grounded »", async () => {
+    const seen: Record<string, number[] | undefined> = {};
+    const probe = (name: string, grounded: boolean) =>
+      defineTool({ ...weather, name, grounded, execute: async (_input, context) => ((seen[name] = context.known), { content: `Relevé : 1 234 mm à ${name}.` }) });
+    let step = 0;
+    const { model } = scripted([
+      () => (step++ === 0 ? [call("a", "lecture", { city: "Lyon" })] : step === 2 ? [call("b", "document", { city: "Lyon" }), call("c", "lecture", { city: "Lyon" })] : [{ type: "token", text: "Fini." }]),
+    ]);
+    await createChatRunner(model)({ message: "42 incidents, délai 6 h", history: [{ role: "user", content: "Budget 820 k€" }], tools: [probe("lecture", false), probe("document", true)] });
+
+    assert.equal(seen.lecture, undefined);
+    // 1 234 : résultat d'un outil précédent ; 820 : historique ; 42 et 6 : demande.
+    assert.deepEqual([...(seen.document ?? [])].sort((a, b) => a - b), [6, 42, 820, 1234]);
+  });
+
   it("budget de tokens dépassé : plus d'outils, le modèle conclut (coût d'une réponse borné)", async () => {
     let n = 0;
     const { model, requests } = scripted([

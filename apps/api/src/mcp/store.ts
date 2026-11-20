@@ -30,6 +30,8 @@ export type McpServerRecord = {
   hasToken: boolean;
   status: McpServerStatus;
   tools: ApprovedMcpTool[];
+  /** Photo choisie comme icône (data URL) ; null : logo du catalogue ou initiale. */
+  icon: string | null;
   updatedAt: string;
 };
 
@@ -40,6 +42,8 @@ export interface McpServerStore {
   create(tenant: TenantContext, input: McpServerInput): Promise<McpServerRecord>;
   approve(tenant: TenantContext, id: string, tools: ApprovedMcpTool[]): Promise<McpServerRecord | null>;
   setStatus(tenant: TenantContext, id: string, status: McpServerStatus): Promise<boolean>;
+  /** null : retire la photo. */
+  setIcon(tenant: TenantContext, id: string, icon: string | null): Promise<boolean>;
   delete(tenant: TenantContext, id: string): Promise<boolean>;
 }
 
@@ -48,12 +52,12 @@ export type McpConnection = McpServerRecord & { token: string | null; oauth: OAu
 
 export type McpServerInput = { name: string; url: string; token?: string | undefined; oauth?: OAuthServerConfig | undefined; spec?: unknown };
 
-export type Field = "url" | "token" | "tools" | "oauth" | "spec";
+export type Field = "url" | "token" | "tools" | "oauth" | "spec" | "icon";
 export const mcpServerAad = (tenant: TenantContext, id: string, field: Field) => `mcp-server-${field}:${tenant.organizationId}:${id}`;
 const aad = mcpServerAad;
 
-type Row = { id: string; name: string; url: string; kind: "mcp" | "openapi"; auth: McpAuthMode; token: string | null; oauth: string | null; spec: string | null; tools: string | null; status: McpServerStatus; updatedAt: string };
-const COLUMNS = `id, name, url, kind, auth, token, oauth, spec, tools, status, updated_at AS "updatedAt"`;
+type Row = { id: string; name: string; url: string; kind: "mcp" | "openapi"; auth: McpAuthMode; token: string | null; oauth: string | null; spec: string | null; tools: string | null; icon: string | null; status: McpServerStatus; updatedAt: string };
+const COLUMNS = `id, name, url, kind, auth, token, oauth, spec, tools, icon, status, updated_at AS "updatedAt"`;
 
 export class PostgresMcpServerStore implements McpServerStore {
   constructor(
@@ -72,6 +76,7 @@ export class PostgresMcpServerStore implements McpServerStore {
       hasToken: row.token !== null,
       status: row.status,
       tools: row.tools ? (JSON.parse(await open(row.tools, "tools")) as ApprovedMcpTool[]) : [],
+      icon: row.icon ? await open(row.icon, "icon") : null,
       updatedAt: row.updatedAt,
       ...(withToken
         ? {
@@ -144,6 +149,14 @@ export class PostgresMcpServerStore implements McpServerStore {
     });
   }
 
+  setIcon(tenant: TenantContext, id: string, icon: string | null) {
+    return withTenant(this.pool, tenant, async (client) => {
+      const sealed = icon === null ? null : await this.keyring.encrypt(client, tenant.organizationId, icon, aad(tenant, id, "icon"));
+      const result = await client.query("UPDATE mcp_servers SET icon = $3, updated_at = now() WHERE id = $1 AND organization_id = $2", [id, tenant.organizationId, sealed]);
+      return (result.rowCount ?? 0) > 0;
+    });
+  }
+
   delete(tenant: TenantContext, id: string) {
     return withTenant(this.pool, tenant, async (client) => {
       const result = await client.query("DELETE FROM mcp_servers WHERE id = $1 AND organization_id = $2", [id, tenant.organizationId]);
@@ -187,6 +200,7 @@ export class MemoryMcpServerStore implements McpServerStore {
       oauth: input.oauth ?? null,
       status: "pending" as const,
       tools: [],
+      icon: null,
       updatedAt: new Date().toISOString(),
     };
     this.servers.set(server.id, server);
@@ -204,6 +218,13 @@ export class MemoryMcpServerStore implements McpServerStore {
     const server = this.mine(tenant).find((item) => item.id === id);
     if (!server) return false;
     server.status = status;
+    return true;
+  }
+
+  async setIcon(tenant: TenantContext, id: string, icon: string | null) {
+    const server = this.mine(tenant).find((item) => item.id === id);
+    if (!server) return false;
+    server.icon = icon;
     return true;
   }
 

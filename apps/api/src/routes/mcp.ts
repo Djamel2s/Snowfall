@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { iconSchema } from "../agents/profile.js";
 import { McpError, toolFingerprint, validateMcpUrl, type McpServerSettings } from "../mcp/client.js";
 import type { McpConnectionStore } from "../mcp/connections.js";
 import { authorizationUrl, discoverOAuth, exchangeCode, hashState, newState, OAuthError, pkce } from "../mcp/oauth.js";
@@ -71,6 +72,7 @@ const approveSchema = z.object({
 }).strict();
 
 const statusSchema = z.object({ enabled: z.boolean() }).strict();
+const iconBody = z.object({ icon: iconSchema.nullable() }).strict();
 
 /** Vue d'un serveur : jamais le jeton ; l'adresse pour les seuls administrateurs. */
 function view(server: McpServerRecord, admin: boolean) {
@@ -84,6 +86,7 @@ function view(server: McpServerRecord, admin: boolean) {
     ...(catalogIdFor(server.url) ? { catalogId: catalogIdFor(server.url) } : {}),
     ...(admin ? { url: server.url, hasToken: server.hasToken, updatedAt: server.updatedAt } : {}),
     tools: server.tools.map((tool) => ({ name: tool.name, title: tool.title ?? null, access: tool.access })),
+    icon: server.icon,
   };
 }
 
@@ -320,6 +323,26 @@ export function registerMcpRoutes(api: FastifyInstance, kit: RouteKit, deps: Mcp
       details: { status },
     });
     return { server: view({ ...server, status }, true) };
+  });
+
+  // Photo du connecteur (remplace le logo du catalogue ou l'initiale), vue par tous les membres.
+  api.put("/organization/mcp-servers/:id/icon", async (request, reply) => {
+    const user = kit.principal(request);
+    kit.privateResponse(reply);
+    if (!kit.isAdmin(user)) return kit.denyWrite(request, reply, user);
+
+    const params = idParams.safeParse(request.params);
+    const body = iconBody.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid request" });
+    if (!(await store.setIcon(user, params.data.id, body.data.icon))) return reply.code(404).send({ error: "Not found" });
+    await kit.record(request, user, {
+      eventType: "mcp.server_icon",
+      targetType: "mcp_server",
+      targetId: params.data.id,
+      details: { icon: body.data.icon === null ? "removed" : "set" },
+    });
+    const server = await store.connection(user, params.data.id);
+    return { server: view(server!, true) };
   });
 
   api.delete("/organization/mcp-servers/:id", async (request, reply) => {

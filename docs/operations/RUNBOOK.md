@@ -199,9 +199,18 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   → `restore_test_ok … duration_s=…` (à conserver comme preuve d'audit, avec la
   durée : temps de reprise mesuré). Vérifie empreintes, déchiffrement,
   restauration, nombre de lignes par table, migrations, chiffrement des messages.
-- **Restauration réelle** : `infra/scripts/restore-db.sh` avec la clé hors site,
-  puis `SNOWFALL_MASTER_KEY` et l'accès au KMS (sans eux, les données
-  restaurées restent chiffrées).
+- **Restauration réelle** (exercée par `scripts/restore-drill.sh`) :
+  1. `infra/scripts/restore-db.sh <dump.age> <clé hors site> <base>` (base neuve) ;
+  2. `npm run db:setup` puis `npm run db:migrate`, `DATABASE_*_URL` pointant
+     sur la base restaurée : le dump ne porte ni propriétaires ni droits.
+     **Sans `db:setup`**, tous les objets appartiennent au superutilisateur :
+     la migration échoue et l'API n'a aucun droit (trouvé par l'exercice du
+     1er novembre 2026 ; l'ancienne procédure s'arrêtait à l'étape 1) ;
+  3. `SNOWFALL_MASTER_KEY` et l'accès au KMS : sans eux, les données
+     restaurées restent chiffrées (vérifié par l'exercice).
+- **Objectifs** : RTO 4 h, RPO 24 h (une sauvegarde par jour). Mesures et
+  exercices : [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md) § 7,
+  [PREUVES.md](PREUVES.md).
 
 ## 14. IA locale (embeddings et reclassement)
 
@@ -538,6 +547,124 @@ déconnexion ailleurs) ferme immédiatement la session Snowfall correspondante.
   Un site sans icône affiche son initiale ; 404 gardé une journée en cache.
 - Rotation des clés : la colonne est couverte ; le test de couverture échoue
   si une future colonne chiffrée est oubliée.
+
+## 49. Clés d'API des fournisseurs (panneau Modèles)
+
+- Migration `model_keys` (`npm run db:migrate`) : tables `organization_model_keys`
+  et `user_model_keys` (chiffrées, RLS forcée), colonne `personal_key_providers`
+  des réglages. Droits de l'application posés par `db:migrate` (script des droits).
+- Les clés du fichier `.env` restent la base (plateforme). Une clé saisie par un
+  administrateur les remplace pour son organisation ; rien à redémarrer.
+- Clés personnelles : désactivées par défaut ; un administrateur les autorise par
+  fournisseur dans la fiche du fournisseur (panneau Modèles). Audit :
+  `security.personal_keys_policy`, `model_key.organization_set|_remove`,
+  `model_key.personal_set|_remove` (jamais la clé ni ses derniers caractères).
+- Une clé changée sert au plus 5 s après sur les autres instances de l'API (cache).
+- Clé compromise : la retirer dans le panneau (effet immédiat), puis la révoquer
+  chez le fournisseur. Rotation des clés de chiffrement : les deux tables sont couvertes.
+- Limite : les embeddings des bases de connaissances utilisent toujours les clés
+  de la plateforme.
+
+## 48. Maquettes et contrôle de fidélité
+
+- Maquettes : `/artifact/prototype.html` (généré au build, kit intégré) est servi
+  par la règle nginx existante `location /artifact/` (mêmes en-têtes, même CSP).
+  Rien à configurer.
+- Contrôle de fidélité : automatique sur les documents Office produits par le
+  code ; « chiffres à vérifier » dans l'activité de la réponse. Mesure :
+  `npm run agent:eval -- --model … --only studio-presentation,studio-rapport,studio-classeur --sandbox`
+  (contrôle « document fidèle »).
+- Gemini : une réponse coupée par le fournisseur apparaît maintenant comme
+  « fournisseur indisponible » (métrique `rate_limited`/`error` du run) au lieu
+  d'une réponse incomplète.
+
+## 47. Photos des bases et des connecteurs
+
+- Migration `icons` (`npm run db:migrate`) : colonne `icon` chiffrée sur
+  `knowledge_bases` et `mcp_servers`, contrainte de format chiffré.
+- Rien à configurer. Rotation des clés : les deux colonnes sont couvertes.
+- Une photo refusée (format, poids) : erreur 400 sans détail ; l'audit garde
+  `knowledge.base_update` ou `mcp.server_icon` avec `icon: set|removed`.
+
+## 46. Studio de documents
+
+- Image du bac à sable reconstruite (LibreOffice sans interface, polices,
+  bibliothèques Office : environ 1,3 Go) : `docker compose up -d --build sandbox`
+  en dev ; en production, nouvelle image signée. **Nouveau tmpfs** du service
+  `sandbox` : `/var/tmp` (mode 1733), déjà dans `compose.yaml` et
+  `compose.prod.yaml`.
+- Migration `generated_office_files` (`npm run db:migrate`) : .docx et .pptx
+  admis parmi les fichiers produits.
+- Vérifier : `scripts/sandbox-docs.sh` (chaque format, conversion en PDF,
+  modèles, modèle corrompu) puis `scripts/sandbox-attack.sh` (28 contrôles).
+  Avec gVisor : `SANDBOX_RUNTIME=runsc scripts/sandbox-docs.sh`.
+- Délai d'une exécution de code : 60 s (conversion en PDF comprise).
+- Mesurer avec un vrai modèle : `npm run agent:eval -- --model google:<modèle>
+  --only studio-presentation,studio-rapport,studio-classeur --sandbox --keep-files <dossier>`
+  (documents et leur rendu PDF gardés pour être regardés ; une mesure à la fois).
+- Un fichier Office refusé (macro, lien sortant…) est signalé au modèle
+  (« Fichiers refusés ») ; rien n'est stocké.
+
+## 45. Exploitation prouvée (lot 3)
+
+- **Tests des alertes** : `scripts/monitoring-test.sh` (CI) — syntaxe et tests
+  unitaires des alertes Prometheus (`alerts.test.yml` : chaque alerte se
+  déclenche au bon moment, pas avant, et se tait sous son seuil),
+  configuration d'Alertmanager et de Loki. `loki -verify-config` ne lit pas
+  les règles : elles sont prouvées par l'exercice d'alerte.
+- **Exercice d'alerte** : `scripts/alert-drill.sh` (CI) — réseau jetable, vraies
+  règles et vraie configuration ; panne de l'API et sauvegarde échouée
+  simulées → e-mail reçu ; délai mesuré par alerte.
+- **Exercice de restauration** : `scripts/restore-drill.sh` (CI) — données
+  chiffrées de référence, sauvegarde par le vrai service, test de restauration,
+  restauration réelle selon le § 13, relecture par l'application (RLS active,
+  contenu déchiffré identique), illisible avec une autre clé maître ; RTO mesuré.
+- **Nouvelles alertes** : `SnowfallBudgetAtteint`, `SnowfallOutilsPlafonnes`,
+  `SnowfallReponsesInterrompues`, `SnowfallInjectionsSuspectees` ;
+  journaux : `RestaurationEchouee`, `TestRestaurationManquant` (30 jours :
+  durée de conservation des journaux).
+- **Incident** : [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md) (rôles, gravité,
+  fiches réflexes, notification CNIL sous 72 h, exercices) ; preuves datées :
+  [PREUVES.md](PREUVES.md).
+
+## 44. Coûts et limites (lot 4)
+
+- Migration `cost_controls` (`npm run db:migrate`) : jetons comptés **par
+  modèle** (la consommation d'avant reste comptée, modèle « non précisé », au
+  tarif par défaut du fournisseur), tarifs, budgets, plafonds par membre et
+  par réponse.
+- **Administration › Coûts** : dépenses du mois par modèle et par outil ;
+  tarifs en € par million de jetons (par modèle, ou par défaut d'un
+  fournisseur) et € par appel d'outil ; aucun tarif intégré (ils changent
+  souvent) ; un modèle externe sans tarif est signalé, jamais compté au hasard ;
+  modèles locaux gratuits. Tarifs appliqués à tout le mois (calcul à la
+  lecture).
+- **Budgets** mensuels en euros (organisation, chaque membre), jetons et outils
+  compris : vérifiés avant chaque réponse ET avant chaque appel d'outil compté.
+  Refus : 429 `budget_exceeded` / `member_budget_exceeded`, audit `quota.denied`
+  ou `quota.tool_exceeded` (`scope`), alerte `SnowfallBudgetAtteint`.
+- **Plafonds par membre** des appels d'outils, en plus de ceux de l'organisation.
+- **Par réponse** : jetons et durée au plus, jamais au-delà de
+  `AGENT_MAX_TOKENS` et `AGENT_MAX_SECONDS` de la plateforme.
+- Un membre voit ses dépenses et son budget (Paramètres › Consommation),
+  jamais les euros de l'organisation.
+
+## 43. Documents composés par l'agent, recherche web en dev
+
+- Bac à sable : fpdf2 ajouté, image à reconstruire (`docker compose up -d --build sandbox`
+  en dev ; en production, nouvelle image signée puis redéploiement). Vérifier :
+  `scripts/sandbox-attack.sh` (27 contrôles bloqués).
+- Une image créée s'appelle `image-1.png`, `image-2.png`… ; `run_code` la reprend
+  par ce nom (« files »). Les images des réponses d'avant le 1er novembre
+  s'appellent toutes `image.png` : la plus récente l'emporte.
+- Recherche web vide en dev : SearXNG **suspend** un moteur qui refuse (par
+  défaut 1 h, 24 h pour un CAPTCHA). Symptôme : recherches de 0,1 s, « Aucun
+  résultat ». Diagnostic :
+  `curl "http://127.0.0.1:8888/search?q=test&format=json"` → `unresponsive_engines`.
+  En dev, suspensions courtes et moteurs supplémentaires (Bing, Mojeek,
+  Startpage) dans `infra/searxng/settings.dev.yml` ; `docker restart snowfall-searxng`
+  lève une suspension. En production (`settings.yml`, sortie par Squid), un
+  moteur ajouté doit aussi être autorisé dans la liste du proxy.
 
 ## 42. Bibliothèque de connaissances
 

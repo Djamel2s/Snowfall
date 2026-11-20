@@ -343,10 +343,12 @@ export class KnowledgeService {
       const batch = chunks.slice(offset, offset + embedder.batchSize);
       const result = await embedder.embed(batch, "document");
       vectors.push(...result.vectors);
-      await this.deps.settings?.record(tenant, embedder.provider, {
-        inputTokens: result.tokens || Math.ceil(batch.join("").length / 4),
-        outputTokens: 0,
-      });
+      await this.deps.settings?.record(
+        tenant,
+        embedder.provider,
+        { inputTokens: result.tokens || Math.ceil(batch.join("").length / 4), outputTokens: 0 },
+        embedder.model,
+      );
     }
     return vectors;
   }
@@ -412,10 +414,7 @@ export class KnowledgeService {
         try {
           await this.admit(tenant, embedder.provider);
           const result = await embedder.embed([semantic], "query");
-          await this.deps.settings?.record(tenant, embedder.provider, {
-            inputTokens: result.tokens || Math.ceil(semantic.length / 4),
-            outputTokens: 0,
-          });
+          await this.deps.settings?.record(tenant, embedder.provider, { inputTokens: result.tokens || Math.ceil(semantic.length / 4), outputTokens: 0 }, embedder.model);
           lists.push(vectorSearch(entry.loaded.chunks, { vector: result.vectors[0]!, model: embedder.id }, 20));
         } catch (error) {
           // Embeddings indisponibles : la recherche par mots-clés suffit.

@@ -2,6 +2,7 @@ import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { pseudonymizingModel } from "../privacy/pseudonymize.js";
 import { Annotation, Command, END, Send, START, StateGraph, interrupt, isGraphInterrupt, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { exposureOf, gateOutbound, mergeExposure, type Exposure } from "../agent/exposure.js";
+import { knownNumbers } from "../agent/fidelity.js";
 import type { AgentTrace } from "../observability/tracing.js";
 import { INJECTION_NOTICE } from "../security/injection.js";
 import { runTool, toolSpec, type AgentTool, type Approver, type ToolPreview, type ToolSpec } from "../agent/tools.js";
@@ -91,6 +92,13 @@ export interface ChatModel {
   stream(request: ChatRequest, signal?: AbortSignal): AsyncIterable<ChatChunk>;
 }
 
+/** Fournisseur indisponible : non configuré, en panne (5xx), ou réponse coupée en cours de route. */
+export class ProviderUnavailableError extends Error {
+  constructor() {
+    super("PROVIDER_UNAVAILABLE");
+  }
+}
+
 /** Le fournisseur limite le débit (HTTP 429 : quota par minute ou par jour atteint). */
 export class ProviderRateLimitError extends Error {
   /** Quota dépassé, si le fournisseur le nomme (identifiant fixe, jamais montré à l'utilisateur). */
@@ -155,6 +163,8 @@ export type ToolEvent = {
   flagged?: boolean | undefined;
   /** Action validée par l'utilisateur. */
   approved?: boolean | undefined;
+  /** Recherche sans résultat. */
+  empty?: boolean | undefined;
 };
 
 /** Sources numérotées d'un résultat d'outil (passages, pages web) : leurs numéros. */
@@ -339,7 +349,9 @@ export function buildAgentGraph(
           } else if (chunk.type === "reasoning") {
             config.writer?.({ reasoning: chunk.text });
           } else if (chunk.type === "tool_call") {
-            calls.push(chunk.call);
+            // Sans outils proposés (limite d'étapes, budget), un appel est ignoré : le
+            // modèle doit conclure. L'exécuter relancerait la boucle sans fin.
+            if (offerTools) calls.push(chunk.call);
           } else if (chunk.type === "provider_data") {
             providerData = { ...providerData, ...chunk.data };
           } else if (chunk.type === "truncated") {
@@ -380,7 +392,7 @@ export function buildAgentGraph(
         truncated: truncated && !calls.length,
       };
     })
-    .addNode("tool", async (input: { call: ToolCall; exposure?: Exposure }, config) => {
+    .addNode("tool", async (input: { call: ToolCall; exposure?: Exposure; known?: number[] }, config) => {
       const { call } = input;
       const signal = config.signal ?? new AbortController().signal;
       const startedAt = Date.now();
@@ -389,7 +401,7 @@ export function buildAgentGraph(
       let result: Awaited<ReturnType<typeof runTool>>;
       try {
         // Règle de deux : réponse exposée → les appels sortants demandent l'accord.
-        result = await runTool(gateOutbound(tools, input.exposure), call, signal, approve, (step) => config.writer?.({ tool: step }), input.exposure);
+        result = await runTool(gateOutbound(tools, input.exposure), call, signal, approve, (step) => config.writer?.({ tool: step }), input.exposure, input.known);
       } catch (error) {
         // Pause pour validation : ce n'est pas une erreur (l'outil reprendra après la décision).
         span?.end({ status: isGraphInterrupt(error) ? "waiting" : "error" });
@@ -409,6 +421,7 @@ export function buildAgentGraph(
           ...(found ? { found } : {}),
           ...(result.content.includes(INJECTION_NOTICE) ? { flagged: true } : {}),
           ...(result.approved ? { approved: true } : {}),
+          ...(result.empty ? { empty: true } : {}),
         } satisfies ToolEvent,
       });
       const turn: ChatTurn = {
@@ -428,7 +441,11 @@ export function buildAgentGraph(
         const calls = lastCalls(state.turns).slice(0, MAX_TOOL_CALLS_PER_STEP);
         // Exposition calculée sur les tours déjà écrits : même décision à la reprise.
         const exposure = mergeExposure(exposureOf(state.turns), state.seed);
-        return calls.length ? calls.map((call) => new Send("tool", { call, exposure })) : END;
+        // Contrôle de fidélité : seulement pour les outils qui le demandent, et une petite
+        // liste de nombres (pas le texte) car l'appel est enregistré avec la reprise.
+        const grounded = (call: ToolCall) => tools.find((tool) => tool.name === call.name)?.grounded === true;
+        const known = calls.some(grounded) ? knownNumbers([state.summary ?? "", ...state.turns.map((turn) => turn.content)].join("\n")) : undefined;
+        return calls.length ? calls.map((call) => new Send("tool", { call, exposure, ...(known && grounded(call) ? { known } : {}) })) : END;
       },
       ["tool", END],
     )

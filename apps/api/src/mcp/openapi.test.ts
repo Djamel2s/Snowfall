@@ -85,6 +85,7 @@ describe("Connecteur OpenAPI", () => {
         spec,
         status: "approved" as const,
         tools: [approvedSnapshot(definitions[0]!.definition, "read"), approvedSnapshot(definitions[1]!.definition, "write")],
+        icon: null,
         updatedAt: "",
       };
       const events = { changed: () => undefined, unavailable: () => undefined, called: () => undefined };

@@ -37,6 +37,7 @@ docker run -d --name "$NAME" \
   --pids-limit 128 --memory 2g --cpus 2 \
   --tmpfs /work:size=256m,mode=0711 \
   --tmpfs /tmp:size=16m,mode=0700 \
+  --tmpfs /var/tmp:size=16m,mode=1733 \
   --tmpfs /dev/shm:size=16m,mode=0700 \
   -e SANDBOX_REQUIRE_GVISOR="$REQUIRE" \
   -v "$VOLUME:/run/sandbox" \

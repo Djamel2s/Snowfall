@@ -21,6 +21,8 @@ export interface GeneratedFileStore {
   /** Rattache les fichiers d'une réponse à son message (seulement ceux encore libres de cette conversation). */
   attach(tenant: TenantContext, conversationId: string, messageId: string, ids: string[]): Promise<number>;
   list(tenant: TenantContext, conversationId: string): Promise<GeneratedFileMeta[]>;
+  /** Tous les fichiers de la conversation, y compris ceux de la réponse en cours (pas encore rattachés), du plus ancien au plus récent. */
+  listAll(tenant: TenantContext, conversationId: string): Promise<GeneratedFileMeta[]>;
   content(tenant: TenantContext, conversationId: string, id: string): Promise<{ name: string; mediaType: string; bytes: Buffer } | null>;
   /** Fichiers jamais rattachés depuis plus de 24 h (réponse arrêtée, échouée). */
   purgeOrphans(tenant: TenantContext): Promise<number>;
@@ -77,11 +79,20 @@ export class PostgresGeneratedFileStore implements GeneratedFileStore {
   }
 
   list(tenant: TenantContext, conversationId: string) {
+    return this.select(tenant, conversationId, true);
+  }
+
+  listAll(tenant: TenantContext, conversationId: string) {
+    return this.select(tenant, conversationId, false);
+  }
+
+  private select(tenant: TenantContext, conversationId: string, attachedOnly: boolean) {
     return withTenant(this.pool, tenant, async (client) => {
       const rows = (
-        await client.query<Row>(`SELECT ${META} FROM generated_files WHERE conversation_id = $1 AND message_id IS NOT NULL ORDER BY created_at LIMIT 500`, [
-          conversationId,
-        ])
+        await client.query<Row>(
+          `SELECT ${META} FROM generated_files WHERE conversation_id = $1${attachedOnly ? " AND message_id IS NOT NULL" : ""} ORDER BY created_at LIMIT 500`,
+          [conversationId],
+        )
       ).rows;
       const files: GeneratedFileMeta[] = [];
       for (const row of rows) files.push(await this.meta(client, tenant, row));
@@ -159,6 +170,10 @@ export class MemoryGeneratedFileStore implements GeneratedFileStore {
     return this.mine(tenant, conversationId)
       .filter((file) => file.messageId !== null)
       .map((file) => this.view(file));
+  }
+
+  async listAll(tenant: TenantContext, conversationId: string) {
+    return this.mine(tenant, conversationId).map((file) => this.view(file));
   }
 
   async content(tenant: TenantContext, conversationId: string, id: string) {

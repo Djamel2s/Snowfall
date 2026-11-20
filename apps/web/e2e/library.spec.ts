@@ -29,7 +29,7 @@ test('créer une base, un dossier, y déposer un document, le ranger ailleurs ; 
   await page.getByRole('button', { name: 'Ouvrir le dossier Contrats' }).click()
   await expect(page.getByRole('navigation', { name: 'Emplacement' })).toContainText('Contrats')
 
-  await page.locator('.library-base input[type="file"]').setInputFiles({ name: 'cdi.txt', mimeType: 'text/plain', buffer: Buffer.from('Période d’essai : quatre mois.') })
+  await page.locator('.library-base input[type="file"][multiple]').setInputFiles({ name: 'cdi.txt', mimeType: 'text/plain', buffer: Buffer.from('Période d’essai : quatre mois.') })
   await expect(page.getByRole('button', { name: 'Ouvrir cdi.txt' })).toBeVisible()
   expect(api.kbCalls.some((call) => call.startsWith('file:cdi.txt:') && !call.endsWith(':root'))).toBe(true)
 
@@ -58,7 +58,8 @@ test('rattacher des bases à un agent ; une base en lecture seule n’est pas pr
   })
   await page.goto('/')
   await openSpace(page, 'Agents')
-  await page.locator('.list-row-wrap', { hasText: 'Assistant RH' }).hover()
+  // Mes agents en grille : les actions apparaissent au survol de la tuile.
+  await page.getByRole('region', { name: 'Mes agents' }).locator('.grid-tile-wrap', { hasText: 'Assistant RH' }).hover()
   await page.getByRole('button', { name: /Modifier Assistant RH/ }).click()
 
   const section = page.getByRole('region', { name: 'Bases de connaissances' })

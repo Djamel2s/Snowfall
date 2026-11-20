@@ -435,6 +435,94 @@ adversarial code reviews whose findings were all fixed and covered by tests
 - The Keycloak login page keeps the Snowfall logo: it is shown before the
   organization is known.
 
+### Model provider API keys (2026-11-20)
+
+- Administrators can enter the organization's key for a provider (Mistral,
+  OpenAI, Anthropic, Google); it replaces the platform key for that
+  organization. Members can enter their own key only for the providers an
+  administrator allows (off by default: a personal key sends data under the
+  member's contract). Precedence: personal (if allowed), organization, platform.
+- Keys are encrypted with the organization key (AAD bound to organization,
+  member and provider), the database enforces the ciphertext format, key
+  rotation covers both tables, RLS restricts personal keys to their owner
+  (administrators included). Keys are never returned (last 4 characters only)
+  nor written to the audit log; personal keys are deleted with the membership.
+- A key is verified against the provider before it is stored (10 checks per
+  minute per person) and always targets the provider's official endpoint.
+- Usage on a personal key is neither limited nor counted against the
+  organization's quotas and budgets; provider allowlists and the local-model
+  rule for confidential data still apply.
+
+### Prototypes, document fidelity, provider stream integrity (2026-11-19)
+
+- Prototypes (```prototype blocks) render in the existing opaque-origin artifact
+  frame under the same CSP. The model's HTML is embedded as JSON data and
+  sanitized by the kit runtime (no scripts, frames, objects, event-handler
+  attributes, external links, external resources, link-rewriting SVG
+  animations) before display; only the kit's own script runs.
+- Generated Office documents are checked for numbers absent from what the model
+  received (request, attachments, history, tool results) or simply derived from
+  it; mismatches are reported to the model and flagged to the user.
+- A provider error or interruption in the middle of a streamed answer is raised
+  as "provider unavailable", never returned as a complete answer.
+
+### Photos of knowledge bases and connectors (2026-11-17)
+
+- A knowledge base (its editors) or a connector (administrators only) can use a
+  photo as its icon. The browser crops it to 128 px and re-encodes it (EXIF and
+  GPS removed). The API accepts only an embedded PNG, JPEG or WebP image,
+  checked by its binary signature, up to 60,000 characters: no SVG and no
+  remote URL (tracking pixel).
+- Stored encrypted with the organization key; the database enforces the
+  ciphertext format and key rotation covers both columns. Audit events record
+  that a photo was set or removed, never the image.
+
+### Document studio (2026-11-01)
+
+- The sandbox produces Word, PowerPoint and Excel files and PDFs
+  (`snowfall_docs`: themes, typed slides with native charts, reports with
+  table of contents, styled workbooks, user templates; LibreOffice headless
+  for PDF conversion). Python libraries hash-pinned, published at least 14
+  days earlier; Debian packages signed, base image pinned by digest.
+- Every generated Office file is checked before delivery: no macros or
+  executable parts, no embedded objects other than a chart workbook (checked
+  recursively), external relationships limited to web/mail hyperlinks, no
+  DDE links or file-loading fields, zip-bomb limits.
+- Spreadsheet cells starting with "=" stay text. Jinja template fields are
+  auto-escaped. `/var/tmp` (LibreOffice's hard-coded pipe directory) is
+  write-only for runs (1733) and wiped of each run's files.
+
+### Costs, limits and proven operations (2026-11-01)
+
+- (2026-11-17) Once the step or token limit of an answer is reached, no tool is
+  offered, and any tool call the model still emits is ignored, so the caps
+  cannot be exceeded by a model that keeps calling tools.
+- Tokens are counted per model; costs are computed in euros from
+  administrator-entered prices (no built-in price list); unpriced external
+  models are flagged, local models are free.
+- Monthly budgets in euros (organization, per member), tools included, are
+  enforced before each answer and before each metered tool call; per-member
+  tool limits; per-answer token and duration caps bounded by the platform
+  limits. Members only see their own spending.
+- Alert rules are unit-tested (promtool) in CI; the alert chain (outage →
+  e-mail) and backup → restore → decrypted read under RLS are exercised in CI
+  on throwaway stacks. The restore procedure was corrected (db:setup step).
+  Incident response plan with CNIL 72-hour notification and exercise schedule.
+
+### Agent-composed documents (2026-11-01)
+
+- `run_code` can read files produced in the same conversation (generated
+  images, code outputs, including those of the response in progress), in
+  addition to user attachments. Lookup by name in the current conversation
+  only; the read is filtered by conversation again (two independent checks,
+  plus RLS). User attachments win over a produced file of the same name.
+  Generated images get distinct names (`image-1.png`, `image-2.png`…).
+- Sandbox gains fpdf2 2.8.9 (and defusedxml 0.7.1), hash-pinned, published
+  before the dependency cut-off; sandbox attack battery re-run: 27/27 blocked.
+- Empty web or knowledge searches are flagged in the stored activity
+  (`empty`), shown as "No results"; the platform prompt tells the model to
+  name the failed tool instead of claiming it has none.
+
 ### Knowledge library (2026-10-31)
 
 - Knowledge bases are now standalone objects (encrypted name, author,

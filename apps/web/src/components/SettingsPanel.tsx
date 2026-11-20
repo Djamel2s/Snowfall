@@ -5,7 +5,6 @@ import { api, providerIds, toolMeters, type Organization, type Preferences, type
 import { useI18n, type Locale } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
 import MyDataSettings from './MyDataSettings'
-import MemorySettings from './MemorySettings'
 import { useBranding } from '../lib/branding'
 
 // Réglages personnels (« Mon compte »). L'organisation se règle dans
@@ -23,8 +22,9 @@ type Props = {
 const tokensOf = (totals?: { inputTokens: number; outputTokens: number }) =>
   (totals?.inputTokens ?? 0) + (totals?.outputTokens ?? 0)
 
-export function Meter({ label, used, limit }: { label: string; used: number; limit: number | null | undefined }) {
-  const { t, formatNumber } = useI18n()
+export function Meter({ label, used, limit, format }: { label: string; used: number; limit: number | null | undefined; format?: (value: number) => string }) {
+  const { t, formatNumber: number } = useI18n()
+  const formatNumber = format ?? number
   const ratio = limit ? Math.min(1, used / limit) : 0
   return (
     <div className="settings-meter">
@@ -71,6 +71,7 @@ function InstructionsSettings({ value, onSave, saved }: { value: string; onSave:
 
 export default function SettingsPanel({ preferences, onPreferencesChange, onPreferencesSave, onConversationsImported }: Props) {
   const { t, locale, setLocale, formatNumber } = useI18n()
+  const euro = (value: number) => new Intl.NumberFormat(locale === 'fr' ? 'fr-FR' : 'en-US', { style: 'currency', currency: 'EUR' }).format(value)
   const brand = useBranding()
   const session = getSession()
   const name = session.profile.name ?? session.profile.username ?? session.profile.email ?? ''
@@ -215,8 +216,6 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onPref
         saved={saved === 'instructions'}
       />
 
-      <MemorySettings enabled={preferences.memory} onToggle={(memory) => updatePreferences({ memory })} onError={setError} />
-
       <section className="settings-card" aria-label={t('settings.usage')}>
         <h3>{t('settings.usage')}</h3>
         {usage ? (
@@ -236,6 +235,14 @@ export default function SettingsPanel({ preferences, onPreferencesChange, onPref
               .filter(({ id }) => usage.usage.tools?.[id] || usage.limits.tools?.[id])
               .map(({ id }) => (
                 <Meter key={id} label={t(`settings.meter.${id}`)} used={usage.usage.tools?.[id] ?? 0} limit={usage.limits.tools?.[id]} />
+              ))}
+            {usage.usage.mySpend !== undefined && (usage.usage.mySpend > 0 || usage.limits.memberBudget) ? (
+              <Meter label={t('settings.mySpend')} used={usage.usage.mySpend} limit={usage.limits.memberBudget} format={euro} />
+            ) : null}
+            {toolMeters
+              .filter(({ id }) => usage.limits.memberTools?.[id])
+              .map(({ id }) => (
+                <Meter key={`mine-${id}`} label={t('costs.quotaToolMember', { tool: t(`settings.meter.${id}`) })} used={usage.usage.myTools?.[id] ?? 0} limit={usage.limits.memberTools?.[id]} />
               ))}
             <p className="settings-hint">
               {t('settings.usageMine')} : {t('settings.tokens', { count: formatNumber(tokensOf(usage.usage.mine)) })}

@@ -1,5 +1,5 @@
 import type { ToolSpec } from "../agent/tools.js";
-import { ModelRefusalError, ProviderRateLimitError, type ChatModel, type ChatTurn } from "../graph/chat-graph.js";
+import { ModelRefusalError, ProviderRateLimitError, ProviderUnavailableError, type ChatModel, type ChatTurn } from "../graph/chat-graph.js";
 import { conversationTurns } from "./content.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { ModelInfo, ProviderSettings } from "./types.js";
@@ -85,9 +85,30 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Gemi
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice(5).trim())
         .join("");
-      if (data) yield JSON.parse(data) as GeminiChunk;
+      if (data) yield checked(JSON.parse(data) as GeminiChunk);
     }
   }
+  // Reste du flux : un dernier événement sans ligne vide, ou une erreur envoyée EN COURS
+  // de réponse sous forme de JSON brut (vu le 19 novembre : 503 « high demand » après
+  // 247 jetons). Ignorée, elle donnait une réponse tronquée présentée comme complète.
+  const rest = (buffer + decoder.decode()).trim();
+  if (!rest) return;
+  const data = rest.startsWith("data:") ? rest.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("") : rest;
+  let chunk: GeminiChunk;
+  try {
+    chunk = JSON.parse(data) as GeminiChunk;
+  } catch {
+    throw new ProviderUnavailableError();
+  }
+  yield checked(chunk);
+}
+
+/** Erreur du fournisseur dans le flux : levée (429 : limite de débit), jamais ignorée. */
+function checked(chunk: GeminiChunk & { error?: { code?: number } }): GeminiChunk {
+  if (!chunk.error) return chunk;
+  if (chunk.error.code === 429) throw new ProviderRateLimitError();
+  if ((chunk.error.code ?? 0) >= 500) throw new ProviderUnavailableError();
+  throw new Error(`GOOGLE_${Number.isInteger(chunk.error.code) ? chunk.error.code : "STREAM_ERROR"}`);
 }
 
 /**
@@ -180,6 +201,7 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
 
       let usage: GeminiChunk["usageMetadata"];
       let calls = 0;
+      let finished = false;
       for await (const chunk of sseEvents(response.body)) {
         if (chunk.promptFeedback?.blockReason) throw new ModelRefusalError();
 
@@ -202,8 +224,12 @@ export function createGoogleModel(model: string, settings: ProviderSettings): Ch
         }
         if (candidate?.finishReason && BLOCKED.has(candidate.finishReason)) throw new ModelRefusalError();
         if (candidate?.finishReason === "MAX_TOKENS") yield { type: "truncated" };
+        if (candidate?.finishReason) finished = true;
         if (chunk.usageMetadata) usage = chunk.usageMetadata;
       }
+      // Gemini termine toujours par une raison (STOP, MAX_TOKENS…) : sans elle, le flux a été
+      // coupé (réseau, panne) et la réponse est incomplète, jamais présentée comme finie.
+      if (!finished) throw new ProviderUnavailableError();
 
       if (usage) {
         yield {

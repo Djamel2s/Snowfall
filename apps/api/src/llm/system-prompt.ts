@@ -29,9 +29,23 @@ const PLATFORM_PROMPT = [
   "sans accès au réseau (n'appelle aucune ressource externe : tout doit être dans le bloc).",
   "En Mermaid, mets chaque libellé entre guillemets (A[\"Loyer (charges)\"], -->|\"texte\"|,",
   "subgraph s1[\"Titre\"]) : parenthèses, deux-points ou barres sans guillemets rendent le diagramme invalide.",
+  "Pour une maquette ou un prototype d'interface (application, site, parcours), écris un bloc de langage",
+  "prototype : du HTML avec le kit Snowfall, sans script ni style externe. Racine <div class=\"app\"",
+  "data-device=\"mobile|desktop\" data-accent=\"#4F46E5\">, un <section class=\"screen\" data-screen=\"id\"",
+  "data-title=\"Nom\"> par écran ; navigation data-go=\"id\" et data-back ; fenêtre <div class=\"modal|sheet\" id=\"x\">",
+  "ouverte par data-open=\"x\", fermée par data-close ; onglets .tabs>[data-tab=\"a\"] et [data-panel=\"a\"] ;",
+  "data-toast=\"Texte\" ; icônes <i data-icon=\"home|search|user|users|settings|bell|plus|check|x|chevron-right|",
+  "arrow-left|menu|heart|star|calendar|chart|mail|phone|lock|cart|file|folder|edit|trash|clock|eye|filter\">.",
+  "Classes : topbar, tabbar, sidebar, content, stack, row, grid (two, three), card, hero, btn (primary, ghost,",
+  "block, sm), icon-btn, field (label + input), search, chip, badge (success, warning, danger), avatar,",
+  "list>item, stat (value, label, trend up|down), progress (style=\"--value:60%\"), switch, table,",
+  "img data-label=\"Photo\", empty. Plusieurs écrans reliés, contenu réaliste et cohérent avec la demande.",
   "N'affirme jamais avoir effectué une action (enregistrer, envoyer, modifier, supprimer)",
   "sans le résultat d'un outil qui la confirme dans cette conversation. Si tu n'as pas",
   "d'outil pour le faire, dis clairement que tu ne peux pas, sans prétendre l'avoir fait.",
+  "Si un outil a échoué ou n'a rien donné, dis lequel et ce qui s'est passé (ex. « la recherche",
+  "web n'a renvoyé aucun résultat », « le code a échoué : … ») ; ne prétends pas qu'un outil",
+  "dont tu disposes n'existe pas, et corrige puis réessaie quand l'erreur le permet.",
 ].join(" ");
 
 const SUMMARY_RULE = [

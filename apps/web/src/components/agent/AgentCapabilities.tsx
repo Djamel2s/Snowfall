@@ -86,7 +86,7 @@ export default function AgentCapabilities(props: Props) {
             return (
               <Capability
                 key={server.id}
-                icon={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={22} />}
+                icon={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={22} image={server.icon} />}
                 title={server.name}
                 hint={writes ? t('studio.connectorToolsWrite', { count: server.tools.length }) : t('studio.connectorTools', { count: server.tools.length })}
                 write={writes}

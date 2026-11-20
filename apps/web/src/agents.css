@@ -637,6 +637,26 @@
 .responder-option .provider-logo { opacity: .45; }
 .responder-option .agent-avatar { flex-shrink: 0; }
 
+/* Lien discret en bas de la liste : un fournisseur n'est pas encore connecté. */
+.responder-connect {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 13px;
+  border: 0;
+  border-top: 1px solid rgba(183, 210, 244, .1);
+  background: transparent;
+  color: #8fa3bf;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.responder-connect:hover,
+.responder-connect:focus-visible { background: rgba(185, 217, 255, .07); color: #eef5ff; }
+
 .responder-option-name {
   min-width: 0;
   overflow: hidden;

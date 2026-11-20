@@ -11,10 +11,13 @@
 //     --pseudonymize      données personnelles remplacées par des jetons (comparer avec / sans)
 //     --template <ids|all> agents du catalogue (au lieu du jeu général)
 //     --sandbox           vrai bac à sable (Docker, conteneurs jetables) : code et scripts exécutés pour de vrai
+//     --keep-files <dossier> garde les documents produits (Office, PDF) et le rendu PDF de chaque
+//                         .pptx/.docx (converti dans le bac à sable), pour les regarder
 //
 // Coût : chaque cas appelle le modèle (2 à 4 fois avec les outils). Les clés
 // viennent du fichier .env ; seuls les fournisseurs nommés sont appelés.
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import dotenv from "dotenv";
@@ -41,6 +44,7 @@ const { values } = parseArgs({
     // Agents du catalogue : un ou plusieurs modèles (séparés par des virgules), ou « all ».
     template: { type: "string" },
     sandbox: { type: "boolean", default: false },
+    "keep-files": { type: "string" },
   },
 });
 
@@ -93,6 +97,33 @@ const pct = (passed: number, runs: number) => (runs ? `${Math.round((passed / ru
 const sandbox = values.sandbox ? await startEvalSandbox() : undefined;
 if (sandbox) console.log("Bac à sable réel : démarré (conteneurs jetables).");
 
+const keepDir = values["keep-files"];
+if (keepDir) await mkdir(keepDir, { recursive: true });
+/** Documents produits, gardés pour être regardés ; .pptx et .docx rendus en PDF (même LibreOffice qu'en production). */
+const keeper = (prefix: string) =>
+  keepDir
+    ? async (file: { name: string; bytes: Buffer }) => {
+        const name = `${prefix}-${file.name.replace(/[^A-Za-z0-9_.-]/g, "_")}`;
+        await writeFile(join(keepDir, name), file.bytes);
+        if (!sandbox || !/\.(pptx|docx)$/i.test(name)) return;
+        const rendered = await sandbox.run("", {
+          timeoutSeconds: 60,
+          signal: AbortSignal.timeout(90_000),
+          skill: {
+            entry: "skill/render.py",
+            args: [],
+            files: [
+              { path: `inputs/${name}`, data: file.bytes.toString("base64") },
+              { path: "skill/render.py", content: ["import shutil", "from snowfall_docs import to_pdf", `shutil.copy(to_pdf("inputs/${name}"), "rendu.pdf")`].join("\n") },
+            ],
+          },
+        });
+        const pdf = rendered.files.find((item) => item.name === "rendu.pdf");
+        if (pdf) await writeFile(join(keepDir, name.replace(/\.(pptx|docx)$/i, ".rendu.pdf")), Buffer.from(pdf.data, "base64"));
+        else console.log(`  (rendu PDF impossible pour ${name} : ${rendered.stderr.slice(0, 200)})`);
+      }
+    : undefined;
+
 const reports: ModelReport[] = [];
 const details: Record<string, CaseResult[]> = {};
 console.log(`${cases.length} cas × ${repeat} essai(s) × ${models.length} modèle(s)${judge ? ` — juge : ${values.judge}` : ""}\n`);
@@ -113,13 +144,13 @@ for (const model of models) {
         process.exitCode = 3;
         break cases;
       }
-      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox });
+      let result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox, onDocument: keeper(`${model.model}-${evalCase.id}-${attempt + 1}`) });
       // Quota par minute atteint : on attend, puis on rejoue le cas (deux fois au plus).
       // Mêmes formes que isRateLimit() : erreur dédiée, SDK (« 429 », « rate_limit_error »…).
       for (let retry = 1; retry <= 2 && !daily(result.error) && /\b429\b|rate.?limit|too many requests|^JUDGE_/i.test(result.error ?? ""); retry++) {
         console.log(`  … quota atteint, nouvel essai de ${evalCase.id} dans ${30 * retry} s`);
         await new Promise((resolve) => setTimeout(resolve, 30_000 * retry));
-        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox });
+        result = await runCase(evalCase, runner, { judge: judge ? registry.runner(judge) : undefined, embeddings, pseudonymize: values.pseudonymize, sandbox, onDocument: keeper(`${model.model}-${evalCase.id}-${attempt + 1}`) });
       }
       results.push(result);
       limited = result.error === "PROVIDER_RATE_LIMITED" || /\b429\b|rate.?limit|too many requests/i.test(result.error ?? "") ? limited + 1 : 0;

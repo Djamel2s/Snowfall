@@ -42,12 +42,18 @@ export type MockOptions = {
   presets?: { id: string; name: string; settings: Record<string, unknown>; createdAt: string }[]
   /** Réponse qui cherche sur le web, lit une page et cite ses sources (activité gardée). */
   research?: boolean
+  /** Réponse dont la recherche web n'a rien renvoyé. */
+  emptySearch?: boolean
   /** Réponse qui cite un document de la base (ouvrir au passage, signaler). */
   documentAnswer?: boolean
   /** Réponse qui crée une image (outil generate_image), rattachée à la réponse. */
   imageAnswer?: boolean
+  /** La dernière réponse a produit des documents Office et un PDF. */
+  officeAnswer?: boolean
   /** Bases déjà dans la bibliothèque (access : view = partagée en lecture). */
   knowledgeBases?: { id: string; name: string | null; access?: 'owner' | 'edit' | 'view'; mine?: boolean; confidential?: boolean }[]
+  /** Fournisseurs pour lesquels l'organisation autorise les clés personnelles. */
+  personalKeys?: string[]
 }
 
 const DOC_SOURCE = { n: 1, sourceId: 'doc-1', name: 'Politique de déplacements.pdf', url: null, base: 'agent', section: 'Hôtels', page: 4, excerpt: 'Le plafond de nuit d’hôtel est de 120 € à Paris et 90 € en région, petit-déjeuner compris.' }
@@ -138,7 +144,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   // Droits fins : autorisations par ressource, groupes, annuaire.
   const access = new Map<string, unknown[]>()
   // Bibliothèque de connaissances : bases, dossiers, documents, rattachements.
-  type MockBase = { id: string; name: string | null; confidential: boolean; access: 'owner' | 'edit' | 'view'; mine: boolean }
+  type MockBase = { id: string; name: string | null; confidential: boolean; access: 'owner' | 'edit' | 'view'; mine: boolean; icon?: string | null }
   const kbBases: MockBase[] = (options.knowledgeBases ?? []).map((base) => ({ confidential: false, access: 'owner' as const, mine: true, ...base }))
   const kbFolders: { id: string; baseId: string; parentId: string | null; name: string; createdAt: string }[] = []
   const kbSources: { id: string; baseId: string; folderId: string | null; kind: 'file' | 'link'; status: 'ready'; errorCode: null; name: string; url: string | null; mediaType: string | null; size: number; chunkCount: number; embeddingModel: null; createdAt: string; updatedAt: string }[] = []
@@ -185,12 +191,34 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
   const apiKeyCreates: { kind?: 'api' | 'scim'; name: string; agentIds?: string[]; expiresInDays: number }[] = []
   const audioCalls: { type: string; size: number }[] = []
   const speechCalls: string[] = []
-  type MockServer = { id: string; name: string; status: string; auth: string; kind: string; url: string; hasToken?: boolean; catalogId?: string; tools: { name: string; title: string | null; access: string }[] }
+  type MockServer = { id: string; name: string; status: string; auth: string; kind: string; url: string; hasToken?: boolean; catalogId?: string; tools: { name: string; title: string | null; access: string }[]; icon?: string | null }
   const mcpServers: MockServer[] = options.mcpOAuth
     ? [{ id: 'mcp-1', name: 'Jira', status: 'approved', auth: 'oauth', kind: 'mcp', url: 'https://mcp.atlassian.com/v2/mcp', catalogId: 'atlassian', tools: [{ name: 'search_issues', title: null, access: 'read' }] }]
     : []
   const createdConnectors: unknown[] = []
   const savedSettings: Record<string, unknown>[] = []
+  // Clés d'API des fournisseurs : comme l'API (indice seulement, jamais la clé ; « bad » : refusée).
+  const modelKeys = { organization: new Map<string, string>(), personal: new Map<string, string>() }
+  let personalKeyProviders = [...(options.personalKeys ?? [])]
+  const keyCalls: string[] = []
+  const keyStatus = () => ({
+    providers: ['mistral', 'openai', 'anthropic', 'google'].map((provider) => {
+      const allowed = ['mistral', 'openai', 'anthropic', 'google'].includes(provider)
+      const personalAllowed = personalKeyProviders.includes(provider)
+      const personal = modelKeys.personal.get(provider)
+      const organization = modelKeys.organization.get(provider)
+      const platform = provider === 'mistral'
+      return {
+        id: provider,
+        allowed,
+        personalAllowed,
+        active: personal && personalAllowed ? 'personal' : organization ? 'organization' : platform ? 'platform' : null,
+        platform,
+        organization: organization ? (role === 'admin' || role === 'owner' ? { hint: organization, updatedAt: now } : {}) : null,
+        personal: personal ? { hint: personal, updatedAt: now } : null,
+      }
+    }),
+  })
   const oauthCallbacks: { state: string; code: string }[] = []
   let pendingQuestion: string | null = null
   let memories = [
@@ -225,7 +253,7 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (method === 'GET' && path === '/knowledge/sources/doc-1/passages') return json(route, { name: DOC_SOURCE.name, passages: DOC_PASSAGES })
 
     // ---- Bibliothèque ----------------------------------------------------------------
-    const baseView = (base: MockBase) => ({ id: base.id, name: base.name, confidential: base.confidential, access: base.access, mine: base.mine })
+    const baseView = (base: MockBase) => ({ id: base.id, name: base.name, icon: base.icon ?? null, confidential: base.confidential, access: base.access, mine: base.mine })
     if (key === 'GET /knowledge/bases') {
       return json(route, {
         bases: kbBases.map((base) => ({
@@ -252,8 +280,9 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         return json(route, { base: { ...baseView(base), embeddingModel: null, linksEnabled: true }, folders: kbFolders.filter((folder) => folder.baseId === base.id), sources: kbSources.filter((source) => source.baseId === base.id) })
       }
       if (method === 'PATCH' && !tail) {
-        const body = request.postDataJSON() as { name?: string; confidential?: boolean }
+        const body = request.postDataJSON() as { name?: string; confidential?: boolean; icon?: string | null }
         if (body.name !== undefined) base.name = body.name
+        if (body.icon !== undefined) base.icon = body.icon
         if (body.confidential !== undefined) base.confidential = body.confidential
         kbCalls.push(`update:${JSON.stringify(body)}`)
         return json(route, { base: baseView(base) })
@@ -534,7 +563,34 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       return json(route, { agent: { ...input, id: id(), createdBy: 'u-1', canEdit: true } }, 201)
     }
     if (key === 'GET /models') {
-      return json(route, { providers: [{ id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] }], defaultModel: { provider: 'mistral', model: 'mistral-small-latest' } })
+      // Fournisseurs ouverts par une clé (de l'organisation ou la mienne) : un modèle chacun.
+      const opened = keyStatus().providers.filter((item) => item.id !== 'mistral')
+      return json(route, {
+        providers: [
+          { id: 'mistral', available: true, allowed: true, models: [{ id: 'mistral-small-latest', label: 'mistral-small' }, { id: 'mistral-large-latest', label: 'mistral-large' }] },
+          ...opened.map((item) => ({ id: item.id, available: item.active !== null, allowed: true, models: item.active ? [{ id: `${item.id}-m1`, label: `${item.id}-m1` }] : [] })),
+        ],
+        defaultModel: { provider: 'mistral', model: 'mistral-small-latest' },
+      })
+    }
+    if (key === 'GET /me/model-keys') return json(route, keyStatus())
+    const keyPath = /^\/(me|organization)\/model-keys\/([a-z]+)$/.exec(path)
+    if (keyPath && (method === 'PUT' || method === 'DELETE')) {
+      const scope = keyPath[1] === 'me' ? 'personal' : 'organization'
+      const provider = keyPath[2]!
+      if (scope === 'organization' && role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
+      const store = modelKeys[scope]
+      if (method === 'DELETE') {
+        keyCalls.push(`remove:${scope}:${provider}`)
+        if (!store.delete(provider)) return json(route, { error: 'Not found' }, 404)
+        return json(route, keyStatus())
+      }
+      if (scope === 'personal' && !personalKeyProviders.includes(provider)) return json(route, { error: 'Personal keys disabled', reason: 'personal_keys_disabled' }, 403)
+      const apiKey = (request.postDataJSON() as { apiKey: string }).apiKey
+      keyCalls.push(`set:${scope}:${provider}`)
+      if (apiKey.includes('bad')) return json(route, { error: 'Key rejected', reason: 'key_rejected' }, 400)
+      store.set(provider, apiKey.slice(-4))
+      return json(route, keyStatus())
     }
     // Sécurité : comme l'API (administrateurs ; journal de l'organisation, par pages, filtres).
     if (key.startsWith('GET /admin/audit') || key.startsWith('GET /admin/security') || key === 'PUT /admin/security/retention') {
@@ -597,15 +653,52 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
         tokens: ['2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map((period, index) => ({ period, byProvider: { mistral: 200_000 * (index + 1) } })),
         monthlyTokenLimit: 2_000_000,
         tools: { web: 42, code: 7 },
+        costs: ['2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01'].map((period, index) => ({ period, euros: 12.5 * (index + 1), unpriced: index === 5 ? ['openai:gpt-x'] : [] })),
+        monthlyBudget: 100,
+      })
+    }
+    if (key === 'GET /organization/costs') {
+      if (role !== 'admin' && role !== 'owner') return json(route, { error: 'Forbidden' }, 403)
+      return json(route, {
+        period: '2026-10-01',
+        models: [
+          { provider: 'mistral', model: 'mistral-large-latest', inputTokens: 2_000_000, outputTokens: 1_000_000, euros: 10 },
+          { provider: 'openai', model: 'gpt-x', inputTokens: 300_000, outputTokens: 50_000, euros: null },
+          { provider: 'local', model: 'qwen3:8b', inputTokens: 900_000, outputTokens: 400_000, euros: 0 },
+        ],
+        tools: [{ meter: 'image', calls: 12, euros: 0.6 }],
+        total: 10.6,
+        unpriced: ['openai:gpt-x'],
+        budget: 100,
+        prices: { models: { 'mistral:mistral-large-latest': { input: 2, output: 6 } }, tools: { image: 0.05 } },
       })
     }
     if (key === 'GET /usage') {
-      return json(route, { usage: { period: '2026-10-01', total: { inputTokens: 1200, outputTokens: 300 }, byProvider: { mistral: { inputTokens: 1200, outputTokens: 300 } }, mine: { inputTokens: 800, outputTokens: 200 }, tools: { web: 42 } }, limits: { monthly: 100_000, providers: {}, tools: { web: 500 } } })
+      return json(route, {
+        usage: { period: '2026-10-01', total: { inputTokens: 1200, outputTokens: 300 }, byProvider: { mistral: { inputTokens: 1200, outputTokens: 300 } }, mine: { inputTokens: 800, outputTokens: 200 }, tools: { web: 42 }, myTools: { web: 4 }, mySpend: 3.2 },
+        limits: { monthly: 100_000, providers: {}, tools: { web: 500 }, memberTools: { web: 50 }, memberBudget: 20 },
+      })
     }
     if (key === 'GET /organization') {
       return json(route, {
         organization: { id: ORG, name: 'Polaris', ...(role === 'owner' || role === 'admin' ? { sso: { alias: null, defaultRole: 'member' } } : {}) },
-        settings: { allowedProviders: ['mistral'], monthlyTokenLimit: 100_000, providerTokenLimits: {}, embeddingProvider: null, linksEnabled: false, linkDomains: [], tools: options.orgTools ?? ['search_knowledge', 'save_to_knowledge'], toolLimits: { web: 500 } },
+        settings: {
+          allowedProviders: ['mistral', 'openai'],
+          monthlyTokenLimit: 100_000,
+          providerTokenLimits: {},
+          embeddingProvider: null,
+          linksEnabled: false,
+          linkDomains: [],
+          tools: options.orgTools ?? ['search_knowledge', 'save_to_knowledge'],
+          toolLimits: { web: 500 },
+          prices: { models: { 'mistral:mistral-large-latest': { input: 2, output: 6 } }, tools: { image: 0.05 } },
+          monthlyBudget: 100,
+          memberMonthlyBudget: null,
+          memberToolLimits: {},
+          responseMaxTokens: null,
+          responseMaxSeconds: null,
+          personalKeyProviders,
+        },
         configuredProviders: ['mistral'],
         embeddingProviders: [],
         platformTools: options.platformTools ?? ['search_knowledge', 'save_to_knowledge', 'delegate'],
@@ -614,18 +707,23 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     if (key === 'PUT /organization/settings') {
       const body = request.postDataJSON() as Record<string, unknown>
       savedSettings.push(body)
+      if (Array.isArray(body.personalKeyProviders)) personalKeyProviders = body.personalKeyProviders as string[]
       return json(route, { settings: body })
     }
     if (key === 'GET /organization/members') {
       return json(route, { members: [{ userId: 'u-1', email: 'camille@polaris.example', role, joinedAt: now, monthlyTokens: 1000 }], invitations: [] })
     }
     if (key === 'GET /organization/mcp-servers') return json(route, { servers: mcpServers })
-    const serverPath = /^\/organization\/mcp-servers\/([^/]+)(\/discover|\/approve)?$/.exec(path)
+    const serverPath = /^\/organization\/mcp-servers\/([^/]+)(\/discover|\/approve|\/icon)?$/.exec(path)
     const target = serverPath ? mcpServers.find((item) => item.id === serverPath[1]) : undefined
     if (serverPath && !target) return json(route, { error: 'Not found' }, 404)
     if (serverPath && target && method === 'DELETE' && !serverPath[2]) {
       mcpServers.splice(mcpServers.indexOf(target), 1)
       return route.fulfill({ status: 204 })
+    }
+    if (serverPath && target && method === 'PUT' && serverPath[2] === '/icon') {
+      target.icon = (request.postDataJSON() as { icon: string | null }).icon
+      return json(route, { server: target })
     }
     if (serverPath && target && method === 'PATCH' && !serverPath[2]) {
       const body = request.postDataJSON() as { enabled: boolean }
@@ -842,6 +940,17 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
       }
       if (method === 'GET' && rest === '/files') {
         const last = (messages.get(conversationId!) ?? []).filter((item) => item.role === 'assistant').at(-1)
+        if (options.officeAnswer && last) {
+          const office = (name: string, mediaType: string, size: number) => ({ id: `doc-${name}`, name, mediaType, size, messageId: last.id, createdAt: now })
+          return json(route, {
+            files: [
+              office('bilan.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 38_000),
+              office('audit.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 41_000),
+              office('ventes.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 9_000),
+              office('bilan.pdf', 'application/pdf', 52_000),
+            ],
+          })
+        }
         return json(route, { files: options.imageAnswer && last ? [{ id: 'img-1', name: 'image.png', mediaType: 'image/png', size: FAVICON.length, messageId: last.id, createdAt: now }] : [] })
       }
       if (method === 'GET' && rest === '/files/img-1') return route.fulfill({ status: 200, contentType: 'image/png', body: FAVICON })
@@ -967,6 +1076,14 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
           messages.get(conversationId!)?.push(userMessage, assistantMessage)
           return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse([['step', step], ['token', { text: answer }], ['done', { userMessage, assistantMessage }]]) })
         }
+        if (options.emptySearch) {
+          const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
+          const step = { id: 's1', name: 'web_search', status: 'done', summary: 'OWASP top 10', startedAt: 500, endedAt: 600, empty: true }
+          const answer = 'La recherche web n’a renvoyé aucun résultat.'
+          const assistantMessage = { id: id(), role: 'assistant' as const, content: answer, createdAt: now, author: 'model:mistral:mistral-small-latest', activity: { startedAt: 400, endedAt: 900, steps: [step], consulted: [] } }
+          messages.get(conversationId!)?.push(userMessage, assistantMessage)
+          return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse([['step', step], ['token', { text: answer }], ['done', { userMessage, assistantMessage }]]) })
+        }
         if (options.research) {
           const userMessage = { id: id(), role: 'user' as const, content, createdAt: now }
           const activity = { startedAt: 500, endedAt: 6_300, steps: RESEARCH_STEPS, consulted: [...RESEARCH_SOURCES, ...RESEARCH_ALSO] }
@@ -1036,5 +1153,5 @@ export async function mockApi(page: Page, options: MockOptions = {}) {
     return json(route, { error: 'Not found' }, 404)
   })
 
-  return { kbCalls, unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, conversationCreates: () => conversationCreates }
+  return { kbCalls, unknown, feedbackCalls, decisions, cancels: () => cancels, oauthCallbacks, createdConnectors, audioCalls, speechCalls, savedSettings, appliedProposals, decisionCalls, schedules, scheduleRuns, savedPreferences, conversationPatches, presets, continueCalls, forks, library, copies, regenerateCalls, branchCalls, accessCalls, groups, skills, agentSaves, catalogAdds, mcpServers, emptyJsonBodies, approveCalls, apiKeys, apiKeyCreates, templateInstalls, adminOverviewCalls, brandingCalls, securityCalls, keyCalls, conversationCreates: () => conversationCreates }
 }

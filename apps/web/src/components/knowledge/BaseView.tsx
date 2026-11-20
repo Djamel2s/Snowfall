@@ -6,6 +6,7 @@ import { formatNumber, useI18n } from '../../lib/i18n'
 import { failureKey } from '../../lib/knowledge-status'
 import { safeHref } from '../../lib/markdown'
 import SharePanel from '../SharePanel'
+import { EntityIcon, IconPicker } from '../ui/EntityIcon'
 import { InlineEdit, ListEmpty, ListRow, ListRows, ListSection, PanelBack, RowAction, SectionAction } from '../ui/List'
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -168,7 +169,18 @@ export default function BaseView({ baseId, fallbackName, canWrite, onBack, onDel
         />
       ) : (
         <div className="project-view-head">
-          {base?.confidential ? <Lock size={16} /> : <BookOpen size={16} />}
+          {base && canEdit ? (
+            <IconPicker
+              image={base.icon}
+              size={20}
+              fallback={base.confidential ? <Lock size={16} /> : <BookOpen size={16} />}
+              disabled={busy}
+              onChange={(icon) => void run(() => api.updateLibraryBase(baseId, { icon }))}
+              onError={setError}
+            />
+          ) : (
+            <EntityIcon image={base?.icon} size={20} fallback={base?.confidential ? <Lock size={16} /> : <BookOpen size={16} />} />
+          )}
           <strong title={title}>{title}</strong>
           {base && (
             <span className="list-section-actions">

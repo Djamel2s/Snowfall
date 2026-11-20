@@ -39,6 +39,7 @@ export default function AgentsPanel(props: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<string | null>(null)
   const [catalogView, setCatalogView] = useCatalogView('agents')
+  const [agentsView, setAgentsView] = useCatalogView('my-agents')
   const templates = useAgentTemplates(props.onError)
   const template = templates.find((item) => item.id === open)
 
@@ -66,6 +67,41 @@ export default function AgentsPanel(props: Props) {
   const shared = shown.filter((agent) => agent.createdBy !== currentUserId)
   const catalog = templates.filter((item) => matches(`${item.name} ${item.tagline}`))
 
+  const agentActions = (agent: Agent) => (
+    <>
+      {agent.canEdit && (
+        <RowAction label={t('sidebar.editAgent', { name: agent.name })} title={t('common.edit')} onClick={() => props.onEdit(agent)}>
+          <Pencil size={12} />
+        </RowAction>
+      )}
+      {props.onSchedule && (
+        <RowAction label={t('schedules.new', { name: agent.name })} title={t('schedules.schedule')} onClick={() => props.onSchedule!(agent)}>
+          <AlarmClock size={12} />
+        </RowAction>
+      )}
+      {props.onCreate && (
+        <RowAction label={t('agents.duplicate', { name: agent.name })} title={t('agents.duplicateShort')} onClick={() => props.onDuplicate(agent)}>
+          <Copy size={12} />
+        </RowAction>
+      )}
+    </>
+  )
+
+  const agentTile = (agent: Agent) => (
+    <GridTile
+      key={agent.id}
+      icon={<AgentAvatar avatar={agent.avatar} size={34} />}
+      title={agent.name}
+      tooltip={`${agent.name} · ${modelLabel(agent)}`}
+      selected={agent.id === activeAgentId}
+      onClick={() => props.onStart(agent)}
+      actions={agentActions(agent)}
+    />
+  )
+
+  const agentList = (list: Agent[], label: string) =>
+    agentsView === 'grid' ? <ListGrid label={label}>{list.map(agentTile)}</ListGrid> : <ListRows>{list.map(agentRow)}</ListRows>
+
   const agentRow = (agent: Agent) => (
     <ListRow
       key={agent.id}
@@ -82,25 +118,7 @@ export default function AgentsPanel(props: Props) {
           </span>
         ) : undefined
       }
-      actions={
-        <>
-          {agent.canEdit && (
-            <RowAction label={t('sidebar.editAgent', { name: agent.name })} title={t('common.edit')} onClick={() => props.onEdit(agent)}>
-              <Pencil size={12} />
-            </RowAction>
-          )}
-          {props.onSchedule && (
-            <RowAction label={t('schedules.new', { name: agent.name })} title={t('schedules.schedule')} onClick={() => props.onSchedule!(agent)}>
-              <AlarmClock size={12} />
-            </RowAction>
-          )}
-          {props.onCreate && (
-            <RowAction label={t('agents.duplicate', { name: agent.name })} title={t('agents.duplicateShort')} onClick={() => props.onDuplicate(agent)}>
-              <Copy size={12} />
-            </RowAction>
-          )}
-        </>
-      }
+      actions={agentActions(agent)}
     />
   )
 
@@ -114,18 +132,21 @@ export default function AgentsPanel(props: Props) {
         label={t('agents.mineTitle')}
         actions={
           agents.length > 0 ? (
-            <SectionAction label={t('graph.open')} onClick={props.onOpenGraph}>
-              <Waypoints size={14} />
-            </SectionAction>
+            <>
+              <SectionAction label={t('graph.open')} onClick={props.onOpenGraph}>
+                <Waypoints size={14} />
+              </SectionAction>
+              <ViewToggle view={agentsView} onChange={setAgentsView} />
+            </>
           ) : undefined
         }
       >
-        {mine.length ? <ListRows>{mine.map(agentRow)}</ListRows> : <ListEmpty>{needle ? t('agents.noMatch') : t('agents.noneMine')}</ListEmpty>}
+        {mine.length ? agentList(mine, t('agents.mineTitle')) : <ListEmpty>{needle ? t('agents.noMatch') : t('agents.noneMine')}</ListEmpty>}
       </ListSection>
 
       {shared.length > 0 && (
         <ListSection label={t('agents.sharedTitle')}>
-          <ListRows>{shared.map(agentRow)}</ListRows>
+          {agentList(shared, t('agents.sharedTitle'))}
         </ListSection>
       )}
 

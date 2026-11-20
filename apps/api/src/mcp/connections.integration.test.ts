@@ -49,6 +49,14 @@ describe("Connexions MCP (OAuth) : PostgreSQL", { skip: !appUrl || !ownerUrl }, 
     // Configuration OAuth chiffrée (le secret client n'apparaît pas en clair).
     const raw = await withTenant(owner, a, (client) => client.query("SELECT oauth FROM mcp_servers WHERE id = $1", [server.id]));
     assert.ok(!JSON.stringify(raw.rows).includes("s3cret"));
+    // Photo du connecteur : chiffrée, jamais en clair ; pas modifiable par une autre organisation.
+    const icon = `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(32, 5)]).toString("base64")}`;
+    assert.equal(await servers.setIcon(a, server.id, icon), true);
+    assert.equal((await servers.list(a))[0]?.icon, icon);
+    const rawIcon = await withTenant(owner, a, (client) => client.query("SELECT icon FROM mcp_servers WHERE id = $1", [server.id]));
+    assert.ok(!JSON.stringify(rawIcon.rows).includes("data:image"));
+    await assert.rejects(withTenant(owner, a, (client) => client.query("UPDATE mcp_servers SET icon = 'clair' WHERE id = $1", [server.id])), /mcp_servers_icon_encrypted_check/);
+    assert.equal(await servers.setIcon(e, server.id, null), false);
     // Un serveur OAuth n'a pas de jeton partagé.
     await assert.rejects(servers.create(a, { name: "X", url: "https://mcp.example/x", token: "t", oauth }), /mcp_servers_auth_check/);
 

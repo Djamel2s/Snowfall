@@ -3,6 +3,7 @@ import { ArrowUp, BookOpen, ExternalLink, Lock, Plus, X } from 'lucide-react'
 import { api, ApiError, type Agent, type KnowledgeOwnerKind, type LibraryBase, type LibraryBaseSummary, type Project } from '../../lib/api'
 import { libraryLabel } from '../../lib/library'
 import { useI18n } from '../../lib/i18n'
+import { EntityIcon } from '../ui/EntityIcon'
 import { InlineEdit, ListEmpty, ListRow, ListRows, ListSection, RowAction, SectionAction } from '../ui/List'
 
 type Props = {
@@ -134,7 +135,7 @@ export default function BasePicker({ kind, ownerId, draft, onDraftChange, agents
           {current.map((base, index) => (
             <ListRow
               key={base.id}
-              icon={base.confidential ? <Lock size={14} /> : <BookOpen size={14} />}
+              icon={<EntityIcon image={base.icon} size={16} fallback={base.confidential ? <Lock size={14} /> : <BookOpen size={14} />} badge={base.confidential && <Lock />} />}
               title={label(base)}
               subtitle={index === 0 && kind === 'agents' && current.length > 1 ? t('library.primary') : base.access === 'view' ? t('library.readOnlyChip') : undefined}
               label={t('library.openBase', { name: label(base) })}

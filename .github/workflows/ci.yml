@@ -137,6 +137,10 @@ jobs:
       # socket de l'API, écriture, ressources, survie, fuite entre exécutions.
       - name: Batterie d'attaques du bac à sable
         run: bash scripts/sandbox-attack.sh
+      # Studio de documents sous les mêmes limites : chaque format produit et relu,
+      # conversion en PDF (LibreOffice), modèles de l'utilisateur, modèle corrompu.
+      - name: Documents du bac à sable
+        run: bash scripts/sandbox-docs.sh
       # Mauvaises configurations (Dockerfiles, compose) et secrets dans le dépôt.
       - name: Scan de configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -183,6 +187,28 @@ jobs:
       - run: npm run e2e:real
         env:
           CI: "true"
+
+  # Exploitation prouvée : alertes testées (promtool), configurations validées,
+  # puis les deux exercices réels sur des piles jetables (panne → e-mail ;
+  # sauvegarde → restauration → relecture déchiffrée). Preuves dans le journal.
+  operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Supervision (alertes et configurations)
+        run: bash scripts/monitoring-test.sh
+      - name: Exercice de sauvegarde et de restauration
+        run: bash scripts/restore-drill.sh
+      - name: Exercice d'alerte de bout en bout
+        run: bash scripts/alert-drill.sh
 
   secrets:
     runs-on: ubuntu-latest

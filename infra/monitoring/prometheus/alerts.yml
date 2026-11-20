@@ -101,3 +101,30 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "Base confidentielle interrogée avec un modèle externe (refusé)."
+
+  # Coûts, limites et agents : à surveiller dans la journée (pas une panne).
+  - name: snowfall-usage
+    rules:
+      - alert: SnowfallBudgetAtteint
+        expr: increase(snowfall_audit_events_total{event="quota.denied", outcome="denied"}[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Des réponses sont refusées : budget, quota de jetons ou fournisseur interdit (audit : quota.denied)."
+
+      - alert: SnowfallOutilsPlafonnes
+        expr: increase(snowfall_audit_events_total{event="quota.tool_exceeded", outcome="denied"}[1h]) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 10 appels d'outils refusés en une heure (quota ou budget atteint)."
+
+      - alert: SnowfallReponsesInterrompues
+        expr: increase(snowfall_audit_events_total{event="agent.run_limit"}[1h]) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 5 réponses coupées par la durée maximale en une heure (modèle lent, outil bloqué ?)."
+
+      - alert: SnowfallInjectionsSuspectees
+        expr: increase(snowfall_audit_events_total{event="agent.injection_suspected"}[1h]) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "Plus de 10 contenus suspects (injection de consignes) en une heure : campagne ciblée ?"

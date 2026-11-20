@@ -21,6 +21,9 @@ import { skillTools } from "../agent/skill-tools.js";
 import { delegateTool } from "../agent/delegate-tool.js";
 import { SKILL_SCRIPT_TYPE } from "../skills/scripts.js";
 import { MemorySkillStore } from "../skills/store.js";
+import { unzipSync } from "fflate";
+import { checkOoxml } from "../files/ooxml.js";
+import { knownNumbers, officeText, unsupportedNumbers } from "../agent/fidelity.js";
 
 // Évaluation des agents : chaque cas fait tourner la VRAIE boucle d'agent
 // (graphe, prompt système, outils de production) sur des données fictives,
@@ -49,6 +52,14 @@ export type Check =
   | { type: "cites" }
   /** Un fichier produit (bac à sable réel) porte cette extension (ex. « .png »). */
   | { type: "file_produced"; extension: string }
+  /**
+   * Document Office produit, ouvert et inspecté : sain (même contrôle qu'avant
+   * livraison), au moins N diapositives (.pptx), N titres (.docx) ou N feuilles
+   * (.xlsx), avec au moins un graphique si demandé.
+   */
+  | { type: "office_file"; extension: ".pptx" | ".docx" | ".xlsx"; min?: number; chart?: boolean }
+  /** Documents Office fidèles : aucun nombre absent de la demande et des pièces jointes (ni déduit). */
+  | { type: "faithful" }
   | { type: "max_steps"; steps: number };
 
 export type EvalCase = {
@@ -107,6 +118,10 @@ export type Transcript = {
   steps: number;
   /** Fichiers produits par le bac à sable (noms). */
   files?: string[];
+  /** Contenu des documents Office produits (inspectés, jamais renvoyés dans le rapport). */
+  documents?: { name: string; bytes: Buffer }[];
+  /** Ce que le modèle a reçu (demande, historique, pièces jointes) : référence du contrôle de fidélité. */
+  sources?: string;
   usage?: TokenUsage | undefined;
 };
 
@@ -198,10 +213,48 @@ export function gradeChecks(checks: Check[], transcript: Transcript): CheckResul
         const ok = files.some((name) => name.toLowerCase().endsWith(check.extension.toLowerCase()));
         return { label: `produit un fichier ${check.extension}`, ok, ...(ok ? {} : { detail: files.length ? files.join(", ") : "aucun fichier" }) };
       }
+      case "faithful": {
+        const known = knownNumbers(transcript.sources ?? "");
+        // Dernière version de chaque document (le modèle a pu corriger après le contrôle).
+        const latest = new Map((transcript.documents ?? []).filter((file) => /\.(pptx|docx|xlsx)$/i.test(file.name)).map((file) => [file.name, file.bytes]));
+        const flagged = [...latest].flatMap(([name, bytes]) => unsupportedNumbers(officeText(bytes), known).map((number) => `${name} : ${number}`));
+        return { label: "document fidèle (aucun chiffre inventé)", ok: latest.size > 0 && flagged.length === 0, ...(flagged.length ? { detail: flagged.slice(0, 6).join(", ") } : latest.size ? {} : { detail: "aucun document" }) };
+      }
+      case "office_file": {
+        const label = `document ${check.extension}${check.min ? ` (≥ ${check.min})` : ""}${check.chart ? " avec graphique" : ""}`;
+        const found = (transcript.documents ?? []).filter((file) => file.name.toLowerCase().endsWith(check.extension));
+        if (!found.length) return { label, ok: false, detail: "aucun" };
+        const reports = found.map((file) => inspectOffice(file.bytes));
+        const best = reports.find((item) => item.safe && item.count >= (check.min ?? 1) && (!check.chart || item.charts > 0));
+        if (best) return { label, ok: true, detail: `${best.count} ${unitOf(check.extension)}, ${best.charts} graphique(s)` };
+        const last = reports.at(-1)!;
+        return { label, ok: false, detail: last.safe ? `${last.count} ${unitOf(check.extension)}, ${last.charts} graphique(s)` : "refusé au contrôle" };
+      }
       case "max_steps":
         return { label: `≤ ${check.steps} étapes`, ok: transcript.steps <= check.steps, ...(transcript.steps > check.steps ? { detail: `${transcript.steps} étapes` } : {}) };
     }
   });
+}
+
+const unitOf = (extension: string) => ({ ".pptx": "diapositive(s)", ".docx": "titre(s)", ".xlsx": "feuille(s)" })[extension] ?? "élément(s)";
+
+/**
+ * Ouvre un document Office : contrôle de livraison, puis ce qu'il contient
+ * (diapositives, titres Word, feuilles ; graphiques natifs ou images de graphique).
+ */
+export function inspectOffice(bytes: Uint8Array): { safe: boolean; count: number; charts: number } {
+  if (!checkOoxml(bytes).ok) return { safe: false, count: 0, charts: 0 };
+  const parts = unzipSync(bytes);
+  const names = Object.keys(parts);
+  const charts = names.filter((name) => /\/charts\/chart\d+\.xml$/.test(name)).length;
+  if (names.includes("ppt/presentation.xml")) return { safe: true, count: names.filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).length, charts };
+  if (names.includes("word/document.xml")) {
+    const xml = new TextDecoder().decode(parts["word/document.xml"]);
+    const headings = (xml.match(/<w:pStyle w:val="(Heading|Titre)\d"\/>/g) ?? []).length;
+    // Dans Word, le graphique est une image (rendue par matplotlib) : on compte les images.
+    return { safe: true, count: headings, charts: charts + names.filter((name) => /^word\/media\/.+\.png$/.test(name)).length };
+  }
+  return { safe: true, count: names.filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).length, charts };
 }
 
 /** Demande au juge : verdict JSON strict, sur une consigne précise. */
@@ -247,7 +300,7 @@ const quietLog = { info: () => undefined, warn: () => undefined, error: () => un
 const noEmbeddings: EmbeddingCatalog = { available: () => [], get: () => null };
 
 /** Bac à sable du cas : réel (--sandbox) ou absent ; fichiers produits notés pour les contrôles. */
-type EvalRun = { sandbox?: CodeSandbox | undefined; files: string[]; runs: { count: number } };
+type EvalRun = { sandbox?: CodeSandbox | undefined; files: string[]; documents?: { name: string; bytes: Buffer }[]; runs: { count: number } };
 
 /** Environnement d'un cas : base de connaissances fictive indexée, web fictif, outils de production. */
 async function environment(evalCase: EvalCase, embeddings: EmbeddingCatalog, run: EvalRun = { files: [], runs: { count: 0 } }) {
@@ -335,6 +388,7 @@ const sandboxDeps = (run: EvalRun) => ({
   runs: run.runs,
   saveFile: async (file: { name: string; mediaType: string; bytes: Buffer }) => {
     run.files.push(file.name);
+    if (/\.(pptx|docx|xlsx|pdf)$/i.test(file.name)) (run.documents ??= []).push({ name: file.name, bytes: file.bytes });
     return { id: `eval-${run.files.length}`, name: file.name, mediaType: file.mediaType, size: file.bytes.length, messageId: null, createdAt: new Date(0).toISOString() };
   },
 });
@@ -384,6 +438,7 @@ async function connectorTools(connector: NonNullable<EvalCase["connector"]>): Pr
     hasToken: true,
     status: "approved",
     token: null,
+    icon: null,
     updatedAt: new Date(0).toISOString(),
     tools: definitions.map((definition, index) => approvedSnapshot(definition, connector.tools[index]!.access)),
   };
@@ -401,6 +456,8 @@ export type EvalOptions = {
   pseudonymize?: boolean | undefined;
   /** Bac à sable réel (conteneur durci jetable) : code du modèle et scripts exécutés pour de vrai. */
   sandbox?: CodeSandbox | undefined;
+  /** Documents produits (Office, PDF) : remis à l'appelant (--keep-files), pour les regarder. */
+  onDocument?: ((file: { name: string; bytes: Buffer }) => Promise<void>) | undefined;
 };
 
 /** Erreur technique, avec le quota dépassé s'il est connu (par minute ou par jour : on n'agit pas pareil). */
@@ -435,9 +492,19 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
         maxSteps: options.maxSteps,
       },
       // Avec une équipe, chaque délégation est une boucle d'agent entière (2 min chacune au plus).
-      { approve: async () => evalCase.approve ?? false, signal: AbortSignal.timeout(evalCase.team?.length ? 360_000 : 120_000) },
+      // Bac à sable réel : chaque exécution peut durer 60 s (conversion LibreOffice comprise).
+      { approve: async () => evalCase.approve ?? false, signal: AbortSignal.timeout(evalCase.team?.length ? 360_000 : evalCase.sandbox ? 300_000 : 120_000) },
     );
-    transcript = { answer: result.content, calls: toolCalls(result.turns ?? []), steps: result.steps ?? 0, usage: result.usage, files: run.files };
+    transcript = {
+      answer: result.content,
+      calls: toolCalls(result.turns ?? []),
+      steps: result.steps ?? 0,
+      usage: result.usage,
+      files: run.files,
+      documents: run.documents ?? [],
+      sources: [evalCase.question, ...(evalCase.history ?? []).map((turn) => turn.content), ...(evalCase.attachments ?? []).map((file) => file.text)].join("\n"),
+    };
+    for (const document of run.documents ?? []) await options.onDocument?.(document);
   } catch (error) {
     return { ...base, passed: false, checks: [], answer: "", calls: [], steps: 0, durationMs: performance.now() - started, error: errorLabel(error) };
   }
@@ -458,12 +525,13 @@ export async function runCase(evalCase: EvalCase, runner: ChatRunner, options: E
       judgeError = `JUDGE_${error instanceof Error ? error.message : String(error)}`;
     }
   }
+  const { documents: _documents, sources: _sources, ...kept } = transcript;
   return {
     ...base,
     passed: checks.every((check) => check.ok) && (judge?.verdict ?? "pass") === "pass",
     checks,
     judge,
-    ...transcript,
+    ...kept,
     durationMs: performance.now() - started,
     // Une règle a déjà échoué : c'est un échec du modèle, juge ou pas. Sinon, sans
     // verdict lisible on ne peut pas conclure : erreur technique.

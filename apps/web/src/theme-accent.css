@@ -1,4 +1,4 @@
-/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1577 déclarations) : ne pas modifier à la main.
+/* Couleur de l'interface GÉNÉRÉE par scripts/generate-accent-theme.mjs (1607 déclarations) : ne pas modifier à la main.
    Active seulement sous :root[data-accent] (couleur choisie par l'organisation). */
 
 :root[data-accent][data-theme="dark"] {
@@ -712,6 +712,7 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .settings-panel input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="dark"] .studio-capability input[type="checkbox"][role="switch"],
+:root[data-accent][data-theme="dark"] .memory-panel input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="dark"] .agent-schedules input[type="checkbox"][role="switch"] {
   border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.18);
   background: rgba(255, 255, 255, .06);
@@ -719,12 +720,14 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .settings-panel input[type="checkbox"][role="switch"]::after,
 :root[data-accent][data-theme="dark"] .studio-capability input[type="checkbox"][role="switch"]::after,
+:root[data-accent][data-theme="dark"] .memory-panel input[type="checkbox"][role="switch"]::after,
 :root[data-accent][data-theme="dark"] .agent-schedules input[type="checkbox"][role="switch"]::after {
   background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 56.7%);
 }
 
 :root[data-accent][data-theme="dark"] .settings-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-accent][data-theme="dark"] .studio-capability input[type="checkbox"][role="switch"]:checked,
+:root[data-accent][data-theme="dark"] .memory-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-accent][data-theme="dark"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
   background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 80.6% / 0.35);
@@ -732,12 +735,14 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-accent][data-theme="dark"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+:root[data-accent][data-theme="dark"] .memory-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-accent][data-theme="dark"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
   background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 96.7%);
 }
 
 :root[data-accent][data-theme="dark"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-accent][data-theme="dark"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-accent][data-theme="dark"] .memory-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-accent][data-theme="dark"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
   outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.5);
 }
@@ -1321,6 +1326,22 @@ html[data-accent][data-theme="dark"] {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 52.4%);
 }
 
+:root[data-accent][data-theme="dark"] .message-file.pptx svg:first-child {
+  color: #f08a5d;
+}
+
+:root[data-accent][data-theme="dark"] .message-file.docx svg:first-child {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(98.6% * var(--accent-saturation, 1))) 71.4%);
+}
+
+:root[data-accent][data-theme="dark"] .message-file.xlsx svg:first-child {
+  color: #5fd08e;
+}
+
+:root[data-accent][data-theme="dark"] .message-file.pdf svg:first-child {
+  color: #ff8a86;
+}
+
 :root[data-accent][data-theme="dark"] .message-file:hover,
 :root[data-accent][data-theme="dark"] .message-file-figure figcaption button:hover {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.3);
@@ -1566,22 +1587,6 @@ html[data-accent][data-theme="dark"] {
   color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(78.7% * var(--accent-saturation, 1))) 85.3%);
 }
 
-:root[data-accent][data-theme="dark"] .memory-list li {
-  background: rgba(255, 255, 255, .03);
-  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(43.3% * var(--accent-saturation, 1))) 86.9%);
-}
-
-:root[data-accent][data-theme="dark"] .memory-list button {
-  border: 0;
-  background: transparent;
-  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(20.6% * var(--accent-saturation, 1))) 61%);
-}
-
-:root[data-accent][data-theme="dark"] .memory-list button:hover {
-  background: rgba(220, 70, 90, .18);
-  color: #ffd6db;
-}
-
 :root[data-accent][data-theme="dark"] .chat-actions-item.armed {
   background: rgba(220, 70, 90, .2);
   color: #ffd6db;
@@ -1825,6 +1830,32 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .connector-logo svg {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .06);
+}
+
+:root[data-accent][data-theme="dark"] .connector-logo img {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06);
+}
+
+:root[data-accent][data-theme="dark"] .entity-icon-badge {
+  background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(28.9% * var(--accent-saturation, 1))) 8.8%);
+  color: #9ee6c0;
+}
+
+:root[data-accent][data-theme="dark"] .icon-picker-button {
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+:root[data-accent][data-theme="dark"] .icon-picker-button:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 81%);
+}
+
+:root[data-accent][data-theme="dark"] .icon-picker-camera,
+:root[data-accent][data-theme="dark"] .icon-picker-remove {
+  border: 0;
+  background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.2% * var(--accent-saturation, 1))) 21.2%);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(60% * var(--accent-saturation, 1))) 92.2%);
 }
 
 :root[data-accent][data-theme="dark"] .connector-name {
@@ -2662,6 +2693,11 @@ html[data-accent][data-theme="dark"] {
   color: #8ee6b8;
 }
 
+:root[data-accent][data-theme="dark"] .grid-tile.selected {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.16);
+  background: rgba(255, 255, 255, .06);
+}
+
 :root[data-accent][data-theme="dark"] .grid-tile {
   border: 1px solid transparent;
   background: transparent;
@@ -2720,6 +2756,45 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .library-base.dragging {
   outline: 2px dashed hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 77.8% / 0.45);
+}
+
+:root[data-accent][data-theme="dark"] .costs-row {
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.06);
+}
+
+:root[data-accent][data-theme="dark"] .costs-row:first-of-type {
+  border-top: 0;
+}
+
+:root[data-accent][data-theme="dark"] .costs-row small {
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(16.7% * var(--accent-saturation, 1))) 48%);
+}
+
+:root[data-accent][data-theme="dark"] .costs-label {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 70.4%);
+}
+
+:root[data-accent][data-theme="dark"] .costs-price label {
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(16.7% * var(--accent-saturation, 1))) 48%);
+}
+
+:root[data-accent][data-theme="dark"] .costs-price input {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.12);
+  outline: none;
+  background: rgba(255, 255, 255, .03);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(56.5% * var(--accent-saturation, 1))) 91%);
+}
+
+:root[data-accent][data-theme="dark"] .costs-price input:focus {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.45);
+}
+
+:root[data-accent][data-theme="dark"] .costs-missing {
+  color: #ffd36e;
+}
+
+:root[data-accent][data-theme="dark"] .costs-warning {
+  color: #ffd36e;
 }
 
 :root[data-accent][data-theme="dark"] .provider-logo-openai,
@@ -2994,6 +3069,19 @@ html[data-accent][data-theme="dark"] {
 
 :root[data-accent][data-theme="dark"] .responder-option > svg {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 80.6%);
+}
+
+:root[data-accent][data-theme="dark"] .responder-connect {
+  border: 0;
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.5% * var(--accent-saturation, 1))) 83.7% / 0.1);
+  background: transparent;
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.3% * var(--accent-saturation, 1))) 65.5%);
+}
+
+:root[data-accent][data-theme="dark"] .responder-connect:hover,
+:root[data-accent][data-theme="dark"] .responder-connect:focus-visible {
+  background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 86.3% / 0.07);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 96.7%);
 }
 
 :root[data-accent][data-theme="dark"] .responder-popover .model-select-empty {
@@ -4271,6 +4359,7 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
+:root[data-accent][data-theme="light"] .memory-panel input[type="checkbox"][role="switch"],
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
   border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.18);
   background: rgba(26, 26, 26, 0.06);
@@ -4278,12 +4367,14 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]::after,
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]::after,
+:root[data-accent][data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]::after,
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]::after {
   background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(17.6% * var(--accent-saturation, 1))) 43.3%);
 }
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
+:root[data-accent][data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
   border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
   background: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.35);
@@ -4291,12 +4382,14 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+:root[data-accent][data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
   background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-accent][data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-accent][data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-accent][data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
   outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.7% / 0.5);
 }
@@ -4847,6 +4940,22 @@ html[data-accent][data-theme="light"] {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(18.5% * var(--accent-saturation, 1))) 47.6%);
 }
 
+:root[data-accent][data-theme="light"] .message-file.pptx svg:first-child {
+  color: #d14d13;
+}
+
+:root[data-accent][data-theme="light"] .message-file.docx svg:first-child {
+  color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(99% * var(--accent-saturation, 1))) 38.6%);
+}
+
+:root[data-accent][data-theme="light"] .message-file.xlsx svg:first-child {
+  color: #3ac574;
+}
+
+:root[data-accent][data-theme="light"] .message-file.pdf svg:first-child {
+  color: #ac0600;
+}
+
 :root[data-accent][data-theme="light"] .message-file:hover,
 :root[data-accent][data-theme="light"] .message-file-figure figcaption button:hover {
   border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.3);
@@ -5066,20 +5175,6 @@ html[data-accent][data-theme="light"] {
 :root[data-accent][data-theme="light"] .chat-temporary-badge {
   background: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.1);
   color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(36% * var(--accent-saturation, 1))) 14.7%);
-}
-
-:root[data-accent][data-theme="light"] .memory-list li {
-  background: rgba(26, 26, 26, 0.03);
-  color: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(34.3% * var(--accent-saturation, 1))) 13.1%);
-}
-
-:root[data-accent][data-theme="light"] .memory-list button {
-  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(20.6% * var(--accent-saturation, 1))) 39%);
-}
-
-:root[data-accent][data-theme="light"] .memory-list button:hover {
-  background: rgba(214, 41, 64, 0.18);
-  color: #221113;
 }
 
 :root[data-accent][data-theme="light"] .chat-actions-item.armed {
@@ -5304,6 +5399,25 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .connector-logo svg {
   box-shadow: 0 0 0 1px rgba(26, 26, 26, 0.06);
+}
+
+:root[data-accent][data-theme="light"] .connector-logo img {
+  box-shadow: 0 0 0 1px rgba(26, 26, 26, 0.06);
+}
+
+:root[data-accent][data-theme="light"] .entity-icon-badge {
+  background: hsl(calc(217deg + var(--accent-shift, 0deg)) min(100%, calc(28.9% * var(--accent-saturation, 1))) 91.2%);
+  color: #238a54;
+}
+
+:root[data-accent][data-theme="light"] .icon-picker-button:focus-visible {
+  outline: 2px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(34% * var(--accent-saturation, 1))) 19%);
+}
+
+:root[data-accent][data-theme="light"] .icon-picker-camera,
+:root[data-accent][data-theme="light"] .icon-picker-remove {
+  background: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(22.2% * var(--accent-saturation, 1))) 78.8%);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .connector-name {
@@ -6103,6 +6217,11 @@ html[data-accent][data-theme="light"] {
   color: #229b5c;
 }
 
+:root[data-accent][data-theme="light"] .grid-tile.selected {
+  border-color: hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.16);
+  background: rgba(26, 26, 26, 0.06);
+}
+
 :root[data-accent][data-theme="light"] .grid-tile {
   color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(28.4% * var(--accent-saturation, 1))) 21.4%);
 }
@@ -6153,6 +6272,40 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .library-base.dragging {
   outline: 2px dashed hsl(calc(209deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+}
+
+:root[data-accent][data-theme="light"] .costs-row {
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.06);
+}
+
+:root[data-accent][data-theme="light"] .costs-row small {
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(16.7% * var(--accent-saturation, 1))) 52%);
+}
+
+:root[data-accent][data-theme="light"] .costs-label {
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.2% * var(--accent-saturation, 1))) 29.6%);
+}
+
+:root[data-accent][data-theme="light"] .costs-price label {
+  color: hsl(calc(214deg + var(--accent-shift, 0deg)) min(100%, calc(16.7% * var(--accent-saturation, 1))) 52%);
+}
+
+:root[data-accent][data-theme="light"] .costs-price input {
+  border: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.12);
+  background: rgba(26, 26, 26, 0.03);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
+}
+
+:root[data-accent][data-theme="light"] .costs-price input:focus {
+  border-color: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.45);
+}
+
+:root[data-accent][data-theme="light"] .costs-missing {
+  color: #c48900;
+}
+
+:root[data-accent][data-theme="light"] .costs-warning {
+  color: #c48900;
 }
 
 :root[data-accent][data-theme="light"] .studio-icon {
@@ -6382,6 +6535,17 @@ html[data-accent][data-theme="light"] {
 
 :root[data-accent][data-theme="light"] .responder-option > svg {
   color: hsl(calc(216deg + var(--accent-shift, 0deg)) min(100%, calc(35.4% * var(--accent-saturation, 1))) 19.4%);
+}
+
+:root[data-accent][data-theme="light"] .responder-connect {
+  border-top: 1px solid hsl(calc(213deg + var(--accent-shift, 0deg)) min(100%, calc(73.3% * var(--accent-saturation, 1))) 50% / 0.1);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(27.3% * var(--accent-saturation, 1))) 34.5%);
+}
+
+:root[data-accent][data-theme="light"] .responder-connect:hover,
+:root[data-accent][data-theme="light"] .responder-connect:focus-visible {
+  background: hsl(calc(212deg + var(--accent-shift, 0deg)) min(100%, calc(100% * var(--accent-saturation, 1))) 50% / 0.07);
+  color: hsl(calc(215deg + var(--accent-shift, 0deg)) min(100%, calc(33.3% * var(--accent-saturation, 1))) 10%);
 }
 
 :root[data-accent][data-theme="light"] .responder-popover .model-select-empty {

@@ -83,6 +83,15 @@
       write(page(LOCK + "<style>body{margin:0;padding:16px;display:grid;place-items:center;min-height:100vh;box-sizing:border-box;background:#fff}svg{max-width:100%;height:auto}</style>", source));
     } else if (data.kind === "mermaid") {
       renderMermaid(source, typeof data.fallback === "string" ? data.fallback : null);
+    } else if (data.kind === "prototype") {
+      // Maquette : seul le moteur du kit s'exécute (intégré à /artifact/prototype.html) ; le HTML
+      // du modèle n'est qu'une DONNÉE (bloc JSON) qu'il nettoie avant de l'afficher.
+      var kit = window.SNOWFALL_KIT;
+      if (!kit) return fail("Kit de maquettes indisponible.");
+      var encoded = JSON.stringify(source).replace(/</g, "\\u003c");
+      // « <\/ » : une balise fermante écrite telle quelle terminerait CE script.
+      write("<!doctype html><html lang=\"fr\"><head>" + BASE + "<style>" + kit.css + "<\/style></head><body>" +
+        "<script type=\"application/json\" id=\"sf-source\">" + encoded + "<\/script><script>" + kit.js.replace(/<\/script/gi, "<\\/script") + "<\/script></body></html>");
     }
   }
 

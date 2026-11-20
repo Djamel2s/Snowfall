@@ -36,6 +36,13 @@ function setup(userMessage = "Quelles sont les nouveautés ?") {
 }
 
 describe("Recherche web : protections", () => {
+  it("aucun résultat : dit au modèle, signalé à l'interface (sans être une erreur)", async () => {
+    const tools = webTools({ engine: { search: async () => [] }, citations: new CitationRegistry(), session: new WebSession("?"), readPage: async () => ({ url: "", title: "", text: "" }) });
+    const result = await runTool(tools, { id: "c", name: "web_search", arguments: { query: "OWASP top 10" } }, signal);
+    assert.equal(result.content, "Aucun résultat pour cette recherche.");
+    assert.deepEqual([result.empty, result.isError], [true, false]);
+  });
+
   it("résultats numérotés, balisés comme données ; balise fermante d'une page neutralisée", async () => {
     const { run } = setup();
     const result = await run("web_search", { query: "plafond loyers 2026" });

@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, Network, Shapes, TriangleAlert } from 'lucide-react'
+import { Check, ChevronDown, Code2, Copy, Eye, FileCode2, LayoutTemplate, Network, Shapes, TriangleAlert } from 'lucide-react'
 import { artifactKind, artifactTitle, useOpenArtifact, type ArtifactKind } from '../lib/artifacts'
 import { parseMarkdown, tokenizeCode, type Block, type Inline } from '../lib/markdown'
 import { highlight } from '../lib/highlight'
@@ -88,7 +88,7 @@ function ArtifactCard({ lang, text, kind, showCode }: { lang: string; text: stri
   const openArtifact = useOpenArtifact()!
   const [expanded, setExpanded] = useState(showCode)
   const title = artifactTitle(kind, text)
-  const Icon = kind === 'mermaid' ? Network : kind === 'svg' ? Shapes : FileCode2
+  const Icon = kind === 'mermaid' ? Network : kind === 'svg' ? Shapes : kind === 'prototype' ? LayoutTemplate : FileCode2
   return (
     <>
       <div className="md-artifact">
@@ -120,7 +120,7 @@ function CodeBlock({ lang, text, plain = false, showCode = false }: { lang: stri
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   // Grammaire Prism si le langage est connu, sinon coloration générique.
-  const highlighted = useMemo(() => highlight(text, lang), [text, lang])
+  const highlighted = useMemo(() => highlight(text, lang === 'prototype' ? 'html' : lang), [text, lang])
   const tokens = useMemo(() => (highlighted ? null : tokenizeCode(text, lang)), [highlighted, text, lang])
   // Page HTML, SVG ou diagramme : affichable dans le cadre isolé des artifacts.
   const openArtifact = useOpenArtifact()

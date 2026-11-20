@@ -17,6 +17,8 @@ export type KnowledgeBase = {
   confidential: boolean;
   revision: number;
   access: KnowledgeAccess;
+  /** Photo choisie comme icône (data URL) ; null : icône par défaut. */
+  icon: string | null;
 };
 
 /** Base listée dans la bibliothèque : ce qu'elle contient, où elle sert. */
@@ -94,6 +96,8 @@ export interface KnowledgeStore {
   /** Son auteur (ou un administrateur) : la base, ses documents, dossiers et partages. */
   deleteBase(tenant: TenantContext, baseId: string): Promise<boolean>;
   setConfidential(tenant: TenantContext, baseId: string, confidential: boolean): Promise<KnowledgeBase | null>;
+  /** null : retire la photo. */
+  setIcon(tenant: TenantContext, baseId: string, icon: string | null): Promise<KnowledgeBase | null>;
 
   // ---- Dossiers ----------------------------------------------------------------
   listFolders(tenant: TenantContext, baseId: string): Promise<KnowledgeFolder[]>;
@@ -154,9 +158,10 @@ export const sourceAad = (organizationId: string, baseId: string, sourceId: stri
 export const chunkAad = (organizationId: string, sourceId: string, chunkId: string, field: "text" | "vector") =>
   `knowledge-chunk-${field}:${organizationId}:${sourceId}:${chunkId}`;
 export const baseNameAad = (organizationId: string, baseId: string) => `knowledge-base-name:${organizationId}:${baseId}`;
+export const baseIconAad = (organizationId: string, baseId: string) => `knowledge-base-icon:${organizationId}:${baseId}`;
 export const folderNameAad = (organizationId: string, baseId: string, folderId: string) => `knowledge-folder-name:${organizationId}:${baseId}:${folderId}`;
 
-type BaseRow = { id: string; name: string | null; createdBy: string; confidential: boolean; revision: number; access: KnowledgeAccess };
+type BaseRow = { id: string; name: string | null; icon: string | null; createdBy: string; confidential: boolean; revision: number; access: KnowledgeAccess };
 type SourceRow = {
   id: string;
   baseId: string;
@@ -178,7 +183,7 @@ type FolderRow = { id: string; baseId: string; parentId: string | null; name: st
 // Droit de l'utilisateur courant, calculé par la base de données (mêmes règles que la RLS).
 const ACCESS = `CASE WHEN b.created_by = nullif(current_setting('app.user_id', true), '')::uuid THEN 'owner'
   WHEN snowfall_access('knowledge_base', b.id) = 'edit' OR snowfall_is_admin() THEN 'edit' ELSE 'view' END`;
-const BASE_COLUMNS = `b.id, b.name, b.created_by AS "createdBy", b.confidential, b.revision, ${ACCESS} AS access`;
+const BASE_COLUMNS = `b.id, b.name, b.icon, b.created_by AS "createdBy", b.confidential, b.revision, ${ACCESS} AS access`;
 const sourceColumns = (p = "") => `${p}id, ${p}base_id AS "baseId", ${p}folder_id AS "folderId", ${p}kind, ${p}status, ${p}error_code AS "errorCode",
   ${p}name, ${p}url, ${p}media_type AS "mediaType", ${p}size_bytes AS size, ${p}chunk_count AS "chunkCount",
   ${p}embedding_model AS "embeddingModel", ${p}created_at AS "createdAt", ${p}updated_at AS "updatedAt"`;
@@ -207,6 +212,7 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
     return {
       ...row,
       name: row.name ? await this.keyring.decrypt(client, tenant.organizationId, row.name, baseNameAad(tenant.organizationId, row.id)) : null,
+      icon: row.icon ? await this.keyring.decrypt(client, tenant.organizationId, row.icon, baseIconAad(tenant.organizationId, row.id)) : null,
     };
   }
 
@@ -301,6 +307,17 @@ export class PostgresKnowledgeStore implements KnowledgeStore {
         `UPDATE knowledge_bases SET confidential = $3, revision = revision + 1, updated_at = now() WHERE id = $1 AND organization_id = $2`,
         [baseId, tenant.organizationId, confidential],
       );
+      return result.rowCount ? this.selectBase(client, tenant, baseId) : null;
+    });
+  }
+
+  setIcon(tenant: TenantContext, baseId: string, icon: string | null) {
+    return withTenant(this.pool, tenant, async (client) => {
+      const result = await client.query(`UPDATE knowledge_bases SET icon = $3, updated_at = now() WHERE id = $1 AND organization_id = $2`, [
+        baseId,
+        tenant.organizationId,
+        icon === null ? null : await this.keyring.encrypt(client, tenant.organizationId, icon, baseIconAad(tenant.organizationId, baseId)),
+      ]);
       return result.rowCount ? this.selectBase(client, tenant, baseId) : null;
     });
   }

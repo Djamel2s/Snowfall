@@ -1,5 +1,5 @@
 import { useEffect, useId, useImperativeHandle, useRef, useState, type KeyboardEvent, type Ref } from 'react'
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { Check, ChevronDown, KeyRound, Search } from 'lucide-react'
 import type { Agent, ProviderCatalog } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
@@ -29,6 +29,8 @@ type Props = {
   controlRef?: Ref<PickerControl>
   /** « chip » : bouton compact de l'en-tête (conversation commencée), au lieu de la grande pastille. */
   variant?: 'peek' | 'chip'
+  /** Un fournisseur n'est pas encore connecté : lien vers le panneau Modèles. */
+  onConnectProvider?: () => void
 }
 
 const responderKey = (current: Responder) =>
@@ -38,7 +40,7 @@ const responderKey = (current: Responder) =>
  * Le « bonhomme » (ou le logo du modèle) qui dépasse du composer : un clic
  * ouvre la liste des agents et des modèles, comme une mention « @ ».
  */
-export default function ResponderPicker({ current, agents, providers, open, mention, onOpenChange, onPick, controlRef, variant = 'peek' }: Props) {
+export default function ResponderPicker({ current, agents, providers, open, mention, onOpenChange, onPick, controlRef, variant = 'peek', onConnectProvider }: Props) {
   const { t } = useI18n()
   const brand = useBranding()
   const [query, setQuery] = useState('')
@@ -235,6 +237,19 @@ export default function ResponderPicker({ current, agents, providers, open, ment
             })}
             {options.length === 0 && <li className="model-select-empty">{t('picker.none')}</li>}
           </ul>
+          {onConnectProvider && mention === null && providers.some((provider) => provider.id !== 'local' && !provider.available) && (
+            <button
+              type="button"
+              className="responder-connect"
+              onClick={() => {
+                onOpenChange(false)
+                onConnectProvider()
+              }}
+            >
+              <KeyRound size={13} />
+              {t('models.connectProvider')}
+            </button>
+          )}
         </div>
       )}
     </div>

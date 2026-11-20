@@ -3,6 +3,7 @@ import { BookOpen, Lock } from 'lucide-react'
 import { api, type Agent, type LibraryBaseSummary, type Project } from '../../lib/api'
 import { libraryLabel } from '../../lib/library'
 import { useI18n } from '../../lib/i18n'
+import { EntityIcon } from '../ui/EntityIcon'
 import { InlineEdit, ListEmpty, ListRow, ListRows, ListSection, PanelNew, PanelSearch } from '../ui/List'
 import BaseView from './BaseView'
 
@@ -73,7 +74,7 @@ export default function LibraryPanel({ agents, projects, canWrite, openBaseId, o
     return (
       <ListRow
         key={base.id}
-        icon={base.confidential ? <Lock size={15} /> : <BookOpen size={15} />}
+        icon={<EntityIcon image={base.icon} size={18} fallback={base.confidential ? <Lock size={15} /> : <BookOpen size={15} />} badge={base.confidential && <Lock />} />}
         title={label(base)}
         subtitle={users.length ? `${count} · ${t('library.usedBy', { names: users.join(', ') })}` : count}
         tooltip={label(base)}

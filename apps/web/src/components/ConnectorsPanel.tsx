@@ -145,7 +145,7 @@ export default function ConnectorsPanel({ isAdmin, notice, returnedServerId, onE
               return (
                 <ListRow
                   key={server.id}
-                  icon={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={20} />}
+                  icon={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={20} image={server.icon} />}
                   title={server.name}
                   subtitle={entry?.description}
                   label={t('connectors.open', { name: server.name })}

@@ -30,12 +30,12 @@ conversations et les documents, traitement à grande échelle possible.
 |---|---|---|
 | Comptes | Identifiant, e-mail, rôle | Durée de l'appartenance à l'organisation |
 | Conversations et réponses | Texte, pièces jointes, sources citées | Jusqu'à suppression par l'utilisateur ; supprimées au départ du membre |
-| Bases de connaissances | Documents, passages, vecteurs, noms des bases et des dossiers (chiffrés) | Jusqu'à suppression du document ou de la base (supprimer un agent garde ses bases) ; lisibles de l'auteur, des personnes à qui elles sont partagées, et des utilisateurs des agents auxquels elles sont rattachées |
+| Bases de connaissances | Documents, passages, vecteurs, noms des bases et des dossiers, photo choisie comme icône (chiffrés ; photo recadrée et sans métadonnées) | Jusqu'à suppression du document ou de la base (supprimer un agent garde ses bases) ; lisibles de l'auteur, des personnes à qui elles sont partagées, et des utilisateurs des agents auxquels elles sont rattachées |
 | Fichiers produits par le code | Images, tableaux | Avec la conversation ; orphelins purgés sous 24 h |
 | Résumés de compaction | Résumé chiffré des échanges anciens | Avec la conversation |
 | Traces des agents (Langfuse) | Étapes, durées, tokens ; contenu masqué, aucun pour le confidentiel | 30 jours |
 | Journal d'audit | Événements de sécurité, sans contenu ni e-mail | 365 jours (90 minimum) |
-| Consommation | Tokens et appels d'outils par membre et par mois | À compléter |
+| Consommation | Tokens (par modèle) et appels d'outils par membre et par mois ; dépenses en euros calculées à la lecture, jamais un classement par personne : un membre voit les siennes, l'administrateur des totaux (le détail par membre ne montre que des jetons) | À compléter (proposition : 13 mois, pour la facturation et les budgets) |
 | Réflexion du modèle | Affichée, jamais enregistrée | Aucune |
 | Conversations temporaires | Comme une conversation, hors historique et sans contenu dans les traces | 24 h |
 | Mémoire de l'utilisateur | Faits courts qu'il a demandé de retenir (désactivée par défaut) | Jusqu'à effacement par l'utilisateur ; supprimée à son départ |
@@ -50,6 +50,7 @@ conversations et les documents, traitement à grande échelle possible.
 | Destinataire | Données | Condition |
 |---|---|---|
 | Fournisseurs d'IA (Mistral, OpenAI, Anthropic, Google) | Message, historique récent, extraits des documents | Seulement les fournisseurs autorisés par l'organisation ; **jamais** pour une base confidentielle (modèle local exigé) |
+| Fournisseur d'IA, sous le compte personnel d'un membre (clé personnelle) | Mêmes données qu'une réponse | Seulement si un administrateur l'autorise pour ce fournisseur (désactivé par défaut) ; les données partent alors sous le contrat du membre, hors du contrat de sous-traitance de l'organisation : décision de l'organisation, à porter à la connaissance des membres |
 | Moteurs de recherche (via SearXNG) | Requête de recherche formulée par l'agent | Si l'organisation active la recherche web ; jamais en confidentiel |
 | Serveurs MCP | Arguments des appels d'outils | Serveurs approuvés par un administrateur ; écritures validées par l'utilisateur ; jamais en confidentiel |
 | Modèles locaux (embeddings, reclassement, éventuellement génération) | Textes | Sur la plateforme : rien ne sort |
@@ -93,6 +94,7 @@ clauses contractuelles types, garanties complémentaires).
 | Décision fondée sur une réponse erronée | Hallucination | Sources citées, avertissement dans l'interface, évaluations | À évaluer |
 | Surveillance des salariés | Lecture des usages | Audit sans contenu ; consommation agrégée ; traces masquées et courtes ; mémoire illisible par les administrateurs ; taux par agent seulement à partir de 5 personnes | À évaluer |
 | Profilage par la mémoire | Faits accumulés sur une personne | Désactivée par défaut, chaque ajout validé par l'utilisateur, liste visible et effaçable, jamais alimentée par un document | À évaluer |
+| Données envoyées hors du contrat de l'organisation | Clé personnelle d'un membre | Désactivée par défaut, autorisée fournisseur par fournisseur par un administrateur (tracé), retrait immédiat ; confidentiel toujours en local | À évaluer |
 | Diffusion trop large d'une conversation | Lien de partage transmis | Lecture réservée à l'organisation, durée limitée, révocation, audit des ouvertures, refus pour le confidentiel | À évaluer |
 
 ## 5. Plan d'action

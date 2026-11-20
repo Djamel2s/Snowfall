@@ -100,7 +100,7 @@ export function knowledgeTool(
       const selected = !scope || scope === "all" ? bases : bases.filter((base) => base.label === scope);
       if (selected.length === 0) return { content: "Cette base n'est pas disponible dans cette conversation.", summary: query };
       const found = citations.add(await service.retrieve(tenant, selected, { text: query }));
-      if (found.length === 0) return { content: "Aucun extrait pertinent trouvé pour cette requête.", summary: query };
+      if (found.length === 0) return { content: "Aucun extrait pertinent trouvé pour cette requête.", summary: query, empty: true };
       // Passages numérotés gardés dans la transcription : sources après une reprise.
       return { content: renderKnowledge(found), summary: query, data: found };
     },

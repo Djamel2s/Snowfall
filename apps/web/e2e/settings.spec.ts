@@ -36,7 +36,7 @@ test('administrateur : mon compte dans Paramètres, l’organisation dans Admini
   // Mon compte : profil, préférences, consommation — et rien de l'administration.
   await expect(page.getByRole('region', { name: 'Profil' }).getByText('Camille Test')).toBeVisible()
   await expect(page.getByRole('region', { name: 'Membres' })).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: 'Modèles et quotas' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Modèles' })).toHaveCount(0)
   // Consommation : les appels d'outils du mois, avec leur plafond.
   await expect(page.getByText('Recherches et pages web', { exact: true })).toBeVisible()
   await expect(page.getByText('42 / 500')).toBeVisible()
@@ -44,12 +44,12 @@ test('administrateur : mon compte dans Paramètres, l’organisation dans Admini
 
   // Administration : cinq rubriques, une seule affichée à la fois (Pilotage d'abord).
   await openAdmin(page)
-  for (const name of ['Pilotage', 'Membres et accès', 'Modèles et quotas', 'Connaissances', 'Outils et intégrations']) {
+  for (const name of ['Pilotage', 'Membres et accès', 'Modèles', 'Coûts', 'Connaissances', 'Outils et intégrations']) {
     await expect(page.getByRole('tab', { name })).toBeVisible()
   }
   await expect(page.getByRole('tab', { name: 'Pilotage' })).toHaveAttribute('aria-selected', 'true')
-  // Modèles et quotas : plafond mensuel des outils installés seulement (web ici, pas le code).
-  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  // Coûts : plafond mensuel des outils installés seulement (web ici, pas le code).
+  await page.getByRole('tab', { name: 'Coûts' }).click()
   await expect(page.getByLabel('Recherches et pages web par mois')).toHaveValue('500')
   await expect(page.getByLabel('Exécutions de code par mois')).toHaveCount(0)
   await page.getByRole('tab', { name: 'Outils et intégrations' }).click()
@@ -69,7 +69,7 @@ test('administrateur : mon compte dans Paramètres, l’organisation dans Admini
 test('routage automatique : question simple → modèle rapide, enregistré avec les deux modèles', async ({ page }, info) => {
   const api = await mockApi(page, { role: 'admin' })
   await openAdmin(page)
-  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  await page.getByRole('tab', { name: 'Modèles' }).click()
   const routing = page.getByRole('switch', { name: /Routage automatique/ })
   await expect(routing).not.toBeChecked()
   await routing.check()
@@ -85,7 +85,7 @@ test('routage automatique : question simple → modèle rapide, enregistré avec
 test('atelier : exemples écrits à la main, entraînement mesuré, déploiement sur clic', async ({ page }, info) => {
   const api = await mockApi(page, { role: 'admin' })
   await openAdmin(page)
-  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  await page.getByRole('tab', { name: 'Modèles' }).click()
   await page.getByText('Entraîner le décideur').click()
   await expect(page.getByText('Décideur : Laya de base')).toBeVisible()
   await page.getByRole('textbox', { name: 'Un exemple par ligne' }).fill('Bonjour\nMerci\nÀ demain')
@@ -109,7 +109,7 @@ test('atelier : exemples écrits à la main, entraînement mesuré, déploiement
 test('pseudonymisation : désactivée par défaut, activée et enregistrée', async ({ page }) => {
   const api = await mockApi(page, { role: 'admin' })
   await openAdmin(page)
-  await page.getByRole('tab', { name: 'Modèles et quotas' }).click()
+  await page.getByRole('tab', { name: 'Modèles' }).click()
   const toggle = page.getByRole('switch', { name: /Pseudonymiser avant un fournisseur externe/ })
   await expect(toggle).not.toBeChecked()
   await expect(page.getByRole('switch', { name: /Protéger les données sensibles/ })).toBeChecked()
@@ -134,31 +134,45 @@ test('membre : seulement son compte, aucune administration', async ({ page }) =>
   await openSettings(page)
   await expect(page.getByRole('region', { name: 'Profil' }).getByText('Camille Test')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Administration' })).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: 'Modèles et quotas' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Modèles' })).toHaveCount(0)
   expect(api.adminOverviewCalls).toEqual([])
 })
 
-test('mémoire : désactivée par défaut, activée, faits visibles et oubliables', async ({ page }, info) => {
+test('mémoire : son propre panneau, désactivée par défaut, activée, faits cherchables et oubliables', async ({ page }, info) => {
   await mockApi(page)
-  await openSettings(page)
-  const card = page.getByRole('region', { name: 'Mémoire' })
-  const toggle = card.getByRole('switch', { name: /Activer la mémoire/ })
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).waitFor()
+  const menu = page.getByRole('button', { name: /menu|ouvrir la barre/i })
+  if (await menu.isVisible().catch(() => false)) await menu.click()
+  await page.getByRole('button', { name: 'Mémoire', exact: true }).first().click()
+  const panel = page.locator('.memory-panel')
+  const toggle = panel.getByRole('switch', { name: /Activer la mémoire/ })
   await expect(toggle).not.toBeChecked()
 
   const saved = page.waitForRequest((request) => request.method() === 'PUT' && request.url().endsWith('/api/me/preferences'))
   await toggle.check()
   expect((await saved).postDataJSON()).toMatchObject({ memory: true })
 
-  await expect(card.getByText('Travaille sur le dossier Orion')).toBeVisible()
-  await card.getByRole('button', { name: /Oublier « Travaille sur le dossier Orion/ }).click()
-  await expect(card.getByText('Travaille sur le dossier Orion')).toHaveCount(0)
-  await card.scrollIntoViewIfNeeded()
+  const list = panel.getByRole('region', { name: 'Retenu' })
+  await expect(list.getByText('Travaille sur le dossier Orion')).toBeVisible()
   await page.screenshot({ path: info.outputPath('memoire.png') })
 
+  // Recherche.
+  await panel.getByRole('textbox').fill('introuvable')
+  await expect(list).toContainText('Aucun souvenir trouvé.')
+  await panel.getByRole('textbox').fill('')
+
+  await list.getByRole('button', { name: /Oublier « Travaille sur le dossier Orion/ }).click()
+  await expect(list.getByText('Travaille sur le dossier Orion')).toHaveCount(0)
+
   // Tout oublier : deux clics.
-  await card.getByRole('button', { name: 'Tout oublier' }).click()
-  await card.getByRole('button', { name: 'Cliquer encore pour tout oublier' }).click()
-  await expect(card.getByText('Rien de retenu pour l’instant.')).toBeVisible()
+  await list.getByRole('button', { name: 'Tout oublier' }).click()
+  await list.getByRole('button', { name: 'Cliquer encore pour tout oublier' }).click()
+  await expect(list).toContainText('Rien de retenu pour l’instant.')
+
+  // Plus dans les paramètres : une seule place.
+  await page.getByRole('button', { name: 'Paramètres' }).first().click()
+  await expect(page.getByRole('switch', { name: /Activer la mémoire/ })).toHaveCount(0)
 })
 
 test('connecteur OpenAPI : la spécification est lue dans le navigateur et envoyée avec l’adresse de base', async ({ page }) => {

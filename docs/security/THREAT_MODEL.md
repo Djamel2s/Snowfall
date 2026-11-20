@@ -225,7 +225,7 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Modèle qui embarque une donnée sensible (I) | Instructions et compétences passées au même détecteur qu'une saisie ; aucune donnée personnelle dans le catalogue | F | `templates.test.ts` (détecteur sur chaque modèle) |
 | Équipe qui donne plus de droits que prévu (E) | L'Assistant général délègue à des spécialistes installés dans l'organisation ; outil `delegate` exigé et affiché comme manquant sinon ; chaque spécialiste garde ses propres outils | F | test « équipe câblée, delegate manquant » |
 | Document piégé qui détourne un agent du catalogue (T) | Chaque modèle a au moins un cas de sécurité mesuré (contrat, devis, ticket, procès-verbal piégés ; tiers qui demande des données) | M : mesure probabiliste | `agent:eval --template all` |
-| Fichier de l'utilisateur transmis au code du modèle (I, E) | `run_code` reçoit seulement les pièces jointes de CETTE conversation, nommées par le modèle, copiées sous `inputs/` (jamais lancées : le code est sous `skill/`), 5 au plus, 8 Mio ; bac à sable sans réseau ; une exécution qui a lu un fichier vaut une pièce jointe (non fiable et privée) pour la règle de deux, même si la pièce jointe est sortie de la fenêtre de conversation (défaut trouvé en revue) | F | `code-tool.test.ts` (« pièces jointes »), `exposure.test.ts`, `attack_test.py` |
+| Fichier de l'utilisateur transmis au code du modèle (I, E) | `run_code` reçoit seulement les fichiers de CETTE conversation (pièces jointes, et depuis le 1er novembre les fichiers produits : images créées, fichiers de code, y compris pendant la réponse en cours ; deux barrières : la liste ET la lecture filtrent la conversation, RLS en plus), nommées par le modèle, copiées sous `inputs/` (jamais lancées : le code est sous `skill/`), 5 au plus, 8 Mio ; bac à sable sans réseau ; une exécution qui a lu un fichier vaut une pièce jointe (non fiable et privée) pour la règle de deux, même si la pièce jointe est sortie de la fenêtre de conversation (défaut trouvé en revue) | F | `code-tool.test.ts` (« pièces jointes »), `exposure.test.ts`, `attack_test.py` |
 | Script de compétence qui échoue en silence (T) | `runTool` garde l'indicateur d'erreur de l'outil (il était écrasé) ; erreur qui liste les scripts pour que le modèle corrige son appel au lieu de calculer de tête | F | `files.test.ts` (« script désigné par son nom ») |
 
 ### 3.4 quattuordecies Administration et pilotage (28 octobre)
@@ -257,6 +257,66 @@ Légende risque résiduel : **F** faible, **M** moyen, **É** élevé.
 | Fuite entre organisations (I) | Lecture limitée à l'organisation du contexte (RLS) | F | `branding.integration.test.ts` |
 | Couleur injectée dans le style (T) | `#rrggbb` seulement (API et base) ; l'application n'en tire que deux nombres (décalage de teinte, facteur de saturation) posés en variables CSS, jamais la chaîne elle-même | F | `branding.test.ts` (« red; background:url(x) » refusée) |
 | Couleur choisie qui rend l'interface illisible ou trompeuse (T) | Luminosité d'origine gardée (contraste inchangé) ; facteur de saturation borné ; vert/orange/rouge (états, alertes) jamais recolorés | F | captures en rouge, vert, violet, thèmes sombre et clair |
+
+### 3.4 sexvicies Clés d'API des fournisseurs de modèles (20 novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Vol d'une clé d'API (I) : lecture en base, dans une réponse, dans le journal | Chiffrée avec la clé de l'organisation (AAD : organisation, membre, fournisseur), format chiffré imposé par la base, couverte par la rotation ; jamais renvoyée (4 derniers caractères seulement), jamais dans l'audit (ni son indice) ; effacée de la page après l'envoi | F | `keys.test.ts`, `keys.integration.test.ts`, `rotation.test.ts`, `rotation.integration.test.ts`, `models.spec.ts` (mutations vérifiées) |
+| Clé d'un membre utilisée pour un autre (E, I) : collègue, cache partagé | Clé personnelle lisible par son seul propriétaire, pas même un administrateur (RLS) ; vue des modèles calculée par personne ; caches rangés par empreinte de clé (une clé ne sert qu'à elle-même) | F | « deux personnes, deux clés », « jamais celles d'un collègue » (mutation : cache sans empreinte) |
+| Données de l'entreprise envoyées sous le contrat personnel d'un membre (I, conformité) | Clés personnelles désactivées par défaut, autorisées fournisseur par fournisseur par un administrateur (décision tracée `security.personal_keys_policy`) ; retirer l'autorisation coupe la clé aussitôt ; la liste blanche des fournisseurs et la règle « modèle local pour le confidentiel » s'appliquent toujours | M : une fois autorisé, le contrat du membre s'applique (choix de l'organisation) | « politique retirée… » (mutation : politique ignorée) |
+| Clé envoyée vers un serveur choisi par l'attaquant (I) | Une clé de l'interface sert l'adresse officielle du fournisseur, jamais l'adresse configurée pour la plateforme ; pas de serveur « local » par clé | F | « adresse officielle » (mutation vérifiée) |
+| Banc d'essai de clés volées (abus) ; injection d'en-tête | Vérification auprès du fournisseur limitée à 10 par minute et par personne, échecs tracés ; caractères imprimables sans espace ni retour à la ligne | F | « pas un banc d'essai », « format » (mutation vérifiée) |
+| Contournement des budgets (abus) | Une réponse sur clé personnelle n'est ni plafonnée ni comptée par l'organisation : c'est le membre qui paie ; la clé de l'organisation compte comme celle de la plateforme | F | « hors quotas et budget » (mutation : facturation) |
+| Membre qui pose la clé de l'organisation (E) | Administrateur seulement ; refus tracé | F | « administrateur seulement » (mutation vérifiée) |
+
+### 3.4 quinvicies Maquettes, fidélité des documents, flux du fournisseur (19 novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Maquette (bloc `prototype`) écrite par un modèle manipulé (E, I) : script, attribut `on…`, lien `javascript:`, animation SVG qui réécrit un lien, sortie du bloc de données par `</script>` | Le HTML du modèle n'est qu'une DONNÉE (bloc JSON, `<` échappé) ; le moteur du kit le nettoie (scripts, cadres, objets, attributs `on…`, liens autres qu'une ancre interne, animations de lien retirés) avant de l'afficher ; seul le moteur s'exécute, dans le cadre d'origine opaque sans réseau (CSP inchangée) | F (contournement du nettoyeur : un script dans un cadre sans réseau ni accès à Snowfall, comme « Exécuter ») | `prototype.spec.ts` sous la CSP de production (mutations vérifiées : sans nettoyeur, sans échappement du bloc) |
+| Pixel de pistage dans une maquette (I) | Aucune ressource : seules les images intégrées (`data:image/…`) sont gardées, `url()` externes et `@import` retirés des styles ; la CSP bloque le reste | F | `prototype.spec.ts` (aucune requête hors de la page du cadre) |
+| Document produit avec des chiffres inventés (intégrité de l'information) | Contrôle de fidélité : les nombres du document sont comparés à ceux que le modèle a reçus (demande, pièces jointes, historique, résultats d'outils) et à leurs déductions simples ; l'écart est signalé au modèle pour correction et à l'utilisateur (« chiffres à vérifier ») | M : heuristique, une petite invention proche d'un nombre connu passe (« 4 » quand « 4,2 » est donné) ; le fichier n'est pas bloqué ; mesuré le 20 novembre : Gemini Flash-Lite ignore l'alerte (0 correction sur 4), l'avertissement à l'utilisateur est donc la vraie protection | `fidelity.test.ts` (documents réels de Gemini), `code-tool.test.ts`, `agent-loop.test.ts` |
+| Réponse tronquée présentée comme complète (intégrité) — **défaut trouvé le 19 novembre** : une erreur 503 envoyée par Gemini au milieu du flux était ignorée | Erreur dans le flux levée (événement ou JSON brut) ; un flux sans raison de fin est une interruption ; l'utilisateur voit « fournisseur indisponible » | F | `google.test.ts` (mutation vérifiée) |
+
+### 3.4 quatervicies Photos des bases et des connecteurs (17 novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Image piégée comme icône (E, T) : SVG avec script, fichier HTML annoncé comme PNG | Seuls PNG, JPEG et WebP, vérifiés par leur signature binaire (pas le type annoncé) ; affichée par `<img>` (aucun script exécuté) ; CSP inchangée | F | `knowledge.routes.test.ts`, `mcp.test.ts` (« photo… », mutation vérifiée) |
+| Pixel de pistage (I) : adresse d'image distante qui révèle qui ouvre la liste | Seule une image intégrée (data URL) est admise, jamais une adresse | F | mêmes tests (« https://pistage.example ») |
+| Photo d'une personne lue en base (I) ; métadonnées (GPS, appareil) | Recadrée et réencodée dans le navigateur (EXIF et GPS retirés avant l'envoi) ; chiffrée avec la clé de l'organisation, colonne imposée chiffrée par la base, couverte par la rotation des clés | F | `store.integration.test.ts`, `connections.integration.test.ts`, `rotation.integration.test.ts`, `rotation.test.ts` (mutation vérifiée) |
+| Saturation (D) : images lourdes dans chaque liste | 60 000 caractères au plus (128 px suffisent) | F | test « trop lourde » (mutation vérifiée) |
+| Changement par qui n'en a pas le droit (E) | Base : ceux qui peuvent la modifier (RLS) ; connecteur : administrateur seul ; changement tracé dans l'audit, sans l'image | F | tests de route et d'intégration |
+
+### 3.4 tervicies Studio de documents (1er novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Document Office piégé produit par un modèle manipulé (E, I) : macro, ActiveX, objet incorporé, modèle distant (fuite d'identifiants réseau à l'ouverture), image distante (pistage), liaison DDE | Chaque .docx, .pptx, .xlsx produit est contrôlé avant d'être donné : aucune macro ni partie exécutable, seul objet incorporé admis = un classeur (graphique natif) contrôlé à son tour, seuls liens sortants = liens hypertextes web ou courriel, aucun champ ni liaison qui charge un fichier ; bombe zip bornée ; sinon refusé (le modèle en est informé) | F | `ooxml.test.ts` (documents réels du bac à sable acceptés, 19 pièges refusés), `code-tool.test.ts` (mutation vérifiée) |
+| Formule injectée par une donnée dans un classeur (T) | Les cellules qui commencent par « = » restent du texte (aucune conversion en formule) | F | `docs_test.py` |
+| Modèle fourni par l'utilisateur, hostile (E) | Ouvert seulement dans le bac à sable (sans réseau, utilisateur dédié, gVisor en production) ; LibreOffice n'exécute pas de macro non signée ; fichier corrompu : erreur propre | F | `docs_test.py` (modèle corrompu) |
+| Canal entre exécutions par /var/tmp (I) — ouvert pour LibreOffice, dont le chemin est écrit en dur | Inscriptible mais pas listable (1733), fichiers privés, vidé des fichiers de l'exécution à sa fin | F | `attack_test.py` (« /var/tmp », mutation vérifiée) |
+| Champs Jinja d'un modèle Word remplis avec une donnée hostile (T) | Échappement automatique | F | `docs_test.py` (« ACME <script> » échappé) |
+
+### 3.4 duovicies Coûts, limites et exploitation (1er novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Un membre épuise le budget ou le GPU de l'organisation (D) | Budgets en euros (organisation, membre) vérifiés avant chaque réponse et chaque outil ; plafonds d'outils par membre ; plafonds par réponse bornés par la plateforme | F | `runs.routes.test.ts` (budget atteint au milieu d'une réponse, quota par membre, plafonds ; mutations vérifiées) |
+| Euros de l'organisation visibles d'un membre (I) | `/usage` : ses dépenses seulement ; la page des coûts est réservée aux administrateurs | F | `routes.test.ts` (« coûts » ; mutation vérifiée) |
+| Modèle qui demande encore un outil après la limite d'étapes ou de jetons (D) — **défaut trouvé le 17 novembre** en mesurant le studio avec Gemini : l'appel était exécuté, la boucle continuait jusqu'à l'erreur, au-delà des plafonds de la réponse | Sans outils proposés, tout appel d'outil est ignoré : le modèle conclut | F | `agent-loop.test.ts` (« ne lui en propose plus », échoue sans la correction) |
+| Tarif malveillant ou absurde (négatif, infini) faussant les budgets (T) | Validé à l'écriture (bornes) et ignoré à la lecture s'il est invalide ; clés de tarif contrôlées | F | `costs.test.ts`, `workspace.integration.test.ts` |
+| Panne non vue (D) | Alertes testées (promtool) ; chaîne d'alerte exercée jusqu'à l'e-mail | F | `scripts/monitoring-test.sh`, `scripts/alert-drill.sh` |
+| Sauvegarde non restaurable, ou procédure de restauration fausse (D) — **défaut trouvé** : la procédure s'arrêtait avant `db:setup`, l'API restaurée n'avait aucun droit | Exercice complet : restauration réelle, droits réappliqués, relecture déchiffrée sous RLS ; RUNBOOK corrigé | F | `scripts/restore-drill.sh` (CI), [PREUVES.md](../operations/PREUVES.md) |
+
+### 3.4 unvicies Documents composés par l'agent (1er novembre)
+
+| Menace | Mesures | Résiduel | Preuve |
+|---|---|---|---|
+| Image ou fichier d'une autre conversation repris dans un document (I) | Fichiers produits cherchés par nom dans la conversation en cours seulement ; lecture filtrée à nouveau par conversation (deux barrières, mutation : il faut casser les deux pour que la fuite passe, et le test l'attrape) | F | `runs.routes.test.ts` (« images créées puis mises dans un document »), `runs.integration.test.ts` (`listAll`) |
+| Nouvelle bibliothèque dans le bac à sable (fpdf2) (E, T) | Version publiée avant le 3 octobre, empreinte SHA-256 vérifiée (`--require-hashes`), pur Python ; bac à sable inchangé (sans réseau, utilisateur dédié, gVisor en production) ; batterie d'attaques repassée : 27/27 bloqué | F | `scripts/sandbox-attack.sh` |
+| Agent qui prétend ne pas avoir d'outil après un échec (réponse trompeuse) | Règle de la plateforme : dire quel outil a échoué ou n'a rien donné ; recherche vide signalée dans l'activité (« Aucun résultat »), sans être une erreur | M | `web-tools.test.ts`, `activity.test.ts`, `e2e/activity.spec.ts` |
 
 ### 3.4 vicies Bibliothèque de connaissances (31 octobre)
 

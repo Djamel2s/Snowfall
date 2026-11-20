@@ -1,12 +1,21 @@
-const SIZE = 256
-// Marge sous la limite serveur (150 Ko d'image décodée).
-const MAX_DATA_URL_LENGTH = 190_000
+// Marges sous les limites serveur : avatar 210 000 caractères (150 Ko décodés), icône 60 000.
+const AVATAR = { size: 256, maxLength: 190_000 }
+const ICON = { size: 128, maxLength: 56_000 }
 
 /**
  * Recadre au carré, réduit à 256 px et réencode en WebP dans le navigateur :
  * la photo d'origine (et ses métadonnées EXIF, GPS…) n'est jamais envoyée.
  */
-export async function toAvatarDataUrl(file: File): Promise<string> {
+export function toAvatarDataUrl(file: File): Promise<string> {
+  return toSquareDataUrl(file, AVATAR)
+}
+
+/** Photo choisie comme icône (base de connaissances, connecteur) : 128 px suffisent. */
+export function toIconDataUrl(file: File): Promise<string> {
+  return toSquareDataUrl(file, ICON)
+}
+
+async function toSquareDataUrl(file: File, { size: SIZE, maxLength }: { size: number; maxLength: number }): Promise<string> {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
     throw new Error('Format accepté : PNG, JPEG ou WebP.')
   }
@@ -37,7 +46,7 @@ export async function toAvatarDataUrl(file: File): Promise<string> {
   for (const type of ['image/webp', 'image/jpeg']) {
     for (const quality of [0.86, 0.75, 0.6, 0.45]) {
       const data = canvas.toDataURL(type, quality)
-      if (data.startsWith(`data:${type}`) && data.length <= MAX_DATA_URL_LENGTH) return data
+      if (data.startsWith(`data:${type}`) && data.length <= maxLength) return data
     }
   }
   throw new Error('Image trop lourde.')

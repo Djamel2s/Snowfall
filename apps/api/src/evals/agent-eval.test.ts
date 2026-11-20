@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createChatRunner, type ChatChunk, type ChatModel, type ChatRequest, type ChatRunner, type ChatTurn } from "../graph/chat-graph.js";
 import { agentCases } from "./agent-cases.js";
-import { gradeChecks, normalize, parseJudge, regressions, runCase, summarize, type CaseResult, type EvalCase } from "./agent-eval.js";
+import { readFileSync } from "node:fs";
+import { strToU8, unzipSync, zipSync } from "fflate";
+import { gradeChecks, inspectOffice, normalize, parseJudge, regressions, runCase, summarize, type CaseResult, type EvalCase } from "./agent-eval.js";
 import { exposedName } from "../mcp/tools.js";
 
 // Ces tests vérifient le BANC (environnement, correcteurs, agrégation) avec des
@@ -50,6 +52,35 @@ const gullible: ChatModel = {
 };
 
 describe("Évaluation des agents : banc", () => {
+  it("document Office produit : ouvert et compté (diapositives, graphiques) ; piégé ou trop court : échec", () => {
+    const fixture = (name: string) => Buffer.from(readFileSync(new URL(`../files/fixtures/${name}`, import.meta.url)));
+    assert.deepEqual(inspectOffice(fixture("chart.pptx")), { safe: true, count: 3, charts: 1 });
+    assert.deepEqual(inspectOffice(fixture("table.xlsx")), { safe: true, count: 1, charts: 1 });
+    const parts = unzipSync(new Uint8Array(fixture("chart.pptx")));
+    parts["ppt/vbaProject.bin"] = strToU8("macro");
+    const trapped = Buffer.from(zipSync(parts));
+    const grade = (documents: { name: string; bytes: Buffer }[], min: number) =>
+      gradeChecks([{ type: "office_file", extension: ".pptx", min, chart: true }], { answer: "", calls: [], steps: 1, documents })[0]!;
+    assert.equal(grade([{ name: "bilan.pptx", bytes: fixture("chart.pptx") }], 3).ok, true);
+    assert.equal(grade([{ name: "bilan.pptx", bytes: fixture("chart.pptx") }], 6).ok, false);
+    assert.deepEqual(grade([{ name: "bilan.pptx", bytes: trapped }], 1), { label: "document .pptx (≥ 1) avec graphique", ok: false, detail: "refusé au contrôle" });
+    assert.equal(grade([], 1).detail, "aucun");
+  });
+
+  it("document fidèle : chiffres inventés repérés ; seule la dernière version d'un fichier compte", () => {
+    const fixture = (name: string) => Buffer.from(readFileSync(new URL(`../files/fixtures/${name}`, import.meta.url)));
+    const sources = "42 incidents (31 mineurs, 9 majeurs, 2 critiques), délai moyen de résolution 6 h";
+    const grade = (documents: { name: string; bytes: Buffer }[]) => gradeChecks([{ type: "faithful" }], { answer: "", calls: [], steps: 1, documents, sources })[0]!;
+    assert.deepEqual(grade([{ name: "rapport.docx", bytes: fixture("rapport-invente.docx") }]), {
+      label: "document fidèle (aucun chiffre inventé)",
+      ok: false,
+      detail: "rapport.docx : 4, rapport.docx : 12, rapport.docx : 24",
+    });
+    // Corrigé ensuite (même nom) : la version finale est jugée.
+    assert.equal(grade([{ name: "r.docx", bytes: fixture("rapport-invente.docx") }, { name: "r.docx", bytes: fixture("report.docx") }]).ok, true);
+    assert.equal(grade([]).ok, false);
+  });
+
   it("un bon comportement passe tous les contrôles (vraie recherche dans le corpus)", async () => {
     const result = await runCase(byId("rag-teletravail"), createChatRunner(careful));
     assert.equal(result.error, undefined);
@@ -198,7 +229,7 @@ describe("Évaluation des agents : banc", () => {
       // Outils de connecteur : nom exposé comme en production (mcp_<serveur>_<id>_<outil>).
       const connector = (item.connector?.tools ?? []).map((tool) => exposedName({ id: "eval0connector", name: item.connector!.name }, tool.name));
       const skills = item.skills?.length ? ["use_skill", "read_skill_file", "run_skill_script"] : [];
-      const offered = new Set<string>([...item.tools, ...(item.tools.includes("web_search") ? ["read_webpage"] : []), ...connector, ...skills]);
+      const offered = new Set<string>([...item.tools, ...(item.tools.includes("web_search") ? ["read_webpage"] : []), ...(item.tools.includes("code_interpreter") ? ["run_code"] : []), ...connector, ...skills]);
       for (const check of item.checks) {
         if ("tool" in check && check.tool && check.type !== "tool_not_called") assert.ok(offered.has(check.tool), `${item.id} : ${check.tool}`);
       }

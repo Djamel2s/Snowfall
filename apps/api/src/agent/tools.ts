@@ -20,6 +20,8 @@ export type ToolResult = {
    * tour est marqué en erreur (et ne compte pas comme une lecture pour la règle de deux).
    */
   isError?: boolean;
+  /** Recherche sans résultat : affiché dans l'activité (« aucun résultat »), sans être une erreur. */
+  empty?: boolean;
 };
 
 /** Ce que l'utilisateur voit avant d'approuver : construit par NOTRE code à partir des arguments validés. */
@@ -46,6 +48,7 @@ export type SubStep = {
   endedAt?: number | undefined;
   flagged?: boolean | undefined;
   approved?: boolean | undefined;
+  empty?: boolean | undefined;
 };
 
 /** Ce que reçoit un outil pendant son exécution. */
@@ -59,6 +62,8 @@ export type ToolContext = {
   report?: ((step: SubStep) => void) | undefined;
   /** Exposition de la réponse à cette étape (règle de deux), héritée par un sous-agent. */
   exposure?: { untrusted: boolean; sensitive: boolean; connectors?: string[] | undefined } | undefined;
+  /** Outil « grounded » : nombres que le modèle a reçus jusque-là (contrôle de fidélité). */
+  known?: number[] | undefined;
 };
 
 export interface AgentTool<Args extends z.ZodType = z.ZodType> {
@@ -74,6 +79,8 @@ export interface AgentTool<Args extends z.ZodType = z.ZodType> {
   timeoutMs?: number;
   /** Connecteur (serveur MCP) qui reçoit les appels et fournit les résultats : règle de deux. */
   origin?: string;
+  /** Reçoit les nombres connus de la conversation (contrôle de fidélité des documents produits). */
+  grounded?: boolean;
 }
 
 /**
@@ -124,6 +131,7 @@ export async function runTool(
   approve?: Approver,
   report?: (step: SubStep) => void,
   exposure?: ToolContext["exposure"],
+  known?: number[],
 ): Promise<ToolOutcome> {
   const tool = tools.find((item) => item.name === call.name);
   if (!tool) return { content: `Outil inconnu : ${call.name}.`, isError: true };
@@ -146,7 +154,7 @@ export async function runTool(
   // Le délai court après l'accord : l'attente de l'utilisateur n'est pas comptée.
   const timeout = AbortSignal.timeout(tool.timeoutMs ?? TOOL_TIMEOUT_MS);
   try {
-    const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]), callId: call.id, approve, report, exposure });
+    const result = await tool.execute(parsed.data, { signal: AbortSignal.any([signal, timeout]), callId: call.id, approve, report, exposure, known });
     const content = result.content.length > TOOL_RESULT_CHARS ? `${result.content.slice(0, TOOL_RESULT_CHARS)}\n[… résultat tronqué]` : result.content;
     return { ...result, ...approved, content, isError: result.isError ?? false };
   } catch (error) {

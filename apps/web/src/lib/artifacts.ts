@@ -2,15 +2,16 @@ import { createContext, useContext } from 'react'
 import { parseMarkdown, type Block } from './markdown'
 
 /** Contenus affichables dans le cadre isolé des artifacts. */
-export type ArtifactKind = 'html' | 'svg' | 'mermaid'
+export type ArtifactKind = 'html' | 'svg' | 'mermaid' | 'prototype'
 
 export type Artifact = { kind: ArtifactKind; source: string; title: string }
 
 /** Artifact ouvert dans le panneau : numéro unique par ouverture (panneau et cadre recréés). */
 export type OpenedArtifact = Artifact & { opening: number }
 
-/** Bloc de code → artifact, selon son langage (```html, ```svg, ```mermaid). */
+/** Bloc de code → artifact, selon son langage (```html, ```svg, ```mermaid, ```prototype : maquette du kit). */
 export function artifactKind(lang: string, text: string): ArtifactKind | null {
+  if (lang === 'prototype') return 'prototype'
   if (lang === 'html' || lang === 'htm') return 'html'
   if (lang === 'svg' || (lang === 'xml' && /^\s*<svg[\s>]/i.test(text))) return 'svg'
   if (lang === 'mermaid' || lang === 'mmd') return 'mermaid'
@@ -19,8 +20,11 @@ export function artifactKind(lang: string, text: string): ArtifactKind | null {
 
 /** Titre lisible : <title> d'une page, sinon le type. */
 export function artifactTitle(kind: ArtifactKind, source: string) {
-  const title = kind === 'html' ? /<title[^>]*>([^<]{1,120})<\/title>/i.exec(source)?.[1]?.trim() : undefined
-  return title || { html: 'Page HTML', svg: 'Image SVG', mermaid: 'Diagramme' }[kind]
+  const title =
+    kind === 'html' || kind === 'prototype'
+      ? (/<title[^>]*>([^<]{1,120})<\/title>/i.exec(source)?.[1] ?? /\bdata-title="([^"]{1,120})"/.exec(source)?.[1])?.trim()
+      : undefined
+  return title || { html: 'Page HTML', svg: 'Image SVG', mermaid: 'Diagramme', prototype: 'Maquette' }[kind]
 }
 
 /** Artifacts d'une réponse, dans l'ordre (blocs de code affichables, même dans une liste ou une citation). */
@@ -52,7 +56,7 @@ export function artifactFileName(artifact: Pick<Artifact, 'kind' | 'title'>, ren
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 60) || 'artifact'
-  const extension = artifact.kind === 'html' ? 'html' : artifact.kind === 'svg' || rendered ? 'svg' : 'mmd'
+  const extension = artifact.kind === 'html' || artifact.kind === 'prototype' ? 'html' : artifact.kind === 'svg' || rendered ? 'svg' : 'mmd'
   return `${base}.${extension}`
 }
 

@@ -636,6 +636,41 @@ describe("Bibliothèque de connaissances : routes", () => {
     assert.ok(!JSON.stringify(events).includes("Politiques") && !JSON.stringify(events).includes("Contrats") && !JSON.stringify(events).includes("essai"));
   });
 
+  it("photo d'une base : enregistrée, listée, retirée ; SVG, adresse distante, faux PNG, trop lourde : refusés ; collègue : rien", async (t) => {
+    const { app, as, events } = setup();
+    t.after(() => app.close());
+    const base = (await app.inject(json("POST", "/knowledge/bases", { name: "RH" }))).json().base as { id: string; icon: string | null };
+    assert.equal(base.icon, null);
+    const png = `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(64, 7)]).toString("base64")}`;
+    const patch = (icon: unknown) => app.inject(json("PATCH", `/knowledge/bases/${base.id}`, { icon }));
+
+    assert.equal((await patch(png)).json().base.icon, png);
+    const listed = (await app.inject({ method: "GET", url: "/knowledge/bases" })).json().bases as { id: string; icon: string | null }[];
+    assert.equal(listed.find((item) => item.id === base.id)?.icon, png);
+
+    // Script (SVG), pixel distant (pistage), type annoncé mensonger, image trop lourde.
+    for (const icon of [
+      `data:image/svg+xml;base64,${Buffer.from("<svg onload=alert(1)/>").toString("base64")}`,
+      "https://pistage.example/pixel.png",
+      `data:image/png;base64,${Buffer.from("<html><script>alert(1)</script></html>").toString("base64")}`,
+      `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(50_000)]).toString("base64")}`,
+    ]) assert.equal((await patch(icon)).statusCode, 400, icon.slice(0, 30));
+    assert.equal((await app.inject({ method: "GET", url: `/knowledge/bases/${base.id}` })).json().base.icon, png);
+
+    // Un collègue sans droit ne la change pas ; un lecteur de l'organisation non plus.
+    as(bob);
+    assert.equal((await patch(null)).statusCode, 404);
+    as({ ...alice, role: "reader" });
+    assert.equal((await patch(null)).statusCode, 403);
+    as(alice);
+    assert.equal((await patch(null)).json().base.icon, null);
+
+    // Tracé, sans l'image.
+    const updates = events.filter((event) => event.eventType === "knowledge.base_update");
+    assert.deepEqual(updates.map((event) => (event.details as { icon?: string } | undefined)?.icon), ["set", "removed"]);
+    assert.ok(!JSON.stringify(events).includes(png.slice(30, 60)));
+  });
+
   it("une base privée ne se lit ni ne se modifie par un collègue ; lecteur de l'organisation : rien n'est écrit", async (t) => {
     const { app, as } = setup();
     t.after(() => app.close());

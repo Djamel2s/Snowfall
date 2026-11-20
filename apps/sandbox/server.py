@@ -21,6 +21,7 @@ import re
 import resource
 import shutil
 import signal
+import stat
 import socketserver
 import subprocess
 import threading
@@ -54,6 +55,8 @@ MAX_FILES = 8
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 MEMORY_BYTES = 1536 * 1024 * 1024
+MPL_CACHE = "/opt/mpl"
+SHARED_TMP = "/var/tmp"
 
 # Fichiers rendus à l'utilisateur : types connus seulement, jamais d'exécutable.
 MEDIA_TYPES = {
@@ -66,6 +69,8 @@ MEDIA_TYPES = {
     ".md": "text/markdown",
     ".json": "application/json",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".pdf": "application/pdf",
 }
 
@@ -212,6 +217,33 @@ def collect(workdir, uid):
     except ValueError:
         return {"stdout": "", "stderr": "", "files": []}
 
+def wipe_shared_tmp(uid):
+    """/var/tmp : seul dossier partagé, pour le canal de LibreOffice (chemin écrit en dur
+    dans son code). Inscriptible mais pas listable (1733), fichiers privés : rien n'y
+    survit à l'exécution qui les a créés."""
+    try:
+        names = os.listdir(SHARED_TMP)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(SHARED_TMP, name)
+        try:
+            info = os.lstat(path)
+        except OSError:
+            continue
+        if info.st_uid != uid:
+            continue
+        if stat.S_ISDIR(info.st_mode):
+            # Dossier privé de l'exécution : vidé par son propriétaire (ce serveur n'y entre pas).
+            subprocess.run(["rm", "-rf", "--", path], preexec_fn=limits(10, uid), env={"PATH": "/usr/bin:/bin"}, timeout=20, check=False)
+        else:
+            # Propriétaire du dossier à bit collant : ce serveur peut retirer le fichier.
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 def remove_as_runner(workdir, uid):
     # Le serveur n'a pas le droit de passer outre les permissions : l'utilisateur
     # de l'emplacement vide son dossier, puis le serveur retire le dossier vide.
@@ -299,6 +331,15 @@ def run(code, seconds, uid, skill=None):
                 handle.write(code)
             os.chown(os.path.join(workdir, "main.py"), uid, uid)
             command = ["python3", "-I", "-X", "utf8", os.path.join(workdir, "main.py")]
+        # Cache des polices de matplotlib (préparé au build) : sans lui, chaque
+        # exécution relirait toutes les polices (plusieurs secondes).
+        cache = os.path.join(workdir, ".matplotlib")
+        os.mkdir(cache, 0o700)
+        for name in os.listdir(MPL_CACHE) if os.path.isdir(MPL_CACHE) else []:
+            if name.startswith("fontlist") and name.endswith(".json"):
+                shutil.copyfile(os.path.join(MPL_CACHE, name), os.path.join(cache, name))
+                os.chown(os.path.join(cache, name), uid, uid)
+        os.chown(cache, uid, uid)
         stdout = open(os.path.join(workdir, "stdout.txt"), "wb")
         stderr = open(os.path.join(workdir, "stderr.txt"), "wb")
         for path in ("stdout.txt", "stderr.txt"):
@@ -336,6 +377,7 @@ def run(code, seconds, uid, skill=None):
     finally:
         kill_user(uid)
         remove_as_runner(workdir, uid)
+        wipe_shared_tmp(uid)
         kill_user(uid)
 
 

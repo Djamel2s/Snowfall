@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Code2, Download, Eye, Play, X } from 'lucide-react'
+import { prototypePage } from '../artifact-kit/page'
 import { artifactFileName, type OpenedArtifact } from '../lib/artifacts'
 import { useI18n } from '../lib/i18n'
 import { repairMermaid } from '../lib/mermaid-repair'
@@ -29,6 +30,8 @@ export default function ArtifactPanel({ artifact, onClose }: Props) {
         ? [svg, 'image/svg+xml']
         : artifact.kind === 'html'
           ? [artifact.source, 'text/html']
+          : artifact.kind === 'prototype'
+            ? [prototypePage(artifact.source, artifact.title), 'text/html']
           : artifact.kind === 'svg'
             ? [artifact.source, 'image/svg+xml']
             : [artifact.source, 'text/plain']
@@ -117,7 +120,7 @@ export default function ArtifactPanel({ artifact, onClose }: Props) {
           ref={frameRef}
           className="artifact-frame"
           title={artifact.title}
-          src={artifact.kind === 'mermaid' ? '/artifact/mermaid.html' : '/artifact/frame.html'}
+          src={artifact.kind === 'mermaid' ? '/artifact/mermaid.html' : artifact.kind === 'prototype' ? '/artifact/prototype.html' : '/artifact/frame.html'}
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           allow=""

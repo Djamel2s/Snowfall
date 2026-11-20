@@ -106,7 +106,7 @@ describe("Script de compétence : fichiers transmis au bac à sable", () => {
     const { call, runs } = await setup({ "a b.csv": Buffer.from("1"), "a_b.csv": Buffer.from("2") });
     const result = await call(["a b.csv", "a_b.csv"]);
     assert.deepEqual(runs[0]!.files.filter((file) => file.path.startsWith("inputs/")).map((file) => ("data" in file ? Buffer.from(file.data, "base64").toString() : "")), ["1"]);
-    assert.match(result.content, /introuvables dans la conversation \(ou trop lourdes\) : a_b\.csv/);
+    assert.match(result.content, /introuvables dans la conversation \(ou trop lourds\) : a_b\.csv/);
     const tooMany = await call(["1", "2", "3", "4", "5", "6"]);
     assert.equal(tooMany.isError, true);
     assert.equal(runs.length, 1);

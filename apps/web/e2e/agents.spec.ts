@@ -24,9 +24,16 @@ test('agents : les miens, ceux partagés avec moi, une recherche ; taux de 👍 
   await openAgents(page)
   const mine = page.getByRole('region', { name: 'Mes agents' })
   const shared = page.getByRole('region', { name: 'Partagés avec moi' })
+  // En grille par défaut : une tuile par agent, le modèle dans l'infobulle.
+  await expect(mine.locator('.grid-tile')).toHaveCount(2)
+  await expect(mine.getByRole('button', { name: 'Juriste', exact: true })).toHaveAttribute('title', /mistral-small/)
+  await page.screenshot({ path: info.outputPath('agents-grille.png') })
+
+  // En liste détaillée (choix gardé) : nom, modèle et taux de 👍 sur chaque ligne.
+  await mine.getByRole('button', { name: 'Afficher en liste détaillée' }).click()
+  await expect(mine.locator('.list-row')).toHaveCount(2)
   await expect(mine.getByRole('listitem')).toHaveCount(2)
   await expect(shared.getByRole('listitem')).toHaveCount(2)
-  // Nom et modèle sur chaque ligne.
   await expect(mine.getByRole('listitem').first()).toContainText('Juriste')
   await expect(mine.getByRole('listitem').first()).toContainText('mistral-small')
   // Taux de réponses utiles : seulement l'agent noté (5 avis au moins côté serveur).

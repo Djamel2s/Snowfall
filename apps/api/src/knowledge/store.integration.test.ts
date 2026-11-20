@@ -198,6 +198,15 @@ describe("Bases de connaissances : RLS, chiffrement, triggers", { skip: !appUrl 
     assert.deepEqual([base.name, base.access], ["Politiques RH", "owner"]);
     const raw = await withTenant(owner, tenant(alice), (client) => client.query("SELECT name FROM knowledge_bases WHERE id = $1", [base.id]));
     assert.ok(!JSON.stringify(raw.rows).includes("Politiques"));
+    // Photo : chiffrée elle aussi (elle peut montrer une personne) ; jamais en clair, même en SQL direct.
+    const icon = `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(32, 9)]).toString("base64")}`;
+    assert.equal((await knowledge.setIcon(tenant(alice), base.id, icon))?.icon, icon);
+    assert.equal((await knowledge.listBases(tenant(alice))).find((item) => item.id === base.id)?.icon, icon);
+    const rawIcon = await withTenant(owner, tenant(alice), (client) => client.query("SELECT icon FROM knowledge_bases WHERE id = $1", [base.id]));
+    assert.ok(!JSON.stringify(rawIcon.rows).includes("iVBOR") && !JSON.stringify(rawIcon.rows).includes("data:image"));
+    await assert.rejects(withTenant(owner, tenant(alice), (client) => client.query("UPDATE knowledge_bases SET icon = $2 WHERE id = $1", [base.id, icon])), /knowledge_bases_icon_encrypted_check/);
+    assert.equal(await knowledge.setIcon(tenant(bob), base.id, null), null);
+    assert.equal((await knowledge.getBase(tenant(alice), base.id))?.icon, icon);
 
     const rh = (await knowledge.createFolder(tenant(alice), base.id, { name: "Contrats", parentId: null }))!;
     const y2026 = (await knowledge.createFolder(tenant(alice), base.id, { name: "2026", parentId: rh.id }))!;

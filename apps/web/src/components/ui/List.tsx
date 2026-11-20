@@ -136,14 +136,16 @@ export function ListGrid({ children, label }: { children: ReactNode; label?: str
   )
 }
 
-export function GridTile({ icon, title, label, tooltip, onClick, badge }: { icon: ReactNode; title: string; label?: string; tooltip?: string; onClick: () => void; badge?: ReactNode }) {
+export function GridTile({ icon, title, label, tooltip, onClick, badge, selected, actions }: { icon: ReactNode; title: string; label?: string; tooltip?: string; onClick: () => void; badge?: ReactNode; selected?: boolean; actions?: ReactNode }) {
   return (
     <li className="grid-tile-wrap">
-      <button type="button" className="grid-tile" title={tooltip ?? title} aria-label={label ?? title} onClick={onClick}>
+      <button type="button" className={`grid-tile${selected ? ' selected' : ''}`} title={tooltip ?? title} aria-label={label ?? title} onClick={onClick}>
         <span className="grid-tile-icon">{icon}</span>
         <span className="grid-tile-title">{title}</span>
         {badge && <span className="grid-tile-badge">{badge}</span>}
       </button>
+      {/* Mêmes actions qu'une ligne, révélées au survol de la tuile. */}
+      {actions && <span className="grid-tile-actions">{actions}</span>}
     </li>
   )
 }

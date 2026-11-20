@@ -327,6 +327,7 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
     confidential: base.confidential,
     revision: base.revision,
     access: access(tenant, base),
+    icon: base.icon,
   });
   const publicSource = ({ organizationId: _o, bytes: _b, createdBy: _c, ...source }: Source): KnowledgeSource => ({ ...source });
   const bump = (baseId: string) => {
@@ -344,7 +345,7 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
       .map((link) => baseOf(tenant, link.baseId))
       .filter((base): base is Base => Boolean(base));
   const create = (tenant: TenantContext, name: string | null): Base => {
-    const base: Base = { id: crypto.randomUUID(), name, createdBy: tenant.userId, confidential: false, revision: 0, organizationId: tenant.organizationId, updatedAt: now() };
+    const base: Base = { id: crypto.randomUUID(), name, icon: null, createdBy: tenant.userId, confidential: false, revision: 0, organizationId: tenant.organizationId, updatedAt: now() };
     bases.set(base.id, base);
     return base;
   };
@@ -449,6 +450,12 @@ export function createFakeKnowledgeStore(): KnowledgeStore {
       if (!base) return null;
       base.confidential = confidential;
       base.revision++;
+      return publicBase(tenant, base);
+    },
+    setIcon: async (tenant, baseId, icon) => {
+      const base = baseOf(tenant, baseId);
+      if (!base || access(tenant, base) === "view") return null;
+      base.icon = icon;
       return publicBase(tenant, base);
     },
     listSources: async (tenant, baseId) =>

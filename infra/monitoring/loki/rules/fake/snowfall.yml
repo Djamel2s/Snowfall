@@ -27,3 +27,18 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "Opération refusée par le KMS (jeton invalide ou tentative hors politique)."
+
+      - alert: RestaurationEchouee
+        # Le test mensuel (backup-verify) écrit « restore_test_ok » ou « restore_test_failed ».
+        expr: sum(count_over_time({service=~".*backup.*"} |= "restore_test_failed" [1h])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Le test de restauration a échoué : les sauvegardes ne sont peut-être pas restaurables."
+
+      - alert: TestRestaurationManquant
+        # Preuve d'audit mensuelle : au-delà de 30 jours sans test réussi, elle manque (30 jours : durée de conservation des journaux).
+        expr: absent_over_time({service=~".*backup.*"} |= "restore_test_ok" [30d])
+        labels: { severity: warning }
+        annotations:
+          summary: "Aucun test de restauration réussi depuis 30 jours (preuve mensuelle manquante)."
+

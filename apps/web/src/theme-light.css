@@ -1,4 +1,4 @@
-/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1059 déclarations) : ne pas modifier à la main.
+/* Thème clair GÉNÉRÉ par scripts/generate-light-theme.mjs (1080 déclarations) : ne pas modifier à la main.
    Retouches : src/theme-light-fixes.css. */
 
 :root[data-theme="light"] {
@@ -610,6 +610,7 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"],
 :root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"],
+:root[data-theme="light"] .memory-panel input[type="checkbox"][role="switch"],
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"] {
   border: 1px solid rgba(34, 117, 221, 0.18);
   background: rgba(26, 26, 26, 0.06);
@@ -617,12 +618,14 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]::after,
 :root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]::after,
+:root[data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]::after,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]::after {
   background: #5b6a82;
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked,
+:root[data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:checked,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked {
   border-color: rgba(23, 34, 47, 0.5);
   background: rgba(0, 103, 255, 0.35);
@@ -630,12 +633,14 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+:root[data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:checked::after,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:checked::after {
   background: #111822;
 }
 
 :root[data-theme="light"] .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-theme="light"] .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+:root[data-theme="light"] .memory-panel input[type="checkbox"][role="switch"]:focus-visible,
 :root[data-theme="light"] .agent-schedules input[type="checkbox"][role="switch"]:focus-visible {
   outline: 2px solid rgba(23, 34, 47, 0.5);
 }
@@ -1186,6 +1191,22 @@ html[data-theme="light"] {
   color: #637590;
 }
 
+:root[data-theme="light"] .message-file.pptx svg:first-child {
+  color: #d14d13;
+}
+
+:root[data-theme="light"] .message-file.docx svg:first-child {
+  color: #0150c4;
+}
+
+:root[data-theme="light"] .message-file.xlsx svg:first-child {
+  color: #3ac574;
+}
+
+:root[data-theme="light"] .message-file.pdf svg:first-child {
+  color: #ac0600;
+}
+
 :root[data-theme="light"] .message-file:hover,
 :root[data-theme="light"] .message-file-figure figcaption button:hover {
   border-color: rgba(0, 117, 255, 0.3);
@@ -1405,20 +1426,6 @@ html[data-theme="light"] {
 :root[data-theme="light"] .chat-temporary-badge {
   background: rgba(0, 116, 255, 0.1);
   color: #182433;
-}
-
-:root[data-theme="light"] .memory-list li {
-  background: rgba(26, 26, 26, 0.03);
-  color: #161f2d;
-}
-
-:root[data-theme="light"] .memory-list button {
-  color: #4f6078;
-}
-
-:root[data-theme="light"] .memory-list button:hover {
-  background: rgba(214, 41, 64, 0.18);
-  color: #221113;
 }
 
 :root[data-theme="light"] .chat-actions-item.armed {
@@ -1643,6 +1650,25 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .connector-logo svg {
   box-shadow: 0 0 0 1px rgba(26, 26, 26, 0.06);
+}
+
+:root[data-theme="light"] .connector-logo img {
+  box-shadow: 0 0 0 1px rgba(26, 26, 26, 0.06);
+}
+
+:root[data-theme="light"] .entity-icon-badge {
+  background: #e2e7ef;
+  color: #238a54;
+}
+
+:root[data-theme="light"] .icon-picker-button:focus-visible {
+  outline: 2px solid #202f41;
+}
+
+:root[data-theme="light"] .icon-picker-camera,
+:root[data-theme="light"] .icon-picker-remove {
+  background: #bdc7d5;
+  color: #111822;
 }
 
 :root[data-theme="light"] .connector-name {
@@ -2442,6 +2468,11 @@ html[data-theme="light"] {
   color: #229b5c;
 }
 
+:root[data-theme="light"] .grid-tile.selected {
+  border-color: rgba(34, 117, 221, 0.16);
+  background: rgba(26, 26, 26, 0.06);
+}
+
 :root[data-theme="light"] .grid-tile {
   color: #273446;
 }
@@ -2492,6 +2523,40 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .library-base.dragging {
   outline: 2px dashed rgba(0, 133, 255, 0.45);
+}
+
+:root[data-theme="light"] .costs-row {
+  border-top: 1px solid rgba(34, 117, 221, 0.06);
+}
+
+:root[data-theme="light"] .costs-row small {
+  color: #708299;
+}
+
+:root[data-theme="light"] .costs-label {
+  color: #374860;
+}
+
+:root[data-theme="light"] .costs-price label {
+  color: #708299;
+}
+
+:root[data-theme="light"] .costs-price input {
+  border: 1px solid rgba(34, 117, 221, 0.12);
+  background: rgba(26, 26, 26, 0.03);
+  color: #111822;
+}
+
+:root[data-theme="light"] .costs-price input:focus {
+  border-color: rgba(0, 117, 255, 0.45);
+}
+
+:root[data-theme="light"] .costs-missing {
+  color: #c48900;
+}
+
+:root[data-theme="light"] .costs-warning {
+  color: #c48900;
 }
 
 :root[data-theme="light"] .studio-icon {
@@ -2721,6 +2786,17 @@ html[data-theme="light"] {
 
 :root[data-theme="light"] .responder-option > svg {
   color: #202e43;
+}
+
+:root[data-theme="light"] .responder-connect {
+  border-top: 1px solid rgba(34, 117, 221, 0.1);
+  color: #405470;
+}
+
+:root[data-theme="light"] .responder-connect:hover,
+:root[data-theme="light"] .responder-connect:focus-visible {
+  background: rgba(0, 117, 255, 0.07);
+  color: #111822;
 }
 
 :root[data-theme="light"] .responder-popover .model-select-empty {

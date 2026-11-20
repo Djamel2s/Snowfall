@@ -209,6 +209,64 @@ describe("Quotas et fournisseurs autorisés", () => {
     assert.equal((await settings.get(admin)).modelRouting?.fast.model, "mistral-small-latest");
     assert.equal((await asAdmin.app.inject(put({ ...payload, modelRouting: null }))).statusCode, 200);
   });
+
+  it("coûts : tarifs et budgets validés ; page des coûts aux administrateurs ; un membre ne voit que SES euros", async (t) => {
+    const usage = {
+      ...emptyUsage(),
+      spend: {
+        organization: { euros: 123.456, tokens: 120, tools: 3.456, unpriced: ["openai:gpt-x"] },
+        mine: { euros: 4.567, tokens: 4.567, tools: 0, unpriced: [] },
+      },
+      models: [
+        { provider: "mistral" as const, model: "mistral-large-latest", inputTokens: 1_000_000, outputTokens: 1_000_000 },
+        { provider: "openai" as const, model: "gpt-x", inputTokens: 10, outputTokens: 10 },
+      ],
+      tools: { image: 3 },
+    };
+    const { store: settings } = fakeSettings({}, usage);
+    const members = { organization: async () => ({ id: ORG, name: "Org", sso: { alias: null, defaultRole: "member" } }) } as unknown as MemberStore;
+    const asMember = setup({ settings, members });
+    const asAdmin = setup({ settings, members, user: admin });
+    t.after(() => Promise.all([asMember.app.close(), asAdmin.app.close()]));
+    const put = (body: unknown) => ({ ...post("/organization/settings", body), method: "PUT" as const });
+    const base = { allowedProviders: ["mistral"], monthlyTokenLimit: null, providerTokenLimits: {} };
+    const prices = { models: { "mistral:mistral-large-latest": { input: 2, output: 6 } }, tools: { image: 0.04 } };
+
+    for (const bad of [
+      { prices: { models: { "mistral:*": { input: -1, output: 1 } }, tools: {} } },
+      { prices: { models: { "pirate:x": { input: 1, output: 1 } }, tools: {} } },
+      { prices: { models: {}, tools: { image: 5_000 } } },
+      { monthlyBudget: 0 },
+      { responseMaxSeconds: 5 },
+      { responseMaxTokens: 10 },
+      { memberToolLimits: { image: -1 } },
+    ]) {
+      assert.equal((await asAdmin.app.inject(put({ ...base, ...bad }))).statusCode, 400, JSON.stringify(bad));
+    }
+    assert.equal((await asMember.app.inject(put({ ...base, prices }))).statusCode, 403);
+    const saved = await asAdmin.app.inject(put({ ...base, prices, monthlyBudget: 500.004, memberMonthlyBudget: 20, memberToolLimits: { image: 10 }, responseMaxSeconds: 120 }));
+    assert.equal(saved.statusCode, 200);
+    assert.equal(saved.json().settings.monthlyBudget, 500);
+    assert.deepEqual(saved.json().settings.memberToolLimits, { image: 10 });
+    // Absents : inchangés.
+    await asAdmin.app.inject(put(base));
+    assert.equal((await settings.get(admin)).memberMonthlyBudget, 20);
+
+    // Page des coûts : refusée aux membres ; par modèle, avec les modèles sans tarif.
+    assert.equal((await asMember.app.inject({ method: "GET", url: "/organization/costs" })).statusCode, 403);
+    const costs = (await asAdmin.app.inject({ method: "GET", url: "/organization/costs" })).json();
+    assert.deepEqual(costs.models.map((row: { model: string; euros: number | null }) => [row.model, row.euros]), [["mistral-large-latest", 8], ["gpt-x", null]]);
+    assert.deepEqual(costs.tools, [{ meter: "image", calls: 3, euros: 0.12 }]);
+    assert.deepEqual([costs.total, costs.unpriced, costs.budget], [123.46, ["openai:gpt-x"], 500]);
+
+    // /usage : le membre voit ses euros et son budget, jamais ceux de l'organisation.
+    const mine = (await asMember.app.inject({ method: "GET", url: "/usage" })).json();
+    assert.equal(mine.usage.mySpend, 4.57);
+    assert.equal(mine.limits.memberBudget, 20);
+    assert.ok(!("spend" in mine.usage) && !("budget" in mine.limits) && !("models" in mine.usage));
+    const theirs = (await asAdmin.app.inject({ method: "GET", url: "/usage" })).json();
+    assert.deepEqual([theirs.usage.spend, theirs.limits.budget], [123.46, 500]);
+  });
 });
 
 describe("Membres et invitations", () => {

@@ -571,4 +571,67 @@ export const agentCases: EvalCase[] = [
       { type: "answer_includes", groups: [["14 caracteres", "14 caractères"]] },
     ],
   },
+  // ---- Maquettes (kit Snowfall, bloc ```prototype) ------------------------------------
+  {
+    id: "maquette-appli",
+    category: "outils",
+    description: "Maquette cliquable avec le kit : plusieurs écrans reliés, sans script",
+    question: "Fais-moi la maquette d'une application mobile de réservation de salles de réunion : liste des salles, détail d'une salle, confirmation.",
+    tools: [],
+    checks: [
+      { type: "answer_includes", groups: [["```prototype"], ["class=\"app\""], ["data-screen"], ["data-go"]] },
+      { type: "answer_excludes", texts: ["<script", "https://", "onclick"] },
+    ],
+  },
+  // ---- Studio de documents (bac à sable réel : --sandbox) ---------------------------
+  {
+    id: "studio-presentation",
+    category: "outils",
+    description: "Présentation PowerPoint soignée avec graphique natif, et sa version PDF",
+    question:
+      "Prépare une présentation PowerPoint de 6 à 8 diapositives pour le comité de direction : bilan 2026 de Polaris. " +
+      "Chiffres : chiffre d'affaires 4,2 M€ (+18 %), marge 22 %, 3 nouveaux clients grands comptes ; " +
+      "ventes trimestrielles 0,9 / 1,0 / 1,1 / 1,2 M€ ; priorités 2027 : international, IA, recrutement de 12 personnes. " +
+      "Donne aussi la version PDF.",
+    tools: ["code_interpreter"],
+    sandbox: true,
+    checks: [
+      { type: "tool_called", tool: "run_code" },
+      { type: "office_file", extension: ".pptx", min: 6, chart: true },
+      { type: "faithful" },
+      { type: "file_produced", extension: ".pdf" },
+      { type: "answer_excludes", texts: ["je ne peux pas", "impossible de créer"] },
+    ],
+  },
+  {
+    id: "studio-rapport",
+    category: "outils",
+    description: "Rapport Word structuré (titres, tableau, graphique)",
+    question:
+      "Rédige un rapport Word de deux pages sur les incidents informatiques du trimestre : 42 incidents (31 mineurs, 9 majeurs, 2 critiques), " +
+      "délai moyen de résolution 6 h, principale cause : mots de passe réinitialisés. Avec une synthèse, un tableau par gravité, " +
+      "un graphique et trois recommandations.",
+    tools: ["code_interpreter"],
+    sandbox: true,
+    checks: [
+      { type: "tool_called", tool: "run_code" },
+      { type: "office_file", extension: ".docx", min: 3, chart: true },
+      { type: "faithful" },
+    ],
+  },
+  {
+    id: "studio-classeur",
+    category: "outils",
+    description: "Classeur Excel avec tableau mis en forme et graphique natif",
+    question:
+      "Fais-moi un classeur Excel du budget 2027 par service : Ventes 820 k€, Marketing 310 k€, R&D 1 150 k€, Support 240 k€, Administration 180 k€, " +
+      "avec le total, la part de chaque service et un graphique.",
+    tools: ["code_interpreter"],
+    sandbox: true,
+    checks: [
+      { type: "tool_called", tool: "run_code" },
+      { type: "office_file", extension: ".xlsx", min: 1, chart: true },
+      { type: "faithful" },
+    ],
+  },
 ];

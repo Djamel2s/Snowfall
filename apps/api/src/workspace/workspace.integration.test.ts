@@ -65,6 +65,7 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
 
       await settings.update(tenant(adminA), {
         allowedProviders: ["mistral", "anthropic"],
+        personalKeyProviders: ["anthropic"],
         monthlyTokenLimit: 10_000,
         providerTokenLimits: { anthropic: 2_000 },
         embeddingProvider: "mistral",
@@ -75,18 +76,29 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
         modelRouting: { fast: { provider: "mistral", model: "mistral-small-latest" }, strong: { provider: "anthropic", model: "claude-opus-5-5" } },
         sensitiveData: "off",
         pseudonymize: true,
+        prices: { models: {}, tools: {} },
+        monthlyBudget: null,
+        memberMonthlyBudget: null,
+        memberToolLimits: { image: 3 },
+        responseMaxTokens: 50_000,
+        responseMaxSeconds: 120,
       });
       const saved = await settings.get(tenant(memberA));
+      assert.deepEqual(saved.memberToolLimits, { image: 3 });
+      assert.deepEqual([saved.responseMaxTokens, saved.responseMaxSeconds], [50_000, 120]);
       assert.deepEqual(saved.tools, ["search_knowledge"]);
       assert.deepEqual(saved.toolLimits, { code: 50, web: 200 });
       assert.equal(saved.modelRouting?.strong.model, "claude-opus-5-5");
       assert.equal(saved.sensitiveData, "off");
       assert.equal(saved.pseudonymize, true);
+      assert.deepEqual(saved.personalKeyProviders, ["anthropic"]);
       // Appels d'outils : comptés pour l'organisation, invisibles des autres.
       await settings.recordTool(tenant(memberA), "code");
       await settings.recordTool(tenant(adminA), "code");
       await settings.recordTool(tenant(memberA), "web");
       assert.deepEqual(await settings.toolUsage(tenant(adminA)), { code: 2, web: 1 });
+      // Par membre : les siens seulement.
+      assert.deepEqual(await settings.memberToolUsage(tenant(memberA)), { code: 1, web: 1 });
       assert.deepEqual(saved.allowedProviders, ["mistral", "anthropic"]);
       assert.deepEqual(saved.providerTokenLimits, { anthropic: 2_000 });
       assert.equal(saved.embeddingProvider, "mistral");
@@ -122,6 +134,51 @@ describe("Espace de travail : RLS, fonctions SQL et chiffrement", { skip: !appUr
 
       const byMember = await settings.usageByMember(tenant(adminA));
       assert.equal(byMember.find((row) => row.userId === memberA)?.tokens, 165);
+    });
+
+    it("coûts en euros : par modèle, aux tarifs actuels (rétroactifs) ; outils comptés ; budgets ; tarif refusé s'il est invalide", async () => {
+      const settings = new PostgresSettingsStore(pool);
+      const current = await settings.get(tenant(adminA));
+      // 2 M de jetons en entrée et 1 M en sortie sur un modèle, 1 M sur un autre sans tarif.
+      await settings.record(tenant(memberA), "openai", { inputTokens: 2_000_000, outputTokens: 1_000_000 }, "gpt-test");
+      await settings.record(tenant(adminA), "google", { inputTokens: 1_000_000, outputTokens: 0 }, "gemini-test");
+      await settings.record(tenant(memberA), "local", { inputTokens: 5_000_000, outputTokens: 5_000_000 }, "qwen3:8b");
+      let usage = await settings.usage(tenant(memberA));
+      // Sans tarif : rien de compté, les modèles externes sont signalés (le local est gratuit).
+      assert.ok(usage.spend!.organization.unpriced.includes("openai:gpt-test"));
+      assert.ok(usage.spend!.organization.unpriced.includes("google:gemini-test"));
+      assert.ok(!usage.spend!.organization.unpriced.some((key) => key.startsWith("local:")));
+
+      // Tarifs saisis après coup : valent pour tout le mois.
+      await settings.update(tenant(adminA), {
+        ...current,
+        prices: { models: { "openai:gpt-test": { input: 2, output: 8 }, "google:*": { input: 0.5, output: 1 } }, tools: { code: 0.25 } },
+        monthlyBudget: 10,
+        memberMonthlyBudget: 5,
+      });
+      usage = await settings.usage(tenant(memberA));
+      // Membre : 2 × 2 € + 1 × 8 € = 12 €, + 1 exécution de code à 0,25 € (et 1 recherche web, gratuite).
+      assert.equal(usage.spend!.mine.euros, 12.25);
+      // Organisation : 12 € + 0,5 € (Google, tarif du fournisseur) + 2 exécutions de code (0,5 €).
+      assert.equal(usage.spend!.organization.euros, 13);
+      assert.deepEqual(usage.spend!.organization.unpriced.filter((key) => key.includes("-test")), []);
+      assert.equal((await settings.usage(tenant(memberB, orgB))).spend!.organization.euros, 0);
+      const saved = await settings.get(tenant(adminA));
+      assert.deepEqual([saved.monthlyBudget, saved.memberMonthlyBudget], [10, 5]);
+      // Un tarif négatif écrit directement en base est ignoré à la lecture ; un budget nul est refusé.
+      await withTenant(pool, tenant(adminA), (client) =>
+        client.query(`UPDATE organization_settings SET prices = '{"models":{"openai:gpt-test":{"input":-5,"output":1}}}' WHERE organization_id = $1`, [orgA]),
+      );
+      assert.deepEqual((await settings.get(tenant(adminA))).prices.models, {});
+      await assert.rejects(
+        withTenant(pool, tenant(adminA), (client) => client.query("UPDATE organization_settings SET monthly_budget_cents = 0 WHERE organization_id = $1", [orgA])),
+        /organization_settings_budgets_check/,
+      );
+      await assert.rejects(
+        withTenant(pool, tenant(adminA), (client) => client.query("UPDATE organization_settings SET response_max_seconds = 5 WHERE organization_id = $1", [orgA])),
+        /organization_settings_response_limits_check/,
+      );
+      await settings.update(tenant(adminA), { ...current });
     });
   });
 

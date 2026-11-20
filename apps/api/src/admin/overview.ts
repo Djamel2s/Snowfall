@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { withTenant, type TenantContext } from "../db/tenant.js";
+import { spendOf, type ModelUsage, type Prices } from "../workspace/costs.js";
 import { currentPeriod, toolMeters, type ToolMeter } from "../workspace/settings.js";
 
 // Pilotage (Administration) : des TOTAUX de l'organisation, jamais un classement
@@ -25,6 +26,9 @@ export type AdminOverviewData = AdminActivity & {
   tokens: { period: string; byProvider: Record<string, number> }[];
   /** Appels d'outils du mois courant. */
   tools: Partial<Record<ToolMeter, number>>;
+  /** Pour les coûts en euros (calculés aux tarifs actuels) : jetons par modèle et appels d'outils, par mois. */
+  usage: (ModelUsage & { period: string })[];
+  toolCalls: { period: string; meter: ToolMeter; calls: number }[];
 };
 
 export class AdminForbiddenError extends Error {
@@ -40,6 +44,17 @@ export interface AdminOverviewStore {
 /** Premier jour du mois, `back` mois avant le mois courant (UTC). */
 export function monthsBack(back: number, now = new Date()) {
   return currentPeriod(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)));
+}
+
+/** Coût de chaque mois (six points), aux tarifs actuels ; modèles sans tarif signalés par mois. */
+export function monthlyCosts(data: Pick<AdminOverviewData, "usage" | "toolCalls">, prices: Prices, now = new Date()) {
+  return Array.from({ length: TOKEN_MONTHS }, (_, index) => {
+    const period = monthsBack(TOKEN_MONTHS - 1 - index, now);
+    const tools: Partial<Record<ToolMeter, number>> = {};
+    for (const row of data.toolCalls) if (row.period === period) tools[row.meter] = (tools[row.meter] ?? 0) + row.calls;
+    const spend = spendOf(data.usage.filter((row) => row.period === period), tools, prices);
+    return { period, euros: Math.round(spend.euros * 100) / 100, unpriced: spend.unpriced };
+  });
 }
 
 /** Mois manquants remplis à zéro : la courbe garde ses six points. */
@@ -73,10 +88,23 @@ export class PostgresAdminOverviewStore implements AdminOverviewStore {
         "SELECT meter, sum(calls) AS calls FROM tool_usage WHERE organization_id = $1 AND period = $2 GROUP BY 1",
         [tenant.organizationId, currentPeriod()],
       );
+      const usage = await client.query<{ period: string; provider: ModelUsage["provider"]; model: string; input: string; output: string }>(
+        `SELECT to_char(period, 'YYYY-MM-DD') AS period, provider, model, sum(input_tokens) AS input, sum(output_tokens) AS output
+         FROM token_usage WHERE organization_id = $1 AND period >= $2 AND provider <> 'echo'
+         GROUP BY 1, 2, 3`,
+        [tenant.organizationId, monthsBack(TOKEN_MONTHS - 1)],
+      );
+      const toolCalls = await client.query<{ period: string; meter: ToolMeter; calls: string }>(
+        `SELECT to_char(period, 'YYYY-MM-DD') AS period, meter, sum(calls) AS calls
+         FROM tool_usage WHERE organization_id = $1 AND period >= $2 GROUP BY 1, 2`,
+        [tenant.organizationId, monthsBack(TOKEN_MONTHS - 1)],
+      );
       return {
         ...activity,
         tokens: fillMonths(tokens.rows.map((row) => ({ period: row.period, provider: row.provider, tokens: Number(row.tokens) }))),
         tools: Object.fromEntries(tools.rows.filter((row) => toolMeters.includes(row.meter)).map((row) => [row.meter, Number(row.calls)])),
+        usage: usage.rows.map((row) => ({ period: row.period, provider: row.provider, model: row.model, inputTokens: Number(row.input), outputTokens: Number(row.output) })),
+        toolCalls: toolCalls.rows.filter((row) => toolMeters.includes(row.meter)).map((row) => ({ period: row.period, meter: row.meter, calls: Number(row.calls) })),
       };
     });
   }
@@ -102,6 +130,8 @@ export class MemoryAdminOverviewStore implements AdminOverviewStore {
         agents: [],
         tokens: fillMonths([]),
         tools: {},
+        usage: [],
+        toolCalls: [],
       };
     }
     return { ...data, days: data.days.slice(-days), agents: data.agents.filter((agent) => agent.users >= AGENT_MIN_USERS) };

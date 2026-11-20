@@ -1,12 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { BookOpen, Check, Cpu, LayoutDashboard, Lock, Palette, Trash2, UserPlus, Users, Wrench, X } from 'lucide-react'
+import { BookOpen, Check, Cpu, Euro, LayoutDashboard, Lock, Palette, Trash2, UserPlus, Users, Wrench, X } from 'lucide-react'
 import { getSession } from '../auth/session'
 import {
   api,
   providerIds,
   toolAccess,
   toolIds,
-  toolMeters,
   type Invitation,
   type Member,
   type ModelSelection,
@@ -23,6 +22,7 @@ import { providerMeta } from '../lib/providers'
 import { ProviderLogo } from './AgentAvatar'
 import DecisionWorkshop from './DecisionWorkshop'
 import AdminOverview from './AdminOverview'
+import CostsSettings from './CostsSettings'
 import BrandingSettings from './BrandingSettings'
 import SecuritySettings from './SecuritySettings'
 
@@ -36,6 +36,7 @@ const sections = [
   { id: 'overview', icon: LayoutDashboard },
   { id: 'members', icon: Users },
   { id: 'models', icon: Cpu },
+  { id: 'costs', icon: Euro },
   { id: 'knowledge', icon: BookOpen },
   { id: 'tools', icon: Wrench },
   { id: 'security', icon: Lock },
@@ -158,11 +159,6 @@ export default function AdminPanel() {
     })
   }
 
-  function limitValue(value: string) {
-    const number = Number(value.replace(/\s/g, ''))
-    return value.trim() === '' || !Number.isFinite(number) || number <= 0 ? null : Math.floor(number)
-  }
-
   async function invite(event: FormEvent) {
     event.preventDefault()
     const email = inviteEmail.trim()
@@ -200,6 +196,21 @@ export default function AdminPanel() {
       {section === 'security' && <SecuritySettings onError={setError} />}
 
       {!['overview', 'identity', 'security'].includes(section) && !draft && <p className="settings-hint">{t('common.loading')}</p>}
+
+      {section === 'costs' && draft && (
+        <CostsSettings
+          draft={draft}
+          setDraft={setDraft}
+          platformTools={organization?.platformTools ?? toolIds}
+          saved={saved === 'costs'}
+          onError={setError}
+          onSave={() =>
+            void run('costs', async () => {
+              setDraft(await api.saveOrganizationSettings(draft))
+            })
+          }
+        />
+      )}
 
       {section === 'models' && draft && (
         <section className="settings-card" aria-label={t('settings.providers')}>
@@ -254,53 +265,6 @@ export default function AdminPanel() {
           />
           <DecisionWorkshop onError={setError} />
 
-          <h3>{t('settings.quotas')}</h3>
-          <label className="settings-field">
-            <span>{t('settings.quotaOrg')}</span>
-            <input
-              inputMode="numeric"
-              placeholder={t('settings.quotaPlaceholder')}
-              value={draft.monthlyTokenLimit ?? ''}
-              onChange={(event) => setDraft({ ...draft, monthlyTokenLimit: limitValue(event.target.value) })}
-            />
-          </label>
-          {draft.allowedProviders.map((id) => (
-            <label key={id} className="settings-field">
-              <span>{t('settings.quotaProvider', { provider: providerMeta[id].label })}</span>
-              <input
-                inputMode="numeric"
-                placeholder={t('settings.quotaPlaceholder')}
-                value={draft.providerTokenLimits[id] ?? ''}
-                onChange={(event) => {
-                  const limits = { ...draft.providerTokenLimits }
-                  const value = limitValue(event.target.value)
-                  if (value === null) delete limits[id]
-                  else limits[id] = value
-                  setDraft({ ...draft, providerTokenLimits: limits })
-                }}
-              />
-            </label>
-          ))}
-          {/* Outils comptés (code, web, MCP) : seulement ceux que la plateforme fournit. */}
-          {toolMeters
-            .filter(({ tool }) => (organization?.platformTools ?? toolIds).includes(tool))
-            .map(({ id }) => (
-              <label key={id} className="settings-field">
-                <span>{t('settings.quotaTool', { tool: t(`settings.meter.${id}`) })}</span>
-                <input
-                  inputMode="numeric"
-                  placeholder={t('settings.quotaPlaceholder')}
-                  value={draft.toolLimits[id] ?? ''}
-                  onChange={(event) => {
-                    const limits = { ...draft.toolLimits }
-                    const value = limitValue(event.target.value)
-                    if (value === null) delete limits[id]
-                    else limits[id] = value
-                    setDraft({ ...draft, toolLimits: limits })
-                  }}
-                />
-              </label>
-            ))}
           <button
             type="button"
             className="settings-save"

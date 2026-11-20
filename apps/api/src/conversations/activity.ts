@@ -22,6 +22,8 @@ export type ActivityStep = {
   flagged?: true;
   /** Action d'écriture (ou appel sortant) validée par l'utilisateur. */
   approved?: true;
+  /** Recherche sans résultat. */
+  empty?: true;
 };
 
 export type MessageActivity = {
@@ -64,6 +66,7 @@ type RawStep = {
   found?: number[] | undefined;
   flagged?: boolean | undefined;
   approved?: boolean | undefined;
+  empty?: boolean | undefined;
 };
 
 /**
@@ -91,6 +94,7 @@ export function activityOf(steps: RawStep[], consulted: MessageSource[], started
     if (found.length) item.found = [...new Set(found)];
     if (step.flagged) item.flagged = true;
     if (step.approved) item.approved = true;
+    if (step.empty && !item.found) item.empty = true;
     kept.push(item);
   }
   if (!kept.length) return undefined;

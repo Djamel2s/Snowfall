@@ -5,6 +5,68 @@
 Les sections 1, 4 et 5 ci-dessous décrivent l'état **au 17 octobre** ; elles sont
 gardées telles quelles pour l'historique. Depuis :
 
+- **20 novembre — barre latérale en trois groupes** : utiliser (conversations,
+  projets), les agents, puis ce qui les équipe (modèles, connecteurs, prompts,
+  compétences, connaissances, mémoire). La mémoire quitte les paramètres pour
+  son propre panneau (interrupteur, recherche, souvenirs oubliables). Modèles
+  suit le format des autres panneaux (recherche, grille par défaut, liste
+  détaillée), un seul état par fournisseur. Mes agents en grille par défaut
+  (actions au survol de la tuile), liste au choix, gardé dans le navigateur.
+- **20 novembre — panneau Modèles (clés d'API)** : nouvelle entrée de la barre
+  latérale. Un administrateur saisit la clé de l'organisation pour un
+  fournisseur (remplace celle de la plateforme) et autorise, fournisseur par
+  fournisseur, les clés personnelles (désactivées par défaut) ; un membre pose
+  alors la sienne, hors budget de l'organisation. Clés chiffrées, jamais
+  réaffichées ; le choix du modèle mène au panneau. Abonnements Claude ou
+  ChatGPT à la place d'une clé : non (interdit par Anthropic ; « Sign in with
+  ChatGPT » réservé aux applications partenaires). Mesure du contrôle de
+  fidélité : il trouve les inventions, Gemini Flash-Lite ne corrige pas (0 sur 4).
+  Fiche 40.
+
+- **19 novembre — maquettes et fidélité** : bloc `prototype` → maquette
+  cliquable (écrans reliés, fenêtres, onglets, interrupteurs, icônes ; mobile ou
+  ordinateur) avec le kit Snowfall, dans le cadre isolé, téléchargeable. Contrôle
+  de fidélité des documents produits (chiffres inventés signalés). Défaut
+  corrigé : une erreur de Gemini en cours de réponse donnait une réponse tronquée
+  présentée comme complète. Fiche 39.
+
+- **17 novembre — studio mesuré avec un vrai modèle** : 3 cas sur 3 réussis
+  (Gemini Flash-Lite, bac à sable réel) après corrections : boucle d'agent qui
+  ne s'emballe plus quand le modèle demande un outil après la limite, module
+  tolérant aux noms d'arguments inventés, guide lu en une fois, sommaire Word
+  réellement numéroté dans le PDF, nombres en français. Reste : le modèle invente
+  encore des détails (contrôle de fidélité à faire). Fiche 37 § 8.
+
+- **17 novembre — photos des bases et des connecteurs** : une base de
+  connaissances ou un connecteur peut prendre une photo comme icône (choisie
+  dans sa fiche, visible dans les listes et dans le studio de l'agent).
+  Réencodée par le navigateur, contrôlée, chiffrée. Fiche 38.
+
+- **1er novembre — studio de documents** : présentations PowerPoint (diapositives
+  typées, graphiques natifs, notes de l'orateur), rapports Word (couverture,
+  sommaire, encadrés, figures), classeurs Excel (tableaux, totaux, graphiques),
+  PDF, conversion en PDF, modèles de l'utilisateur suivis ; 7 thèmes, ou ceux
+  d'une couleur de marque ou d'un modèle. Chaque fichier Office produit est
+  contrôlé (macros, objets, liens sortants). Fiche 37.
+
+- **1er novembre — coûts et limites (lot 4)** : coût en euros par modèle et par
+  outil (tarifs saisis, aucun prix intégré), budgets mensuels (organisation,
+  membre) vérifiés avant chaque réponse et chaque outil, quotas d'outils par
+  membre, plafonds par réponse ; rubrique Administration › Coûts, coûts au
+  Pilotage, dépenses du membre. Fiche 35.
+
+- **1er novembre — exploitation prouvée (lot 3)** : alertes testées
+  (promtool), exercice d'alerte de bout en bout et exercice de restauration
+  complet en CI, plan de réponse à incident, registre des preuves. Défaut
+  trouvé et corrigé : la procédure de restauration ne réappliquait pas les
+  droits. Fiche 36.
+
+- **1er novembre — documents composés** : un agent peut créer des images puis
+  les mettre dans un PDF (fpdf2 dans le bac à sable ; `run_code` reprend les
+  fichiers produits dans la conversation). Recherche vide affichée « Aucun
+  résultat » ; l'agent doit dire quel outil a échoué. SearXNG de dev : moteurs
+  suspendus trop longtemps, d'où des recherches vides. Fiche 34.
+
 - **31 octobre — bibliothèque de connaissances** : un espace « Connaissances »
   dans la barre latérale ; des bases nommées, avec dossiers et sous-dossiers,
   partageables (personne, groupe, organisation ; lecture ou modification),
@@ -451,8 +513,8 @@ Avancement (18 octobre) :
 |---|---|---|
 | 1 | Correctifs : conservation et tâches planifiées, activité automatique, interrupteurs clairs, remesure de 4 agents | Fait (mesures : selon le quota) |
 | 2 | **Activité et sources** : ce que fait l'agent en direct, puis repliable après la réponse ; sources citées dans le texte avec le site (icône servie par Snowfall) | Fait (31 oct., fiche 32) |
-| 3 | Exploitation prouvée : supervision et alertes, restauration testée avec preuve, exercice de réponse à incident | À faire |
-| 4 | Coûts et limites : coût en euros au Pilotage, quotas couvrant les outils, plafond de jetons et de durée par réponse | À faire |
+| 3 | Exploitation prouvée : supervision et alertes, restauration testée avec preuve, exercice de réponse à incident | Fait (1er nov., fiche 36) |
+| 4 | Coûts et limites : coût en euros au Pilotage, quotas couvrant les outils, plafond de jetons et de durée par réponse | Fait (1er nov., fiche 35) |
 | 5 | Éditeur de workflows | À cadrer ensemble |
 | 6 | Teams et Slack, puis Outlook et Word | À faire |
 | — | Hors code : test d'intrusion, AIPD signée, registre, DPA, hébergeur qualifié, gVisor en production, OpenBao en cluster ou HSM | En parallèle |

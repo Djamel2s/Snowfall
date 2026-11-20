@@ -4,6 +4,9 @@ import { after, before, describe, it } from "node:test";
 import { Pool, type PoolClient } from "pg";
 import { PostgresAgentStore } from "../agents/store.js";
 import { PostgresConversationStore } from "../conversations/store.js";
+import { PostgresKnowledgeStore } from "../knowledge/store.js";
+import { PostgresModelKeyStore } from "../llm/keys.js";
+import { PostgresMcpServerStore } from "../mcp/store.js";
 import { PostgresUserMemoryStore } from "../memory/store.js";
 import { PostgresPromptStore } from "../prompts/store.js";
 import { PostgresSkillStore } from "../skills/store.js";
@@ -99,6 +102,18 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     const binary = await skills.addFile(as(alice), skill.id, { name: "modele.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: template.length, text: "[Classeur]", original: template });
     await skills.addFile(as(alice), skill.id, { name: "plan.md", mediaType: "text/markdown", size: 6, text: "# Plan" });
     const withSkill = await agents.create(as(alice), { name: "Gestion", avatar, instructions: "", provider: "mistral", model: "mistral-small-latest", skills: [skill.id] });
+    // Photos d'une base et d'un connecteur (colonnes facultatives).
+    const icon = `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), randomBytes(40)]).toString("base64")}`;
+    const knowledge = new PostgresKnowledgeStore(pool, keyring);
+    const base = (await knowledge.createBase(as(alice), "RH"))!;
+    await knowledge.setIcon(as(alice), base.id, icon);
+    const servers = new PostgresMcpServerStore(pool, keyring);
+    const server = await servers.create(as(alice), { name: "Intranet", url: "https://mcp.example/mcp" });
+    await servers.setIcon(as(alice), server.id, icon);
+    // Clés d'API des fournisseurs : celle de l'organisation et une personnelle.
+    const modelKeys = new PostgresModelKeyStore(pool, keyring);
+    await modelKeys.set(as(alice), "organization", "mistral", "sk-organisation-rotation-0001");
+    await modelKeys.set(as(gone), "personal", "openai", "sk-personnelle-rotation-0002");
 
     // Rotation : version 2 de la clé d'organisation.
     await inTenant(null, async (client) => {
@@ -126,5 +141,9 @@ describe("Rotation des clés : PostgreSQL (tout rechiffré, tout relisible)", { 
     assert.ok((await skills.readOriginal(as(alice), withSkill.id, skill.id, binary!.id))?.equals(template));
     const loaded = await skills.load(as(alice), withSkill.id, skill.id);
     assert.deepEqual(loaded?.files.map((file) => [file.name, file.hasOriginal]), [["modele.xlsx", true], ["plan.md", false]]);
+    assert.equal((await knowledge.getBase(as(alice), base.id))?.icon, icon);
+    assert.equal((await servers.list(as(alice))).find((item) => item.id === server.id)?.icon, icon);
+    assert.equal((await modelKeys.secrets(as(alice))).organization.mistral, "sk-organisation-rotation-0001");
+    assert.equal((await modelKeys.secrets(as(gone))).personal.openai, "sk-personnelle-rotation-0002");
   });
 });

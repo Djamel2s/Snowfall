@@ -6,6 +6,7 @@ import type { Agent, AgentStore } from "../agents/store.js";
 import { createAppServer } from "../server.js";
 import { createFakeConversationStore } from "../testing/fakes.js";
 import type { Member, MemberStore } from "../workspace/members.js";
+import { defaultSettings } from "../workspace/settings.js";
 import { MemoryAdminOverviewStore, monthsBack, type AdminOverviewData } from "./overview.js";
 
 const ORIGIN = "http://localhost:5173";
@@ -27,6 +28,12 @@ const data: AdminOverviewData = {
   ],
   tokens: [{ period: monthsBack(0), byProvider: { mistral: 1200 } }],
   tools: { code: 4 },
+  usage: [
+    { period: monthsBack(0), provider: "mistral", model: "mistral-large-latest", inputTokens: 1_000_000, outputTokens: 500_000 },
+    { period: monthsBack(1), provider: "mistral", model: "mistral-large-latest", inputTokens: 500_000, outputTokens: 0 },
+    { period: monthsBack(0), provider: "openai", model: "gpt-x", inputTokens: 100, outputTokens: 0 },
+  ],
+  toolCalls: [{ period: monthsBack(0), meter: "code", calls: 4 }],
 };
 
 function setup(user: AuthenticatedUser) {
@@ -45,6 +52,13 @@ function setup(user: AuthenticatedUser) {
     agentRatings: { ratings: async () => ({ [shared]: { up: 9, total: 12 } }) },
     // L'organisation ne connaît que les administrateurs du magasin (ici : `admin`).
     adminOverview: new MemoryAdminOverviewStore({ [ORG]: data }, (tenant) => tenant.userId === admin.userId),
+    settings: {
+      get: async () => ({ ...defaultSettings, monthlyBudget: 50, prices: { models: { "mistral:mistral-large-latest": { input: 2, output: 6 } }, tools: { code: 0.5 } } }),
+      update: async (_tenant, next) => next,
+      usage: async () => ({ period: monthsBack(0), total: { inputTokens: 0, outputTokens: 0 }, byProvider: {}, mine: { inputTokens: 0, outputTokens: 0 } }),
+      usageByMember: async () => [],
+      record: async () => undefined,
+    },
   });
   return { app, events };
 }
@@ -64,6 +78,10 @@ describe("Administration › Pilotage", () => {
       { agentId: hidden, messages: 40, users: 5, name: null },
     ]);
     assert.deepEqual(body.tools, { code: 4 });
+    // Euros aux tarifs actuels : ce mois 2 + 3 + 4 × 0,5 = 7 € ; le mois dernier 1 € ; GPT sans tarif signalé.
+    assert.equal(body.costs.length, 6);
+    assert.deepEqual(body.costs.slice(-2).map((month: { euros: number; unpriced: string[] }) => [month.euros, month.unpriced]), [[1, []], [7, ["openai:gpt-x"]]]);
+    assert.equal(body.monthlyBudget, 50);
     // Aucun identifiant de personne dans la réponse.
     for (const forbidden of ["userId", '"u0"', member.userId, admin.userId]) assert.equal(response.body.includes(forbidden), false, forbidden);
   });

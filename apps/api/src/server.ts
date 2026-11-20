@@ -25,10 +25,14 @@ import {
   type TokenUsage,
 } from "./graph/chat-graph.js";
 import {
+  isScopable,
   ProviderRegistry,
   ProviderUnavailableError,
   type ModelRegistry,
+  type ScopedKeys,
+  type ScopedModels,
 } from "./llm/registry.js";
+import { keyProviders, PostgresModelKeyStore, type ModelKeyStore } from "./llm/keys.js";
 import { providerIds, type ModelSelection, type ProviderId, type ProviderSettings } from "./llm/types.js";
 import { agentProfileSchema, generationOf } from "./agents/profile.js";
 import { PostgresAgentStore, type Agent, type AgentStore } from "./agents/store.js";
@@ -90,12 +94,16 @@ import { PostgresProjectStore, type ProjectStore } from "./projects/store.js";
 import { PostgresMemberStore, provisionIdentity, type MemberStore } from "./workspace/members.js";
 import { PostgresPreferencesStore, type PreferencesStore } from "./workspace/preferences.js";
 import {
+  checkBudget,
   checkQuota,
+  defaultSettings,
+  type Billing,
   PostgresSettingsStore,
   type SettingsStore,
   type UsageTotals,
 } from "./workspace/settings.js";
 import { createRouteKit } from "./routes/kit.js";
+import { registerModelKeyRoutes } from "./routes/model-keys.js";
 import { instructionsRejection, registerWorkspaceRoutes } from "./routes/workspace.js";
 import { parseImport } from "./conversations/import.js";
 import { MemoryPromptStore, PostgresPromptStore, type PromptStore } from "./prompts/store.js";
@@ -237,6 +245,8 @@ export type AppDependencies = {
   login?: LoginFlow;
   /** Fournisseurs LLM configurés et catalogue de modèles. */
   models?: ModelRegistry;
+  /** Clés d'API saisies dans l'interface (organisation, personnelles) ; absent : celles de la configuration seulement. */
+  modelKeys?: ModelKeyStore;
   agents?: AgentStore;
   settings?: SettingsStore;
   members?: MemberStore;
@@ -418,12 +428,63 @@ export function createAppServer(deps: AppDependencies) {
   /** Flux SSE ouverts sur cette instance (fermés à l'arrêt). */
   const observers = new Set<() => void>();
   const timing = { ...RUN_TIMING, ...deps.runTiming };
+  /** Plafonds d'une réponse : ceux de l'organisation, bornés par ceux de la plateforme. */
+  const responseCaps = (settings: Pick<OrganizationSettings, "responseMaxTokens" | "responseMaxSeconds">) => {
+    const platformTokens = deps.agentMaxTokens ?? DEFAULT_MAX_TOKENS;
+    return {
+      maxTokens: settings.responseMaxTokens ? Math.min(settings.responseMaxTokens, platformTokens) : platformTokens,
+      maxActiveMs: settings.responseMaxSeconds ? Math.min(settings.responseMaxSeconds * 1000, timing.maxActiveMs) : timing.maxActiveMs,
+    };
+  };
   const RUN_LEASE_MS = timing.leaseMs;
   const RUN_RENEW_MS = timing.renewMs;
   const RUN_RECOVERY_MS = timing.recoveryMs;
   const RUN_APPROVAL_TTL_S = timing.approvalTtlSeconds;
-  const runnerFor = (selection?: ModelSelection) =>
-    deps.runChat ?? models.runner(selection);
+  /**
+   * Modèles vus par une personne : sa clé (si l'organisation l'autorise pour ce fournisseur),
+   * sinon celle de l'organisation, sinon celle de la plateforme. Cache de 5 s par personne,
+   * vidé dès qu'une clé ou la politique change (les autres instances suivent au plus tard 5 s après).
+   */
+  const modelViews = new Map<string, { at: number; view: Promise<ScopedModels> }>();
+  async function modelsFor(user: AuthenticatedUser): Promise<ScopedModels> {
+    if (!deps.modelKeys || !isScopable(models)) return models;
+    const id = `${user.organizationId}:${user.userId}`;
+    const cached = modelViews.get(id);
+    if (cached && Date.now() - cached.at < 5_000) return cached.view;
+    const keyStore = deps.modelKeys;
+    const view = (async () => {
+      const [secrets, settings] = await Promise.all([keyStore.secrets(user), deps.settings ? deps.settings.get(user) : defaultSettings]);
+      const keys: ScopedKeys = {};
+      for (const provider of keyProviders) {
+        const personal = settings.personalKeyProviders.includes(provider) ? secrets.personal[provider] : undefined;
+        const organization = secrets.organization[provider];
+        if (personal) keys[provider] = { apiKey: personal, source: "personal" };
+        else if (organization) keys[provider] = { apiKey: organization, source: "organization" };
+      }
+      return models.withKeys(keys);
+    })();
+    modelViews.set(id, { at: Date.now(), view });
+    if (modelViews.size > 2_000) modelViews.delete(modelViews.keys().next().value!);
+    view.catch(() => modelViews.delete(id));
+    return view;
+  }
+  /** Clés changées : vues de l'organisation entière (clé d'organisation, politique) ou d'une personne. */
+  const forgetModelViews = (organizationId: string, userId?: string) => {
+    for (const id of modelViews.keys()) if (userId ? id === `${organizationId}:${userId}` : id.startsWith(`${organizationId}:`)) modelViews.delete(id);
+  };
+  /** Payé par qui : une réponse servie par la clé personnelle du membre ne compte pas dans le budget de l'organisation. */
+  async function billingFor(user: AuthenticatedUser, provider: ProviderId | "echo"): Promise<Billing> {
+    if (provider === "echo") return "organization";
+    return (await modelsFor(user)).keySource?.(provider) === "personal" ? "personal" : "organization";
+  }
+  async function recordUsage(user: AuthenticatedUser, provider: ProviderId | "echo", usage: UsageTotals, model: string) {
+    if (!deps.settings || (await billingFor(user, provider)) === "personal") return;
+    await deps.settings.record(user, provider, usage, model);
+  }
+  const runnerFor = async (user: AuthenticatedUser, selection?: ModelSelection) =>
+    deps.runChat ?? (await modelsFor(user)).runner(selection);
+  /** Modèle réellement utilisé (coûts par modèle) : le choisi, sinon celui de la plateforme. */
+  const modelOf = (selection?: ModelSelection) => (selection ?? models.defaultSelection?.())?.model ?? "";
 
   const app = Fastify({
     logger: (deps.logger ?? process.env.NODE_ENV !== "test")
@@ -571,7 +632,7 @@ export function createAppServer(deps: AppDependencies) {
     for (const candidate of [routing?.strong, routing?.fast]) {
       if (candidate?.provider === "local" && (await isModelPermitted(user, candidate))) return candidate;
     }
-    const model = (await models.catalog()).find((provider) => provider.id === "local" && provider.available)?.models[0];
+    const model = (await (await modelsFor(user)).catalog()).find((provider) => provider.id === "local" && provider.available)?.models[0];
     return model ? { provider: "local", model: model.id } : null;
   }
 
@@ -593,7 +654,7 @@ export function createAppServer(deps: AppDependencies) {
 
   /** Liste blanche : modèle publié par un fournisseur configuré et autorisé par l'organisation. */
   async function isModelPermitted(user: AuthenticatedUser, selection: ModelSelection) {
-    const [published, permitted] = await Promise.all([models.isAllowed(selection), allowedProviders(user)]);
+    const [published, permitted] = await Promise.all([(await modelsFor(user)).isAllowed(selection), allowedProviders(user)]);
     return published && permitted.includes(selection.provider);
   }
 
@@ -648,8 +709,8 @@ export function createAppServer(deps: AppDependencies) {
     const provider = models.providerFor(selection);
     if (!deps.settings) return { provider };
 
-    const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
-    const decision = checkQuota(settings, usage, provider);
+    const [settings, usage, billing] = await Promise.all([deps.settings.get(user), deps.settings.usage(user), billingFor(user, provider)]);
+    const decision = checkQuota(settings, usage, provider, billing);
     if (decision.allowed) return { provider };
 
     await kit.record(request, user, {
@@ -1089,7 +1150,8 @@ export function createAppServer(deps: AppDependencies) {
 
     api.get("/models", async (request, reply) => {
       kit.privateResponse(reply);
-      const [catalog, allowed] = await Promise.all([models.catalog(), allowedProviders(kit.principal(request))]);
+      const user = kit.principal(request);
+      const [catalog, allowed] = await Promise.all([(await modelsFor(user)).catalog(), allowedProviders(user)]);
       return {
         providers: catalog.map((provider) => ({ ...provider, allowed: allowed.includes(provider.id) })),
         // Modèle des conversations sans agent ni modèle choisi (null : modèle local de développement).
@@ -1105,11 +1167,13 @@ export function createAppServer(deps: AppDependencies) {
       preferences: deps.preferences,
       projects: deps.projects,
       toolUsage,
-      configuredProviders: async () =>
-        (await models.catalog()).filter((provider) => provider.available).map((provider) => provider.id),
+      configuredProviders: async (user) =>
+        (await (await modelsFor(user)).catalog()).filter((provider) => provider.available).map((provider) => provider.id),
       ...(deps.embeddingProviders ? { embeddingProviders: deps.embeddingProviders } : {}),
       // Outils dont le service n'est pas installé : ni activables, ni proposés.
-      isModelAllowed: (selection) => models.isAllowed(selection),
+      isModelAllowed: async (user, selection) => (await modelsFor(user)).isAllowed(selection),
+      // Politique des clés personnelles changée : vues des modèles à recalculer.
+      settingsChanged: (organizationId) => forgetModelViews(organizationId),
       platformTools: () =>
         toolIds.filter(
           (id) =>
@@ -1129,6 +1193,16 @@ export function createAppServer(deps: AppDependencies) {
     }
     if (deps.workshop) registerDecisionRoutes(api, kit, { store: deps.workshop, trainer: deps.trainer, changed: (organizationId) => routingHeads.delete(organizationId) });
     if (deps.mcp) registerMcpRoutes(api, kit, { ...deps.mcp, redirectUri: deps.mcp.redirectUri ?? `${appOrigin}/mcp/callback` });
+    if (deps.modelKeys && isScopable(models)) {
+      const registry = models;
+      registerModelKeyRoutes(api, kit, {
+        store: deps.modelKeys,
+        settings: (user) => (deps.settings ? deps.settings.get(user) : Promise.resolve(defaultSettings)),
+        platformProviders: () => registry.platformProviders(),
+        checkKey: (provider, apiKey) => registry.checkKey(provider, apiKey),
+        changed: forgetModelViews,
+      });
+    }
     registerPromptRoutes(api, kit, prompts);
     registerPresetRoutes(api, kit, presets);
     registerSharingRoutes(api, kit, { sharing, agents, prompts, skills: skillStore, knowledge: deps.knowledge?.store, canManageAgent });
@@ -1377,7 +1451,7 @@ export function createAppServer(deps: AppDependencies) {
       // RAG agentique : le modèle sait appeler des outils, il cherche lui-même
       // (quand il le juge utile, avec ses propres requêtes, plusieurs fois si besoin).
       // Outil désactivé par l'organisation ou l'agent : injection d'office, comme avant.
-      if (models.supportsTools?.(loaded.selection) && permitted.has("search_knowledge")) {
+      if ((await modelsFor(user)).supportsTools?.(loaded.selection) && permitted.has("search_knowledge")) {
         const citations = new CitationRegistry();
         return { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge!, user, bases, citations)] };
       }
@@ -1583,15 +1657,21 @@ export function createAppServer(deps: AppDependencies) {
      */
     function scriptInputs(user: AuthenticatedUser, conversationId: string, current: string[]) {
       return async (names: string[]) => {
+        if (!names.length) return [];
         const attachments = deps.attachments;
-        if (!attachments || !names.length) return [];
-        const history = (await conversationStore.getMessages(user, conversationId)) ?? [];
-        const pending = current.length ? await attachments.claimable(user, conversationId, current) : [];
+        // Fichiers produits dans cette conversation (images, fichiers de code), y compris
+        // pendant la réponse en cours : le plus récent l'emporte à nom égal.
+        const produced = new Map((await generatedFiles.listAll(user, conversationId)).map((file) => [file.name, file.id]));
+        const history = attachments ? ((await conversationStore.getMessages(user, conversationId)) ?? []) : [];
+        const pending = attachments && current.length ? await attachments.claimable(user, conversationId, current) : [];
+        // Une pièce jointe de l'utilisateur l'emporte sur un fichier produit du même nom.
         const byName = new Map([...history.flatMap((message) => message.attachments ?? []), ...pending].map((file) => [file.name, file.id]));
         const found: { name: string; bytes: Buffer }[] = [];
         for (const name of names) {
           const id = byName.get(name);
-          const file = id ? await attachments.content(user, id) : null;
+          const attached = id && attachments ? await attachments.content(user, id) : null;
+          const generatedId = attached ? undefined : produced.get(name);
+          const file = attached ?? (generatedId ? await generatedFiles.content(user, conversationId, generatedId) : null);
           if (file) found.push({ name, bytes: file.bytes });
         }
         return found;
@@ -1604,7 +1684,7 @@ export function createAppServer(deps: AppDependencies) {
       selection: ModelSelection | undefined,
       run: { permitted: Set<ToolId>; conversationId: string; codeRuns: { count: number }; attachmentIds?: string[] },
     ) {
-      if (!agent?.skills?.length || !models.supportsTools?.(selection)) return [];
+      if (!agent?.skills?.length || !(await modelsFor(user)).supportsTools?.(selection)) return [];
       const provider = models.providerFor(selection);
       const local = provider === "local" || provider === "echo";
       const catalog = (await skillStore.forAgent(user, agent.id)).filter((skill) => local || !skill.confidential);
@@ -1629,9 +1709,9 @@ export function createAppServer(deps: AppDependencies) {
       selection: ModelSelection | undefined,
       plan: KnowledgePlan,
       permitted: Set<ToolId>,
-      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number }; images: { count: number }; attachmentIds?: string[] },
+      context: { confidential: boolean; citations: CitationRegistry; web: WebSession; conversationId: string; codeRuns: { count: number }; images: { count: number }; attachmentIds?: string[]; supportsTools: boolean },
     ): AgentTool[] {
-      if (!models.supportsTools?.(selection)) return [];
+      if (!context.supportsTools) return [];
       const tools: AgentTool[] = plan.mode === "agent" ? [...plan.tools] : [];
       // Recherche web : configurée sur la plateforme, choisie, et jamais pour une
       // conversation confidentielle (la requête partirait vers les moteurs publics).
@@ -1700,7 +1780,7 @@ export function createAppServer(deps: AppDependencies) {
       confidential: boolean,
       signal: AbortSignal,
     ): Promise<AgentTool[]> {
-      if (!deps.mcp || !agent?.mcpServers.length || !permitted.has("mcp") || confidential || !models.supportsTools?.(selection)) return [];
+      if (!deps.mcp || !agent?.mcpServers.length || !permitted.has("mcp") || confidential || !(await modelsFor(user)).supportsTools?.(selection)) return [];
       const store = deps.mcp.store;
       const known = (await Promise.all(agent.mcpServers.map((id) => store.connection(user, id)))).filter((server) => server !== null);
       // Jeton de chaque serveur : celui de l'organisation, ou celui de l'utilisateur
@@ -1768,7 +1848,7 @@ export function createAppServer(deps: AppDependencies) {
     /** Outil de délégation de l'agent, s'il a une équipe et en a le droit à ce niveau. */
     async function teamTools(team: TeamContext): Promise<AgentTool[]> {
       const { agent } = team;
-      if (!agent || !agents || team.depth >= MAX_TEAM_DEPTH || !team.permitted.has("delegate") || !agent.delegates.length || !models.supportsTools?.(team.selection)) return [];
+      if (!agent || !agents || team.depth >= MAX_TEAM_DEPTH || !team.permitted.has("delegate") || !agent.delegates.length || !(await modelsFor(team.user)).supportsTools?.(team.selection)) return [];
       const delegates = await delegatesOf(team.user, agent);
       if (!delegates.length) return [];
       return [
@@ -1796,8 +1876,8 @@ export function createAppServer(deps: AppDependencies) {
       const selection: ModelSelection = { provider: specialist.provider, model: specialist.model };
       const provider = models.providerFor(selection);
       if (deps.settings) {
-        const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
-        if (!checkQuota(settings, usage, provider).allowed) return null;
+        const [settings, usage, billing] = await Promise.all([deps.settings.get(user), deps.settings.usage(user), billingFor(user, provider)]);
+        if (!checkQuota(settings, usage, provider, billing).allowed) return null;
       }
       // Jamais plus que l'appelant : intersection des outils permis.
       const permitted = new Set([...(await permittedFor(user, specialist))].filter((id) => team.permitted.has(id)));
@@ -1805,7 +1885,7 @@ export function createAppServer(deps: AppDependencies) {
       const confidential = team.confidential || specialistBases.some((base) => base.confidential);
       const citations = new CitationRegistry();
       const plan: KnowledgePlan =
-        specialistBases.length && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(selection)
+        specialistBases.length && deps.knowledge && permitted.has("search_knowledge") && (await modelsFor(user)).supportsTools?.(selection)
           ? { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge, user, specialistBases.map((base) => ({ ...base, label: "agent" as const })), citations)] }
           : { mode: "none" };
       const threadId = team.threadId ? `${team.threadId}~${subThreadKey(context.callId)}` : undefined;
@@ -1817,11 +1897,12 @@ export function createAppServer(deps: AppDependencies) {
         conversationId: team.conversationId,
         codeRuns,
         images: { count: 0 },
+        supportsTools: (await modelsFor(user)).supportsTools?.(selection) ?? false,
       });
       tools.push(...(await mcpTools(request, user, specialist, selection, permitted, confidential, context.signal)));
       tools.push(...(await skillsFor(user, specialist, selection, { permitted, conversationId: team.conversationId, codeRuns })));
       tools.push(...(await teamTools({ ...team, agent: specialist, selection, provider, permitted, confidential, threadId, depth: team.depth + 1 })));
-      const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
+      const limits = deps.settings ? await deps.settings.get(user) : defaultSettings;
       const guarded = guardTools(tools, { tainted: false }, (tool, verdict) => {
         void kit.record(request, user, {
           eventType: "agent.injection_suspected",
@@ -1853,13 +1934,14 @@ export function createAppServer(deps: AppDependencies) {
           endedAt: event.endedAt,
           flagged: event.flagged,
           approved: event.approved,
+          empty: event.empty,
         });
       // Demande d'écriture du sous-agent → validation de l'utilisateur, au nom du sous-agent.
       const escalate = (request: { callId: string; name: string; preview: ToolPreview }, signal: AbortSignal) =>
         context.approve
           ? context.approve({ callId: `${callId}/${request.callId}`, name: request.name, preview: { ...request.preview, onBehalfOf: request.preview.onBehalfOf ?? specialist.name } }, signal)
           : Promise.resolve(false);
-      const runner = runnerFor(selection);
+      const runner = await runnerFor(user, selection);
       const sent = { ...input, ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}) };
       let result: ChatResult;
       if (threadId) {
@@ -1880,7 +1962,7 @@ export function createAppServer(deps: AppDependencies) {
       }
       const spent = (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
       team.budget.tokens += spent;
-      if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
+      if (result.usage && provider !== "echo") await recordUsage(user, provider, result.usage, selection.model).catch(() => undefined);
       return { content: result.content, steps: result.steps ?? 0 };
     }
 
@@ -1889,22 +1971,43 @@ export function createAppServer(deps: AppDependencies) {
      * l'organisation, compté à chaque exécution. Le refus est un résultat lu par
      * le modèle (il répond sans l'outil), et un événement d'audit.
      */
-    function meteredTool(request: FastifyRequest, user: AuthenticatedUser, tool: AgentTool, limits: OrganizationSettings["toolLimits"]): AgentTool {
+    function meteredTool(request: FastifyRequest, user: AuthenticatedUser, tool: AgentTool, settings: Pick<OrganizationSettings, "toolLimits" | "memberToolLimits" | "monthlyBudget" | "memberMonthlyBudget">): AgentTool {
       const meter = meterOf(tool.name);
       if (!meter) return tool;
+      const refuse = async (scope: "organization" | "member" | "budget" | "member_budget", limit: number, content: string) => {
+        await kit.record(request, user, {
+          eventType: "quota.tool_exceeded",
+          outcome: "denied",
+          targetType: "organization",
+          targetId: user.organizationId,
+          details: { meter, limit, scope },
+        });
+        return { content, summary: "quota atteint" };
+      };
       return {
         ...tool,
         async execute(args, context) {
-          const limit = limits[meter];
+          const limit = settings.toolLimits[meter];
           if (limit !== undefined && ((await toolUsage.toolUsage(user))[meter] ?? 0) >= limit) {
-            await kit.record(request, user, {
-              eventType: "quota.tool_exceeded",
-              outcome: "denied",
-              targetType: "organization",
-              targetId: user.organizationId,
-              details: { meter, limit },
-            });
-            return { content: `Quota mensuel de l'organisation atteint pour cet outil (${limit} appels). Réponds sans lui et dis-le à l'utilisateur.`, summary: "quota atteint" };
+            return refuse("organization", limit, `Quota mensuel de l'organisation atteint pour cet outil (${limit} appels). Réponds sans lui et dis-le à l'utilisateur.`);
+          }
+          const own = settings.memberToolLimits[meter];
+          if (own !== undefined && ((await toolUsage.memberToolUsage(user))[meter] ?? 0) >= own) {
+            return refuse("member", own, `Ton quota mensuel est atteint pour cet outil (${own} appels). Réponds sans lui et dis-le à l'utilisateur.`);
+          }
+          // Budgets en euros : un outil coûte (image sur le GPU, service tiers), même au milieu d'une réponse.
+          if ((settings.monthlyBudget !== null || settings.memberMonthlyBudget !== null) && deps.settings) {
+            const budget = checkBudget(settings, await deps.settings.usage(user));
+            if (!budget.allowed) {
+              const organization = budget.reason === "budget_exceeded";
+              return refuse(
+                organization ? "budget" : "member_budget",
+                (organization ? settings.monthlyBudget : settings.memberMonthlyBudget) ?? 0,
+                organization
+                  ? "Budget mensuel de l'organisation atteint : cet outil n'est plus disponible ce mois-ci. Réponds sans lui et dis-le à l'utilisateur."
+                  : "Ton budget mensuel est atteint : cet outil n'est plus disponible ce mois-ci. Réponds sans lui et dis-le à l'utilisateur.",
+              );
+            }
           }
           try {
             return await tool.execute(args, context);
@@ -1937,7 +2040,7 @@ export function createAppServer(deps: AppDependencies) {
     ): Promise<KnowledgePlan> {
       const bases = await activeBases(user, conversation, agent);
       if (bases.some((base) => base.confidential) && provider !== "local" && provider !== "echo") throw new RunFailure("Local model required");
-      if (bases.length && models.supportsTools?.(selection) && permitted.has("search_knowledge")) {
+      if (bases.length && (await modelsFor(user)).supportsTools?.(selection) && permitted.has("search_knowledge")) {
         // Même numérotation des sources qu'avant la pause.
         const citations = new CitationRegistry().seed(turns);
         return { mode: "agent", citations, tools: [knowledgeTool(deps.knowledge!, user, bases, citations)] };
@@ -1987,7 +2090,7 @@ export function createAppServer(deps: AppDependencies) {
       deps.metrics?.tokens.inc({ provider: input.provider, direction: "output" }, counted.outputTokens);
       // Inclus dans « input » : le rapport des deux mesure l'efficacité du cache.
       if (counted.cachedInputTokens) deps.metrics?.tokens.inc({ provider: input.provider, direction: "cached_input" }, counted.cachedInputTokens);
-      await deps.settings?.record(user, input.provider, counted).catch((error: unknown) => {
+      await recordUsage(user, input.provider, counted, modelOf(input.selection)).catch((error: unknown) => {
         request.log.error({ err: error }, "Échec d'enregistrement de la consommation");
       });
       await kit.record(request, user, {
@@ -2022,7 +2125,13 @@ export function createAppServer(deps: AppDependencies) {
         if (!messages) return;
         const candidate = compactionCandidate(messages, await summaries.get(user, conversationId));
         if (!candidate) return;
-        const result = await deps.summarize({ selection: input.selection, previous: candidate.previous, messages: candidate.fold, pseudonymize: await pseudonymizeFor(user, input.selection) });
+        const result = await deps.summarize({
+          selection: input.selection,
+          previous: candidate.previous,
+          messages: candidate.fold,
+          pseudonymize: await pseudonymizeFor(user, input.selection),
+          runner: (await modelsFor(user)).runner(input.selection),
+        });
         if (!result) return;
         await summaries.set(user, conversationId, {
           uptoMessageId: candidate.uptoMessageId,
@@ -2030,7 +2139,7 @@ export function createAppServer(deps: AppDependencies) {
           summary: result.summary,
           model: result.model,
         });
-        if (result.usage) await deps.settings?.record(user, input.provider, result.usage);
+        if (result.usage) await recordUsage(user, input.provider, result.usage, modelOf(input.selection));
         await kit.record(request, user, {
           eventType: "conversation.compacted",
           targetType: "conversation",
@@ -2048,7 +2157,7 @@ export function createAppServer(deps: AppDependencies) {
       const result = await Promise.race([titling, timeout]);
       if (!result) return;
       await conversationStore.retitle?.(user, run.conversationId, result.title, provisionalTitle(run.request.content)).catch(() => false);
-      if (result.usage) await deps.settings?.record(user, run.request.provider, result.usage).catch(() => undefined);
+      if (result.usage) await recordUsage(user, run.request.provider, result.usage, modelOf(run.request.selection)).catch(() => undefined);
     }
 
     /** Arrêt demandé : la réponse partielle est gardée (comme avant), le run effacé. */
@@ -2114,7 +2223,9 @@ export function createAppServer(deps: AppDependencies) {
       }, RUN_RENEW_MS);
       lease.unref();
       // Durée maximale d'un passage : la réponse s'arrête, comme sur « arrêter ».
-      const deadline = setTimeout(() => stop("limit"), timing.maxActiveMs);
+      // Plafond de l'organisation s'il est plus court que celui de la plateforme.
+      const caps = responseCaps(deps.settings ? await deps.settings.get(user).catch(() => defaultSettings) : defaultSettings);
+      const deadline = setTimeout(() => stop("limit"), caps.maxActiveMs);
       deadline.unref();
 
       let plan: KnowledgePlan = mode.start?.plan ?? { mode: "none" };
@@ -2168,7 +2279,7 @@ export function createAppServer(deps: AppDependencies) {
         // Première demande : le titre se prépare PENDANT la réponse (même modèle, mêmes règles).
         const titling =
           deps.title && mode.start && run.request.kind === "message" && !run.request.editMessageId && input.history.length === 0 && !conversation.temporary && run.request.content.trim()
-            ? deps.title({ selection, question: run.request.content, pseudonymize: await pseudonymizeFor(user, selection) }).catch((error: unknown) => {
+            ? deps.title({ selection, question: run.request.content, pseudonymize: await pseudonymizeFor(user, selection), runner: (await modelsFor(user)).runner(selection) }).catch((error: unknown) => {
                 request.log.warn({ err: error }, "Titre de la conversation impossible");
                 return null;
               })
@@ -2185,6 +2296,7 @@ export function createAppServer(deps: AppDependencies) {
           codeRuns,
           images: { count: earlier.filter((turn) => turn.role === "tool" && turn.name === "generate_image").length },
           attachmentIds: run.request.attachmentIds,
+          supportsTools: (await modelsFor(user)).supportsTools?.(selection) ?? false,
         });
         tools.push(...(await mcpTools(request, user, agent, selection, permitted, confidential, controller.signal)));
         tools.push(...(await skillsFor(user, agent, selection, { permitted, conversationId: run.conversationId, codeRuns, attachmentIds: run.request.attachmentIds })));
@@ -2200,7 +2312,7 @@ export function createAppServer(deps: AppDependencies) {
             confidential,
             threadId: run.id,
             depth: 0,
-            budget: { tokens: 0, max: deps.agentMaxTokens ?? DEFAULT_MAX_TOKENS },
+            budget: { tokens: 0, max: caps.maxTokens },
             conversationId: run.conversationId,
           })),
         );
@@ -2215,7 +2327,7 @@ export function createAppServer(deps: AppDependencies) {
           .join("\n\n");
         // Réglages : ceux de la conversation priment sur ceux de l'agent.
         const generation = generationOf({ ...agent?.parameters, ...conversation.settings });
-        if (memoryOn && kit.canWrite(user) && models.supportsTools?.(selection)) {
+        if (memoryOn && kit.canWrite(user) && (await modelsFor(user)).supportsTools?.(selection)) {
           tools.push(
             memoryTool({
               store: memories,
@@ -2224,7 +2336,7 @@ export function createAppServer(deps: AppDependencies) {
             }),
           );
         }
-        const limits = deps.settings ? (await deps.settings.get(user)).toolLimits : {};
+        const limits = deps.settings ? await deps.settings.get(user) : defaultSettings;
         // Garde contre les injections : contenus suspects avertis et audités ; une
         // écriture demandée ensuite porte une alerte sur sa carte de validation.
         const startTexts = [input.message, ...input.history.map((turn) => turn.content), ...earlier.map((turn) => turn.content)];
@@ -2242,7 +2354,7 @@ export function createAppServer(deps: AppDependencies) {
         });
         const metered = guarded.map((tool) => meteredTool(request, user, tool, limits));
 
-        const result = await runnerFor(selection)(
+        const result = await (await runnerFor(user, selection))(
           {
             message: input.message,
             history: input.history,
@@ -2252,7 +2364,7 @@ export function createAppServer(deps: AppDependencies) {
             ...(remembered.length ? { memories: remembered } : {}),
             // Instructions personnalisées (qui je suis, comment me répondre).
             ...(profile ? { profile } : {}),
-            ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: deps.agentMaxTokens } : {}),
+            ...(metered.length ? { tools: metered, maxSteps: deps.agentMaxSteps, maxTokens: caps.maxTokens } : {}),
             // Réglages (créativité, longueur), plafonnés par chaque fournisseur.
             ...(Object.keys(generation).length ? { generation } : {}),
             ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}),
@@ -2333,7 +2445,7 @@ export function createAppServer(deps: AppDependencies) {
               outcome: "denied",
               targetType: "conversation",
               targetId: run.conversationId,
-              details: { limit: "duration", seconds: Math.round(timing.maxActiveMs / 1000) },
+              details: { limit: "duration", seconds: Math.round(caps.maxActiveMs / 1000) },
             });
           }
           if (stopReason === "cancel" || stopReason === "limit") {
@@ -2652,10 +2764,10 @@ export function createAppServer(deps: AppDependencies) {
     ) {
       if (deps.rewriteQuery) {
         try {
-          const rewritten = await deps.rewriteQuery({ selection, history, message, pseudonymize: await pseudonymizeFor(user, selection) });
+          const rewritten = await deps.rewriteQuery({ selection, history, message, pseudonymize: await pseudonymizeFor(user, selection), runner: (await modelsFor(user)).runner(selection) });
           if (rewritten) {
             if (rewritten.usage) {
-              await deps.settings?.record(user, provider, rewritten.usage).catch(() => undefined);
+              await recordUsage(user, provider, rewritten.usage, modelOf(selection)).catch(() => undefined);
             }
             return rewritten.query;
           }
@@ -3094,25 +3206,27 @@ export function createAppServer(deps: AppDependencies) {
     const call = async (selection: ModelSelection, input: Parameters<ChatRunner>[0], signal: AbortSignal) => {
       const provider = models.providerFor(selection);
       if (deps.settings) {
-        const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
-        if (!checkQuota(settings, usage, provider).allowed) throw new Error("QUOTA_EXCEEDED");
+        const [settings, usage, billing] = await Promise.all([deps.settings.get(user), deps.settings.usage(user), billingFor(user, provider)]);
+        if (!checkQuota(settings, usage, provider, billing).allowed) throw new Error("QUOTA_EXCEEDED");
       }
-      const result = await runnerFor(selection)({ ...input, ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}) }, { signal });
-      if (result.usage && provider !== "echo") await deps.settings?.record(user, provider, result.usage).catch(() => undefined);
+      const result = await (await runnerFor(user, selection))({ ...input, ...((await pseudonymizeFor(user, selection)) ? { pseudonymize: true } : {}) }, { signal });
+      if (result.usage && provider !== "echo") await recordUsage(user, provider, result.usage, modelOf(selection)).catch(() => undefined);
       return result.content;
     };
     if (deps.settings) {
       const [settings, usage] = await Promise.all([deps.settings.get(user), deps.settings.usage(user)]);
-      if (![own, judge].every((selection) => checkQuota(settings, usage, models.providerFor(selection)).allowed)) return { refused: "quota" };
+      const billed = await Promise.all([own, judge].map(async (selection) => ({ provider: models.providerFor(selection), billing: await billingFor(user, models.providerFor(selection)) })));
+      if (!billed.every(({ provider, billing }) => checkQuota(settings, usage, provider, billing).allowed)) return { refused: "quota" };
     }
     const organizationTools = deps.settings ? (await deps.settings.get(user)).tools : defaultOrganizationTools;
     const permitted = permittedTools(organizationTools, agent.tools);
+    const ownTools = (await modelsFor(user)).supportsTools?.(own) ?? false;
     return {
       judge: `${judge.provider}:${judge.model}`,
       models: {
         answer: (instructions, question, signal) => {
           const citations = new CitationRegistry();
-          const tools = qualityBases.length && deps.knowledge && permitted.has("search_knowledge") && models.supportsTools?.(own) ? [knowledgeTool(deps.knowledge, user, qualityBases.map((base) => ({ ...base, label: "agent" as const })), citations)] : [];
+          const tools = qualityBases.length && deps.knowledge && permitted.has("search_knowledge") && ownTools ? [knowledgeTool(deps.knowledge, user, qualityBases.map((base) => ({ ...base, label: "agent" as const })), citations)] : [];
           return call(own, { message: question, instructions, ...(tools.length ? { tools, maxSteps: deps.agentMaxSteps } : {}) }, signal);
         },
         complete: (prompt, signal) => call(judge, { message: prompt }, signal),
@@ -3129,7 +3243,7 @@ export function createAppServer(deps: AppDependencies) {
       // Liste blanche : fournisseur configuré, autorisé par l'organisation,
       // et modèle publié par lui.
       const [allowed, permitted, organizationTools] = await Promise.all([
-        models.isAllowed({ provider: parsed.data.provider, model: parsed.data.model }),
+        (await modelsFor(user)).isAllowed({ provider: parsed.data.provider, model: parsed.data.model }),
         allowedProviders(user),
         deps.settings ? deps.settings.get(user).then((current) => current.tools) : defaultOrganizationTools,
       ]);
@@ -3515,6 +3629,8 @@ export function createProductionServer() {
 
   const models = new ProviderRegistry(providers, {
     defaultSelection: config.llm.defaultSelection,
+    // Fournisseur servi par une clé de l'organisation ou personnelle : mêmes plafonds que la plateforme.
+    defaults: { ...llmLimits, thinkingLevel: config.llm.googleThinkingLevel },
     // Modèle echo local, uniquement hors production (refusé par loadConfig).
     fallback: config.nodeEnv === "production" ? undefined : echoModel,
   });
@@ -3596,6 +3712,7 @@ export function createProductionServer() {
     title: createTitler((selection) => models.runner(selection)),
     checkpointer: (tenant) => new EncryptedCheckpointSaver(pool, keyring, tenant),
     agents: new PostgresAgentStore(pool, keyring),
+    modelKeys: new PostgresModelKeyStore(pool, keyring),
     settings: settingsStore,
     knowledge,
     embeddingProviders: () => embeddings.available(),

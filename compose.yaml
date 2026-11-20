@@ -141,6 +141,8 @@ services:
     tmpfs:
       - /work:size=256m,mode=0711
       - /tmp:size=16m,mode=0700
+      # Canal de LibreOffice (chemin fixe) : inscriptible, pas listable, vidé après chaque exécution.
+      - /var/tmp:size=16m,mode=1733
       - /dev/shm:size=16m,mode=0700
     volumes:
       - snowfall_dev_sandbox_socket:/run/sandbox

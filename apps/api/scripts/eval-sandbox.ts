@@ -50,6 +50,8 @@ export async function startEvalSandbox(): Promise<CodeSandbox & { stop: () => Pr
     "--cap-drop", "ALL", "--cap-add", "SETUID", "--cap-add", "SETGID", "--cap-add", "KILL", "--cap-add", "CHOWN",
     "--security-opt", "no-new-privileges:true", "--pids-limit", "128", "--memory", "2g", "--cpus", "2",
     "--tmpfs", "/work:size=256m,mode=0711", "--tmpfs", "/tmp:size=16m,mode=0700", "--tmpfs", "/dev/shm:size=16m,mode=0700",
+    // Canal de LibreOffice (chemin écrit en dur), comme compose.yaml : inscriptible, non listable.
+    "--tmpfs", "/var/tmp:size=16m,mode=1733",
     "-v", `${volume}:/run/sandbox`, IMAGE]);
   // prettier-ignore
   await run("docker", ["run", "-d", "--name", client, "--network", "none", "--read-only", "--cap-drop", "ALL",

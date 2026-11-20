@@ -185,7 +185,7 @@ const accessPath = (type: ShareableType) => (type === 'knowledge_base' ? '/knowl
 export type KnowledgeAccess = 'owner' | 'edit' | 'view'
 
 /** Base de la bibliothèque (nom absent : base reprise d'un agent ou d'un projet). */
-export type LibraryBase = { id: string; name: string | null; confidential: boolean; access: KnowledgeAccess; mine: boolean }
+export type LibraryBase = { id: string; name: string | null; confidential: boolean; access: KnowledgeAccess; mine: boolean; /** Photo choisie comme icône (data URL). */ icon?: string | null }
 
 export type LibraryBaseSummary = LibraryBase & {
   sourceCount: number
@@ -360,6 +360,23 @@ export type AdminOverview = {
   tokens: { period: string; byProvider: Partial<Record<ProviderId, number>> }[]
   monthlyTokenLimit: number | null
   tools: Partial<Record<ToolMeter, number>>
+  /** Euros par mois aux tarifs actuels ; modèles externes sans tarif. */
+  costs?: { period: string; euros: number; unpriced: string[] }[]
+  monthlyBudget?: number | null
+}
+
+/** € par million de jetons. */
+export type TokenPrice = { input: number; output: number }
+export type Prices = { models: Record<string, TokenPrice>; tools: Partial<Record<ToolMeter, number>> }
+
+export type OrganizationCosts = {
+  period: string
+  models: { provider: ProviderId; model: string; inputTokens: number; outputTokens: number; euros: number | null }[]
+  tools: { meter: ToolMeter; calls: number; euros: number }[]
+  total: number
+  unpriced: string[]
+  budget: number | null
+  prices: Prices
 }
 
 export type Usage = {
@@ -370,8 +387,20 @@ export type Usage = {
     mine: UsageTotals
     /** Appels d'outils du mois, pour l'organisation. */
     tools?: Partial<Record<ToolMeter, number>>
+    /** Les miens, et mes dépenses en euros. */
+    myTools?: Partial<Record<ToolMeter, number>>
+    mySpend?: number
+    /** Dépenses de l'organisation (administrateurs). */
+    spend?: number
   }
-  limits: { monthly: number | null; providers: Partial<Record<ProviderId, number>>; tools?: Partial<Record<ToolMeter, number>> }
+  limits: {
+    monthly: number | null
+    providers: Partial<Record<ProviderId, number>>
+    tools?: Partial<Record<ToolMeter, number>>
+    memberTools?: Partial<Record<ToolMeter, number>>
+    memberBudget?: number | null
+    budget?: number | null
+  }
 }
 
 export type EmbeddingProvider = 'mistral' | 'openai' | 'google' | 'local'
@@ -394,6 +423,34 @@ export type OrganizationSettings = {
   pseudonymize?: boolean
   /** Routage automatique (conversations sans agent ni modèle) ; null = désactivé. */
   modelRouting?: { fast: ModelSelection; strong: ModelSelection } | null
+  /** Coûts et limites. */
+  prices?: Prices
+  monthlyBudget?: number | null
+  memberMonthlyBudget?: number | null
+  memberToolLimits?: Partial<Record<ToolMeter, number>>
+  responseMaxTokens?: number | null
+  responseMaxSeconds?: number | null
+  /** Fournisseurs pour lesquels un membre peut utiliser sa propre clé d'API (vide : aucun). */
+  personalKeyProviders?: KeyProvider[]
+}
+
+/** Fournisseurs dont une clé d'API peut être saisie (le serveur local est fixé par la configuration). */
+export const keyProviders = ['mistral', 'openai', 'anthropic', 'google'] as const
+export type KeyProvider = (typeof keyProviders)[number]
+
+/** Clé qui sert un fournisseur pour moi : jamais la clé elle-même, ses 4 derniers caractères au plus. */
+export type ModelKeyStatus = {
+  id: KeyProvider
+  /** Autorisé par l'organisation. */
+  allowed: boolean
+  /** L'organisation autorise les clés personnelles pour ce fournisseur. */
+  personalAllowed: boolean
+  /** Clé qui sert mes réponses : la mienne, celle de l'organisation, celle de la plateforme, aucune. */
+  active: 'personal' | 'organization' | 'platform' | null
+  platform: boolean
+  /** Clé de l'organisation : indice et date pour un administrateur, {} pour un membre, null si aucune. */
+  organization: { hint?: string; updatedAt?: string } | null
+  personal: { hint: string; updatedAt: string } | null
 }
 
 /** Catégories d'outils comptées (code, web, MCP) et l'outil qui les active. */
@@ -429,6 +486,8 @@ export type McpServer = {
   /** Connecteur du catalogue reconnu à son adresse (logo, catégorie). */
   catalogId?: string
   tools: { name: string; title: string | null; access: 'read' | 'write' }[]
+  /** Photo choisie par un administrateur ; sinon logo du catalogue ou initiale. */
+  icon?: string | null
 }
 
 /** Connecteur connu (serveur MCP publié par son éditeur), ajouté en un clic par un administrateur. */
@@ -491,8 +550,12 @@ async function errorMessage(response: Response) {
   if (knowledge) return knowledge
   const quality = body.reason ? qualityError(body.reason) : null
   if (quality) return quality
+  if (body.reason === 'budget_exceeded') return t('error.budget')
+  if (body.reason === 'member_budget_exceeded') return t('error.memberBudget')
   if (body.reason === 'provider_quota_exceeded') return t('error.providerQuota')
   if (body.reason === 'quota_exceeded') return t('error.quota')
+  if (body.reason === 'key_rejected') return t('models.error.rejected')
+  if (body.reason === 'personal_keys_disabled') return t('models.error.personalOff')
   if (body.error === 'Provider not allowed') return t('error.providerNotAllowed')
   if (body.error === 'Malware detected') return t('error.malware')
   if (body.error === 'Scanner unavailable') return t('error.scanner')
@@ -779,6 +842,8 @@ export type AgentStep = {
   found?: number[]
   /** Contenu signalé comme suspect : l'agent a été averti. */
   flagged?: boolean
+  /** Recherche sans résultat. */
+  empty?: boolean
   /** Action que tu as validée. */
   approved?: boolean
 }
@@ -1095,7 +1160,7 @@ export const api = {
   listLibrary: async () => (await request<{ bases: LibraryBaseSummary[] }>('/knowledge/bases')).bases,
   createLibraryBase: async (name: string) => (await request<{ base: LibraryBase }>('/knowledge/bases', json('POST', { name }))).base,
   getLibraryBase: (id: string) => request<LibraryBaseDetail>(`/knowledge/bases/${id}`),
-  updateLibraryBase: async (id: string, input: { name?: string; confidential?: boolean }) =>
+  updateLibraryBase: async (id: string, input: { name?: string; confidential?: boolean; icon?: string | null }) =>
     (await request<{ base: LibraryBase }>(`/knowledge/bases/${id}`, json('PATCH', input))).base,
   deleteLibraryBase: (id: string) => request<void>(`/knowledge/bases/${id}`, { method: 'DELETE' }),
   createKnowledgeFolder: async (baseId: string, name: string, parentId: string | null) =>
@@ -1146,6 +1211,7 @@ export const api = {
     (await request<{ preferences: Preferences }>('/me/preferences', json('PUT', preferences))).preferences,
 
   getUsage: () => request<Usage>('/usage'),
+  getOrganizationCosts: () => request<OrganizationCosts>('/organization/costs'),
   /** Administration › Pilotage (administrateurs) : totaux de l'organisation. */
   getAdminOverview: (days: AdminPeriod) => request<AdminOverview>(`/admin/overview?days=${days}`),
   /** Administration › Sécurité : conservation des conversations, journal d'audit (administrateurs). */
@@ -1159,6 +1225,12 @@ export const api = {
   deleteLogo: () => request<void>('/branding/logo', { method: 'DELETE' }),
   setBrandColor: (color: string | null) => request<{ color: string | null }>('/branding/color', { method: 'PUT', body: JSON.stringify({ color }), headers: { 'Content-Type': 'application/json' } }),
   getOrganization: () => request<Organization>('/organization'),
+  // Clés d'API des fournisseurs de modèles (la mienne ; celle de l'organisation pour un administrateur).
+  listModelKeys: async () => (await request<{ providers: ModelKeyStatus[] }>('/me/model-keys')).providers,
+  setModelKey: async (scope: 'personal' | 'organization', provider: KeyProvider, apiKey: string) =>
+    (await request<{ providers: ModelKeyStatus[] }>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, json('PUT', { apiKey }))).providers,
+  removeModelKey: async (scope: 'personal' | 'organization', provider: KeyProvider) =>
+    (await request<{ providers: ModelKeyStatus[] }>(`${scope === 'personal' ? '/me' : '/organization'}/model-keys/${provider}`, { method: 'DELETE' })).providers,
   saveOrganizationSettings: async (settings: OrganizationSettings) =>
     (await request<{ settings: OrganizationSettings }>('/organization/settings', json('PUT', settings))).settings,
   saveSso: (sso: { alias: string | null; defaultRole: 'member' | 'reader' }) =>
@@ -1197,6 +1269,8 @@ export const api = {
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}/approve`, json('POST', { tools }))).server,
   setMcpServerEnabled: async (id: string, enabled: boolean) =>
     (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}`, json('PATCH', { enabled }))).server,
+  setMcpServerIcon: async (id: string, icon: string | null) =>
+    (await request<{ server: McpServer }>(`/organization/mcp-servers/${id}/icon`, json('PUT', { icon }))).server,
   deleteMcpServer: (id: string) => request<void>(`/organization/mcp-servers/${id}`, { method: 'DELETE' }),
   // Catalogue d'agents prêts à l'emploi.
   listAgentTemplates: async () => (await request<{ templates: AgentTemplate[] }>('/agent-templates')).templates,

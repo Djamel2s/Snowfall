@@ -20,6 +20,18 @@ describe("Activité d'une réponse : ce qui est gardé", () => {
     assert.deepEqual([activity.startedAt, activity.endedAt], [1_000, 5_000]);
   });
 
+  it("recherche sans résultat gardée comme telle ; jamais « vide » si elle a trouvé des sources", () => {
+    const activity = activityOf(
+      [
+        { id: "a", name: "web_search", status: "done", empty: true },
+        { id: "b", name: "web_search", status: "done", empty: true, found: [1] },
+      ],
+      [],
+      1,
+    )!;
+    assert.deepEqual(activity.steps.map((step) => step.empty), [true, undefined]);
+  });
+
   it("textes du modèle ou du web : une ligne, sans caractères de contrôle, bornés ; identifiants contrôlés", () => {
     assert.equal(clip("a\u0000b\nc d", 50), "a b c d");
     assert.equal(clip("x".repeat(500), 10)!.length, 10);

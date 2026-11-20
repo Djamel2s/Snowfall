@@ -33,8 +33,35 @@ function artifactMermaid(): Plugin {
     },
   }
 }
+/**
+ * Kit de maquettes (src/artifact-kit) intégré EN LIGNE à /artifact/prototype.html,
+ * autre variante du cadre : comme Mermaid, rien n'est chargé depuis l'origine opaque.
+ */
+function artifactPrototype(): Plugin {
+  const frame = new URL('./public/artifact/frame.html', import.meta.url)
+  const kit = (name: string) => readFileSync(new URL(`./src/artifact-kit/${name}`, import.meta.url), 'utf8')
+  // « </ » échappé : le texte du kit ne peut pas fermer la balise <script> qui le porte.
+  const page = () =>
+    readFileSync(frame, 'utf8').replace(
+      '<body>',
+      () => `<body>\n<script>window.SNOWFALL_KIT = ${JSON.stringify({ css: kit('kit.css'), js: kit('kit.js') }).replace(/<\//g, '<\\/')};</script>`,
+    )
+  return {
+    name: 'snowfall-artifact-prototype',
+    configureServer(server) {
+      server.middlewares.use('/artifact/prototype.html', (_request, response) => {
+        response.setHeader('Content-Type', 'text/html; charset=utf-8')
+        response.end(page())
+      })
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'artifact/prototype.html', source: page() })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), artifactMermaid()],
+  plugins: [react(), artifactMermaid(), artifactPrototype()],
   server: {
     host: '127.0.0.1',
     proxy: {

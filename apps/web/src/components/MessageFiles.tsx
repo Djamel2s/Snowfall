@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
-import { Download, FileSpreadsheet, FileText } from 'lucide-react'
+import { Download, FileSpreadsheet, FileText, FileType, Presentation } from 'lucide-react'
 import { api, type GeneratedFile } from '../lib/api'
 import { formatNumber, useI18n } from '../lib/i18n'
 
 /** Image affichable : seulement PNG et JPEG (un SVG peut contenir du script). */
 const isImage = (file: GeneratedFile) => file.mediaType === 'image/png' || file.mediaType === 'image/jpeg'
+
+/** Format d'un fichier produit : icône et nom court (Word, PowerPoint, Excel, PDF). */
+function kindOf(mediaType: string) {
+  if (mediaType.includes('presentationml')) return { Icon: Presentation, label: 'PowerPoint', tone: 'pptx' }
+  if (mediaType.includes('wordprocessingml')) return { Icon: FileText, label: 'Word', tone: 'docx' }
+  if (mediaType.includes('sheet') || mediaType === 'text/csv') return { Icon: FileSpreadsheet, label: mediaType === 'text/csv' ? 'CSV' : 'Excel', tone: 'xlsx' }
+  if (mediaType === 'application/pdf') return { Icon: FileType, label: 'PDF', tone: 'pdf' }
+  return { Icon: FileText, label: null, tone: '' }
+}
 
 function GeneratedImage({ conversationId, file }: { conversationId: string; file: GeneratedFile }) {
   const [url, setUrl] = useState<string | null>(null)
@@ -55,14 +64,20 @@ export default function MessageFiles({ conversationId, files }: { conversationId
       ))}
       {files
         .filter((file) => !isImage(file))
-        .map((file) => (
-          <button key={file.id} type="button" className="message-file" title={t('files.download', { name: file.name })} onClick={() => void download(file)}>
-            {file.mediaType.includes('sheet') || file.mediaType === 'text/csv' ? <FileSpreadsheet size={13} /> : <FileText size={13} />}
-            <span>{file.name}</span>
-            <small>{formatNumber(Math.max(1, Math.round(file.size / 1024)))} Ko</small>
-            <Download size={12} />
-          </button>
-        ))}
+        .map((file) => {
+          const { Icon, label, tone } = kindOf(file.mediaType)
+          return (
+            <button key={file.id} type="button" className={`message-file ${tone}`} title={t('files.download', { name: file.name })} onClick={() => void download(file)}>
+              <Icon size={13} />
+              <span>{file.name}</span>
+              <small>
+                {label ? `${label} · ` : ''}
+                {formatNumber(Math.max(1, Math.round(file.size / 1024)))} Ko
+              </small>
+              <Download size={12} />
+            </button>
+          )
+        })}
     </div>
   )
 }

@@ -711,6 +711,18 @@ function App() {
     }
   }
 
+  /** Clés des fournisseurs changées : modèles disponibles relus. */
+  const refreshCatalog = useCallback(() => {
+    api.modelCatalog().then(setCatalog).catch(() => undefined)
+  }, [])
+
+  /** Choix du modèle → panneau Modèles (connecter un fournisseur). */
+  function openModelsPanel() {
+    setSidebarPanel('models')
+    setSidebarCollapsed(false)
+    setSidebarOpen(true)
+  }
+
   function openAgentEditor(agent: Agent | null) {
     setSidebarPanel('agents')
     setSidebarCollapsed(false)
@@ -1154,6 +1166,7 @@ function App() {
         onSidebarOpenChange={setSidebarOpen}
         onSidebarCollapsedChange={setSidebarCollapsed}
         onSidebarPanelChange={setSidebarPanel}
+        onModelsChanged={refreshCatalog}
         onProjectSelect={(id) => {
           setActiveProjectId(id)
           setSidebarPanel('projects')
@@ -1265,6 +1278,7 @@ function App() {
                 mention={null}
                 onOpenChange={(open) => (open ? setPickerOpen(true) : closePicker())}
                 onPick={pickResponder}
+                onConnectProvider={openModelsPanel}
               />
             )}
             {activeAgent && !sharedToken && (conversationIsEmpty || !canWrite) && (
@@ -1665,6 +1679,7 @@ function App() {
                     mention={mention?.query ?? null}
                     onOpenChange={(open) => (open ? setPickerOpen(true) : closePicker())}
                     onPick={pickResponder}
+                    onConnectProvider={openModelsPanel}
                   />
                 ) : (
                   activeAgent && (

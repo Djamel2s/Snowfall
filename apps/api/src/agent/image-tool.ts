@@ -82,8 +82,13 @@ export function imageTool(deps: {
         const scan = await deps.scanner.scan(bytes).catch(() => null);
         if (!scan?.clean) return { content: "Image refusée par l'analyse de sécurité.", summary: "refusée" };
       }
-      const saved = await deps.saveFile({ name: "image.png", mediaType: "image/png", bytes });
-      return { content: `Image créée (affichée sous ta réponse) : ${saved.name}.`, summary: "image créée", data: { files: [saved.id] } };
+      // Nom distinct par image de la réponse : run_code peut la reprendre par son nom (« files »).
+      const saved = await deps.saveFile({ name: `image-${deps.images.count}.png`, mediaType: "image/png", bytes });
+      return {
+        content: `Image créée (affichée sous ta réponse) : ${saved.name}. Pour l'insérer dans un document, passe ce nom dans « files » de run_code.`,
+        summary: "image créée",
+        data: { files: [saved.id] },
+      };
     },
   });
 }

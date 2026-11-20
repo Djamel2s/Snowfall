@@ -70,6 +70,8 @@ const privileges: Record<string, string[]> = {
   generated_files: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_servers: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_user_tokens: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  organization_model_keys: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  user_model_keys: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   mcp_oauth_states: ["SELECT", "INSERT", "DELETE"],
   // Versions immuables : seul leur score se met à jour ; effacées avec l'agent (cascade).
   agent_versions: ["SELECT", "INSERT", "UPDATE (score)"],

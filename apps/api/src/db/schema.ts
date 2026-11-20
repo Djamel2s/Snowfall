@@ -454,6 +454,19 @@ export const organizationSettings = pgTable.withRLS(
       .default(sql`ARRAY['search_knowledge', 'save_to_knowledge']::text[]`),
     // Plafonds mensuels d'appels d'outils par catégorie (code, web, mcp) ; absent = illimité.
     toolLimits: jsonb("tool_limits").notNull().default({}),
+    // Coûts : tarifs saisis par l'administrateur ({ models: { "mistral:*": { input, output } }, tools: { image: 0.02 } }).
+    prices: jsonb("prices").notNull().default({}),
+    // Budgets mensuels en centimes d'euro (organisation, chaque membre) ; NULL = illimité.
+    monthlyBudgetCents: bigint("monthly_budget_cents", { mode: "number" }),
+    memberBudgetCents: bigint("member_budget_cents", { mode: "number" }),
+    // Plafonds mensuels d'appels d'outils de chaque membre ; absent = illimité.
+    memberToolLimits: jsonb("member_tool_limits").notNull().default({}),
+    // Plafonds d'une réponse (bornés par ceux de la plateforme) ; NULL = ceux de la plateforme.
+    responseMaxTokens: integer("response_max_tokens"),
+    responseMaxSeconds: integer("response_max_seconds"),
+    // Fournisseurs pour lesquels un membre peut utiliser SA clé d'API (vide par défaut :
+    // une clé personnelle envoie les données sous le contrat du membre, pas celui de l'organisation).
+    personalKeyProviders: text("personal_key_providers").array().notNull().default(sql`ARRAY[]::text[]`),
     updatedBy: uuid("updated_by"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
@@ -479,7 +492,71 @@ export const organizationSettings = pgTable.withRLS(
     check("organization_settings_link_domains_check", sql`cardinality(${table.linkDomains}) <= 200`),
     check("organization_settings_tools_check", sql`cardinality(${table.enabledTools}) <= 50`),
     check("organization_settings_tool_limits_check", sql`jsonb_typeof(${table.toolLimits}) = 'object'`),
+    check("organization_settings_prices_check", sql`jsonb_typeof(${table.prices}) = 'object' AND pg_column_size(${table.prices}) <= 65536`),
+    check("organization_settings_member_tool_limits_check", sql`jsonb_typeof(${table.memberToolLimits}) = 'object'`),
+    check(
+      "organization_settings_budgets_check",
+      sql`(${table.monthlyBudgetCents} IS NULL OR ${table.monthlyBudgetCents} > 0) AND (${table.memberBudgetCents} IS NULL OR ${table.memberBudgetCents} > 0)`,
+    ),
+    check(
+      "organization_settings_response_limits_check",
+      sql`(${table.responseMaxTokens} IS NULL OR ${table.responseMaxTokens} BETWEEN 1000 AND 5000000) AND (${table.responseMaxSeconds} IS NULL OR ${table.responseMaxSeconds} BETWEEN 10 AND 3600)`,
+    ),
+    check(
+      "organization_settings_personal_keys_check",
+      sql`${table.personalKeyProviders} <@ ARRAY['mistral', 'openai', 'anthropic', 'google']::text[]`,
+    ),
     tenantPolicy("organization_settings_tenant", table.organizationId),
+  ],
+);
+
+// ---- Clés d'API des fournisseurs de modèles ------------------------------------
+// Clé de l'organisation (saisie par un administrateur) : remplace celle de la
+// plateforme pour ce fournisseur. Chiffrée ; jamais renvoyée au navigateur.
+export const organizationModelKeys = pgTable.withRLS(
+  "organization_model_keys",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    // Chiffrée (contrainte posée dans la migration, comme les autres colonnes chiffrées).
+    apiKey: text("api_key").notNull(),
+    // 4 derniers caractères, pour reconnaître la clé.
+    hint: text("hint").notNull(),
+    updatedBy: uuid("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.provider] }),
+    check("organization_model_keys_provider_check", sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google')`),
+    check("organization_model_keys_hint_check", sql`${table.hint} ~ '^[A-Za-z0-9_-]{0,4}$'`),
+    tenantPolicy("organization_model_keys_tenant", table.organizationId),
+  ],
+);
+
+// Clé personnelle d'un membre : lisible par lui seul (pas même un administrateur),
+// effacée à son départ. Utilisée seulement si l'organisation l'autorise pour ce fournisseur.
+export const userModelKeys = pgTable.withRLS(
+  "user_model_keys",
+  {
+    organizationId: uuid("organization_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    provider: text("provider").notNull(),
+    apiKey: text("api_key").notNull(),
+    hint: text("hint").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.userId, table.provider] }),
+    foreignKey({
+      name: "user_model_keys_membership_fk",
+      columns: [table.organizationId, table.userId],
+      foreignColumns: [organizationMembers.organizationId, organizationMembers.userId],
+    }).onDelete("cascade"),
+    check("user_model_keys_provider_check", sql`${table.provider} IN ('mistral', 'openai', 'anthropic', 'google')`),
+    check("user_model_keys_hint_check", sql`${table.hint} ~ '^[A-Za-z0-9_-]{0,4}$'`),
+    tenantPolicy("user_model_keys_owner", table.organizationId, table.userId),
   ],
 );
 
@@ -520,6 +597,8 @@ export const tokenUsage = pgTable.withRLS(
     // départ du membre (sinon supprimer un compte contournerait le quota).
     userId: uuid("user_id").notNull(),
     provider: text("provider").notNull(),
+    // Modèle (coûts par modèle) ; chaîne vide : inconnu (consommation d'avant le 1er novembre 2026).
+    model: text("model").notNull().default(""),
     period: date("period").notNull(),
     inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
     outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
@@ -528,8 +607,9 @@ export const tokenUsage = pgTable.withRLS(
       .notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.organizationId, table.period, table.provider, table.userId] }),
+    primaryKey({ columns: [table.organizationId, table.period, table.provider, table.model, table.userId] }),
     check("token_usage_provider_check", sql`${table.provider} IN (${providerList}, 'echo')`),
+    check("token_usage_model_check", sql`length(${table.model}) <= 120`),
     check("token_usage_period_check", sql`${table.period} = date_trunc('month', ${table.period})::date`),
     check("token_usage_counts_check", sql`${table.inputTokens} >= 0 AND ${table.outputTokens} >= 0`),
     tenantPolicy("token_usage_tenant", table.organizationId),
@@ -699,6 +779,8 @@ export const knowledgeBases = pgTable.withRLS(
     createdBy: uuid("created_by").notNull(),
     // Confidentiel : embeddings et réponses uniquement par un modèle local.
     confidential: boolean("confidential").notNull().default(false),
+    // Photo choisie comme icône (image WebP, PNG ou JPEG en data URL, chiffrée) ; NULL : icône par défaut.
+    icon: text("icon"),
     // Incrémentée à chaque changement : invalide l'index en mémoire.
     revision: integer("revision").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1070,6 +1152,8 @@ export const generatedFileMediaTypes = [
   "text/markdown",
   "application/json",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "application/pdf",
 ] as const;
 
@@ -1507,6 +1591,8 @@ export const mcpServers = pgTable.withRLS(
     oauth: text("oauth"),
     // Outils approuvés : [{ name, description, inputSchema, access, fingerprint }].
     tools: text("tools"),
+    // Photo choisie comme icône (data URL, chiffrée) ; NULL : logo du catalogue ou initiale.
+    icon: text("icon"),
     status: text("status").notNull().default("pending"),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

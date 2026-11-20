@@ -88,7 +88,14 @@ function contrast(hex: string) {
   return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#111111' : '#ffffff'
 }
 
-export default function ConnectorLogo({ icon, color, name, size = 28 }: { icon: string | null; color: string; name: string; size?: number }) {
+export default function ConnectorLogo({ icon, color, name, size = 28, image }: { icon: string | null; color: string; name: string; size?: number; /** Photo choisie par un administrateur : remplace le logo. */ image?: string | null }) {
+  if (image) {
+    return (
+      <span className="connector-logo" aria-hidden="true">
+        <img src={image} alt="" width={size} height={size} />
+      </span>
+    )
+  }
   const found = icon ? icons[icon] : undefined
   const background = found ? `#${found.hex}` : color
   return (

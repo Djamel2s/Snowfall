@@ -23,6 +23,8 @@ import {
   Tag,
   ShieldCheck,
   Library,
+  BrainCircuit,
+  Brain,
 } from 'lucide-react'
 import type { Agent, Preferences, Project, Prompt, SearchHit } from '../lib/api'
 import { useI18n } from '../lib/i18n'
@@ -37,10 +39,12 @@ import PromptLibrary from './PromptLibrary'
 import SkillLibrary from './SkillLibrary'
 // Logos et catalogue chargés à l'ouverture du panneau seulement.
 const ConnectorsPanel = lazy(() => import('./ConnectorsPanel'))
+const ModelsPanel = lazy(() => import('./ModelsPanel'))
+const MemoryPanel = lazy(() => import('./MemoryPanel'))
 import BasePicker from './knowledge/BasePicker'
 import LibraryPanel from './knowledge/LibraryPanel'
 
-export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'knowledge' | 'prompts' | 'skills' | 'connectors' | 'admin' | 'settings' | 'conversation'
+export type SidebarPanel = 'chats' | 'pinned' | 'projects' | 'agents' | 'knowledge' | 'prompts' | 'skills' | 'connectors' | 'models' | 'memory' | 'admin' | 'settings' | 'conversation'
 
 export type SidebarConversation = {
   id: string
@@ -120,6 +124,8 @@ type SidebarProps = {
   connectionNotice?: string | undefined
   /** Connecteur auquel on vient de se connecter : sa fiche s'ouvre. */
   returnedServerId?: string | undefined
+  /** Clés des fournisseurs changées : catalogue des modèles à relire. */
+  onModelsChanged?: () => void
 }
 
 
@@ -309,7 +315,7 @@ export default function Sidebar(props: SidebarProps) {
     )
   }
 
-  function conversationRow(conversation: SidebarConversation, icon: ReactNode, child = false) {
+  function conversationRow(conversation: SidebarConversation, icon?: ReactNode, child = false) {
     const isPinned = pinnedIds.includes(conversation.id)
 
     if (renaming === conversation.id) {
@@ -454,19 +460,30 @@ export default function Sidebar(props: SidebarProps) {
             </span>
           </button>
 
-          <div className="rail-divider" />
-
+          {/* Trois groupes : utiliser (conversations, projets), les agents, puis ce
+              qui les équipe (modèles, connecteurs, prompts, compétences,
+              connaissances, mémoire). */}
           {(
             [
-              { id: 'chats', label: t('sidebar.chats'), icon: MessageSquare },
-              { id: 'projects', label: t('sidebar.projects'), icon: Folder },
-              { id: 'agents', label: t('sidebar.agents'), icon: Bot },
-              { id: 'knowledge', label: t('library.title'), icon: Library },
-              { id: 'prompts', label: t('prompts.title'), icon: ScrollText },
-              { id: 'skills', label: t('skills.title'), icon: GraduationCap },
-              { id: 'connectors', label: t('connectors.title'), icon: Plug },
+              [
+                { id: 'chats', label: t('sidebar.chats'), icon: MessageSquare },
+                { id: 'projects', label: t('sidebar.projects'), icon: Folder },
+              ],
+              [
+                { id: 'agents', label: t('sidebar.agents'), icon: Bot },
+              ],
+              [
+                { id: 'models', label: t('models.title'), icon: BrainCircuit },
+                { id: 'connectors', label: t('connectors.title'), icon: Plug },
+                { id: 'prompts', label: t('prompts.title'), icon: ScrollText },
+                { id: 'skills', label: t('skills.title'), icon: GraduationCap },
+                { id: 'knowledge', label: t('library.title'), icon: Library },
+                { id: 'memory', label: t('memory.title'), icon: Brain },
+              ],
             ] as const
-          ).map(({ id, label, icon: Icon }) => (
+          ).flatMap((group, index) => [
+            <div key={`divider-${index}`} className="rail-divider" />,
+            ...group.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               className={`rail-action ${sidebarPanel === id ? 'rail-action-active' : ''}`}
@@ -483,7 +500,8 @@ export default function Sidebar(props: SidebarProps) {
               <Icon size={19} strokeWidth={1.8} />
               <span className="rail-tooltip">{label}</span>
             </button>
-          ))}
+            )),
+          ])}
 
           <div className="rail-spacer" />
 
@@ -550,6 +568,14 @@ export default function Sidebar(props: SidebarProps) {
           ) : sidebarPanel === 'connectors' ? (
             <Suspense fallback={null}>
               <ConnectorsPanel key={props.returnedServerId ?? 'list'} isAdmin={props.isAdmin} notice={props.connectionNotice} returnedServerId={props.returnedServerId} onError={props.onError} />
+            </Suspense>
+          ) : sidebarPanel === 'models' ? (
+            <Suspense fallback={null}>
+              <ModelsPanel isAdmin={props.isAdmin} onChanged={props.onModelsChanged} onError={props.onError} />
+            </Suspense>
+          ) : sidebarPanel === 'memory' ? (
+            <Suspense fallback={null}>
+              <MemoryPanel enabled={props.preferences.memory} onToggle={(memory) => props.onPreferencesChange({ ...props.preferences, memory })} onError={props.onError} />
             </Suspense>
           ) : sidebarPanel === 'knowledge' ? (
             <LibraryPanel agents={agents} projects={projects} canWrite={props.canWrite} openBaseId={libraryBaseId} onOpenBase={setLibraryBaseId} />

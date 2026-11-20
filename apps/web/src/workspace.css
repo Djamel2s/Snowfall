@@ -212,6 +212,7 @@
 /* Interrupteur : case native restylée (reste accessible au clavier). */
 .settings-panel input[type="checkbox"][role="switch"],
 .studio-capability input[type="checkbox"][role="switch"],
+.memory-panel input[type="checkbox"][role="switch"],
 .agent-schedules input[type="checkbox"][role="switch"] {
   position: relative;
   width: 30px;
@@ -228,6 +229,7 @@
 
 .settings-panel input[type="checkbox"][role="switch"]::after,
 .studio-capability input[type="checkbox"][role="switch"]::after,
+.memory-panel input[type="checkbox"][role="switch"]::after,
 .agent-schedules input[type="checkbox"][role="switch"]::after {
   position: absolute;
   top: 2px;
@@ -242,12 +244,15 @@
 
 .settings-panel input[type="checkbox"][role="switch"]:checked,
 .studio-capability input[type="checkbox"][role="switch"]:checked,
+.memory-panel input[type="checkbox"][role="switch"]:checked,
 .agent-schedules input[type="checkbox"][role="switch"]:checked { border-color: rgba(185, 217, 255, .5); background: rgba(156, 196, 255, .35); }
 .settings-panel input[type="checkbox"][role="switch"]:checked::after,
 .studio-capability input[type="checkbox"][role="switch"]:checked::after,
+.memory-panel input[type="checkbox"][role="switch"]:checked::after,
 .agent-schedules input[type="checkbox"][role="switch"]:checked::after { background: #eef5ff; transform: translateX(13px); }
 .settings-panel input[type="checkbox"][role="switch"]:focus-visible,
 .studio-capability input[type="checkbox"][role="switch"]:focus-visible,
+.memory-panel input[type="checkbox"][role="switch"]:focus-visible,
 .agent-schedules input[type="checkbox"][role="switch"]:focus-visible { outline: 2px solid rgba(185, 217, 255, .5); outline-offset: 2px; }
 
 .settings-meter { display: grid; gap: 5px; }
@@ -1149,6 +1154,11 @@
 .message-file-figure figcaption button { flex: none; width: 24px; height: 24px; justify-content: center; padding: 0; border-color: transparent; color: #e3eeff; }
 .message-file { height: 30px; padding: 0 11px; }
 .message-file small { color: #6f819c; }
+/* Format reconnu d'un coup d'œil : la couleur de son logiciel, sur l'icône seulement. */
+.message-file.pptx svg:first-child { color: #f08a5d; }
+.message-file.docx svg:first-child { color: #6ea8fe; }
+.message-file.xlsx svg:first-child { color: #5fd08e; }
+.message-file.pdf svg:first-child { color: #ff8a86; }
 .message-file:hover, .message-file-figure figcaption button:hover { border-color: rgba(185, 217, 255, .3); color: #dbe6f5; }
 /* ---- Réglages : Mon compte / Organisation, puis rubriques ---------------- */
 
@@ -1451,11 +1461,6 @@
 
 /* ---- Mémoire (Mon compte) ------------------------------------------------- */
 
-.memory-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; padding: 0; list-style: none; }
-.memory-list li { display: flex; align-items: flex-start; gap: 8px; padding: 7px 9px; border-radius: 9px; background: rgba(255, 255, 255, .03); color: #cfdbec; font-size: 12px; line-height: 1.45; }
-.memory-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.memory-list button { display: grid; flex-shrink: 0; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #8798b0; cursor: pointer; }
-.memory-list button:hover { background: rgba(220, 70, 90, .18); color: #ffd6db; }
 .chat-actions-item.armed { background: rgba(220, 70, 90, .2); color: #ffd6db; }
 
 /* Validation après un contenu suspect (injection possible). */
@@ -1850,6 +1855,20 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 /* ---- Connecteurs ---------------------------------------------------------------- */
 .connector-logo { display: inline-flex; flex: none; }
 .connector-logo svg { display: block; border-radius: 7px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .06); }
+.connector-logo img { display: block; border-radius: 25%; object-fit: cover; box-shadow: 0 0 0 1px rgba(255, 255, 255, .06); }
+/* Photo choisie comme icône (base, connecteur) ; badge en coin (cadenas d'une base confidentielle). */
+.entity-icon { position: relative; display: inline-flex; flex: none; }
+.entity-icon img { width: 100%; height: 100%; border-radius: 25%; object-fit: cover; }
+.entity-icon-badge { position: absolute; right: -3px; bottom: -3px; display: grid; width: 11px; height: 11px; place-items: center; border-radius: 50%; background: #10151d; color: #9ee6c0; }
+.entity-icon-badge svg { width: 7px; height: 7px; }
+.icon-picker { position: relative; display: inline-flex; flex: none; }
+.icon-picker-button { position: relative; display: inline-flex; padding: 0; border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+.icon-picker-button:focus-visible { outline: 2px solid #9ecaff; outline-offset: 2px; }
+.icon-picker-camera, .icon-picker-remove { position: absolute; display: grid; width: 14px; height: 14px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #2a3442; color: #dfe9f7; opacity: 0; transition: opacity .15s; }
+.icon-picker-camera { right: -5px; bottom: -5px; pointer-events: none; }
+.icon-picker-remove { top: -6px; right: -6px; cursor: pointer; }
+.icon-picker:hover .icon-picker-camera, .icon-picker:hover .icon-picker-remove, .icon-picker:focus-within .icon-picker-camera, .icon-picker:focus-within .icon-picker-remove { opacity: 1; }
+@media (hover: none) { .icon-picker-camera, .icon-picker-remove { opacity: 1; } }
 
 .connector-list,
 .connector-catalog { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
@@ -2540,7 +2559,14 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 
 /* Catalogue en grille (connecteurs, agents) : icône, nom dessous. */
 .list-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 4px; margin: 2px 0 6px; padding: 0; list-style: none; }
-.grid-tile-wrap { min-width: 0; }
+.grid-tile-wrap { position: relative; min-width: 0; }
+/* Mémoire : un souvenir est une phrase, on la lit en entier. */
+.memory-panel .list-row .conversation-title { white-space: normal; overflow-wrap: anywhere; }
+.grid-tile.selected { border-color: rgba(183, 210, 244, .16); background: rgba(255, 255, 255, .06); }
+.grid-tile-actions { position: absolute; top: 2px; right: 2px; left: 2px; display: flex; justify-content: center; gap: 1px; opacity: 0; transition: opacity .15s; }
+.grid-tile-actions .conversation-delete { width: 20px; height: 20px; opacity: 1; }
+.grid-tile-wrap:hover .grid-tile-actions, .grid-tile-wrap:focus-within .grid-tile-actions { opacity: 1; }
+@media (hover: none) { .grid-tile-actions { opacity: 1; } }
 .grid-tile {
   position: relative;
   display: grid;
@@ -2585,3 +2611,27 @@ button.sidebar-tag:hover { border-color: rgba(185, 217, 255, .35); }
 }
 .library-readonly { margin: 2px 4px 6px; }
 .library-base.dragging { outline: 2px dashed rgba(142, 201, 255, .45); outline-offset: -4px; border-radius: 12px; }
+
+/* Coûts (administration) : tarifs saisis sur la ligne du modèle. */
+.costs-row { display: grid; gap: 4px; padding: 6px 0; border-top: 1px solid rgba(183, 210, 244, .06); }
+.costs-row:first-of-type { border-top: 0; }
+.costs-row small { color: #66788f; font-size: 10px; font-variant-numeric: tabular-nums; }
+.costs-label { color: #9fb0c8; font-size: 10.5px; }
+.costs-price, .costs-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.costs-price label { display: grid; gap: 3px; color: #66788f; font-size: 10px; }
+.costs-price input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(183, 210, 244, .12);
+  border-radius: 8px;
+  outline: none;
+  background: rgba(255, 255, 255, .03);
+  color: #dbe6f5;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.costs-price input:focus { border-color: rgba(185, 217, 255, .45); }
+.costs-missing { color: #ffd36e; }
+.costs-warning { display: flex; align-items: center; gap: 6px; margin: 0; color: #ffd36e; font-size: 10.5px; }

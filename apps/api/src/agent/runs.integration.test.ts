@@ -236,6 +236,12 @@ describe("Exécution durable : PostgreSQL (RLS, chiffrement, bail)", { skip: !ap
     const created = await files.create(a, conversation.id, { name: "budget-orion.csv", mediaType: "text/csv", bytes: Buffer.from(SECRET) });
     // Pas encore rattaché : absent de la liste, mais lisible pour être rattaché.
     assert.deepEqual(await files.list(a, conversation.id), []);
+    // … et repris par run_code pendant la réponse en cours (listAll) ; jamais depuis une autre conversation ni par un autre membre.
+    assert.deepEqual((await files.listAll(a, conversation.id)).map((file) => file.name), ["budget-orion.csv"]);
+    const elsewhere = await conversations.create(a, "Autre");
+    assert.deepEqual(await files.listAll(a, elsewhere.id), []);
+    assert.equal(await files.content(a, elsewhere.id, created.id), null);
+    assert.deepEqual(await files.listAll(b, conversation.id), []);
     const exchange = (await conversations.appendExchange(a, conversation.id, "Analyse", "Voici le fichier."))!;
     assert.equal(await files.attach(a, conversation.id, exchange.assistantMessage.id, [created.id]), 1);
     assert.deepEqual((await files.list(a, conversation.id)).map((file) => file.name), ["budget-orion.csv"]);

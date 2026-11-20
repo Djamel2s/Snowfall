@@ -106,7 +106,7 @@ export function webTools(deps: { engine: WebSearchEngine; readPage: PageReader; 
       if (session.searches >= MAX_SEARCHES) return { content: "Limite de recherches atteinte pour cette réponse : réponds avec ce que tu as.", summary: query };
       session.searches++;
       const results: WebResult[] = await engine.search(query, { language, signal });
-      if (results.length === 0) return { content: "Aucun résultat pour cette recherche.", summary: query, data: [] };
+      if (results.length === 0) return { content: "Aucun résultat pour cette recherche.", summary: query, data: [], empty: true };
       const numbered = citations.add(results.map(asPassage));
       for (const result of results) session.allowed.add(result.url);
       const blocks = results.map(

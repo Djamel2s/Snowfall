@@ -229,6 +229,23 @@ check("compétence : fichiers binaires transmis intacts, jamais rendus en sortie
 status, out = run_skill([{"path": "skill/net.py", "content": "import socket\ntry:\n    socket.create_connection(('1.1.1.1', 80), timeout=2); print('OUVERT')\nexcept OSError: print('bloqué')\n"}], "skill/net.py")
 check("compétence : réseau fermé aussi", status == 200 and "OUVERT" not in out["stdout"], out.get("stdout", "").strip())
 
+# ---- /var/tmp : seul dossier partagé (canal de LibreOffice) ----------------------------
+out = run("""
+import os
+open('/var/tmp/secret-precedent', 'w').write('confidentiel')
+os.mkdir('/var/tmp/dossier-precedent'); open('/var/tmp/dossier-precedent/x', 'w').write('x')
+print('ecrit')
+""")
+second = run("""
+import os
+try:
+    os.listdir('/var/tmp'); print('LISTE')
+except PermissionError:
+    print('liste refusee')
+print('RESTE' if os.path.exists('/var/tmp/secret-precedent') or os.path.exists('/var/tmp/dossier-precedent') else 'vide')
+""")
+check("/var/tmp : pas listable, vidé après chaque exécution", out["stdout"].strip() == "ecrit" and second["stdout"].split() == ["liste", "refusee", "vide"], f"{out['stdout'].strip()} / {second['stdout'].strip()}")
+
 # ---- Rapport -------------------------------------------------------------------------
 print(f"Isolation : {health.get('isolation', '?')}")
 width = max(len(name) for name, _, _ in results)

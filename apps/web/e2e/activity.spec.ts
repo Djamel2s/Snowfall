@@ -74,6 +74,18 @@ test('activité gardée, citations vérifiables, sources lues non citées, aucun
   await expect(page.locator('.activity-head')).toContainText('Travaillé pendant 5,8 s')
 })
 
+test('recherche sans résultat : dit dans l’activité, sans être une erreur', async ({ page }) => {
+  await mockApi(page, { emptySearch: true })
+  await page.goto('/')
+  await page.getByPlaceholder(/Posez votre question/).fill('Bonnes pratiques de sécurité ?')
+  await page.keyboard.press('Enter')
+  await page.locator('.activity-head').click()
+  const step = page.locator('.activity-step')
+  await expect(step).toContainText('Recherche « OWASP top 10 »')
+  await expect(step.locator('.activity-detail')).toHaveText('Aucun résultat')
+  await expect(step.locator('.activity-badge')).toHaveCount(0)
+})
+
 test('document cité : lu au passage surligné dans le panneau ; citation signalée en 👎 commenté', async ({ page, isMobile }) => {
   const mock = await mockApi(page, { documentAnswer: true })
   await page.goto('/')

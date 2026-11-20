@@ -8,7 +8,19 @@ use_default_settings:
       - brave
       - qwant
       - mojeek
+      - startpage
+      - bing
       - wikipedia
+
+# Plusieurs moteurs : un poste de dev se fait vite refuser par un moteur public
+# (CAPTCHA, « too many requests ») ; les autres prennent le relais.
+engines:
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: bing
+    disabled: false
 
 general:
   instance_name: "Snowfall"
@@ -20,6 +32,15 @@ search:
   # L'API ne répond qu'en JSON (aucune page pour un navigateur).
   formats:
     - json
+  # Un moteur qui refuse est suspendu (par défaut 1 h, 24 h pour un CAPTCHA) :
+  # quelques refus suffisaient à couper toute la recherche. Courtes en dev.
+  suspended_times:
+    SearxEngineAccessDenied: 300
+    SearxEngineCaptcha: 600
+    SearxEngineTooManyRequests: 120
+    cf_SearxEngineCaptcha: 600
+    cf_SearxEngineAccessDenied: 300
+    recaptcha_SearxEngineCaptcha: 600
 
 server:
   # Clé secrète : variable SEARXNG_SECRET (jamais dans ce fichier).

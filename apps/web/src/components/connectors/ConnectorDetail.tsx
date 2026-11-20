@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Link2, LoaderCircle, Pencil, Trash2, Unlink } from 'l
 import { api, ApiError, type CatalogConnector, type McpDiscoveredTool, type McpServer } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
 import ConnectorLogo from '../ConnectorLogo'
+import { IconPicker } from '../ui/EntityIcon'
 import ToolPicker from './ToolPicker'
 import { defaultAccess, initialMode, presetChoices, type ToolChoices } from './tool-choices'
 
@@ -131,7 +132,18 @@ export default function ConnectorDetail({ server, entry, isAdmin, connected, onB
       </button>
 
       <header className="connector-detail-head">
-        <ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={44} />
+        {isAdmin ? (
+          <IconPicker
+            image={server.icon}
+            fallback={<ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={44} />}
+            size={44}
+            disabled={busy}
+            onChange={(icon) => void act(async () => onChanged(await api.setMcpServerIcon(server.id, icon)))}
+            onError={onError}
+          />
+        ) : (
+          <ConnectorLogo icon={entry?.icon ?? null} color={entry?.color ?? '#475569'} name={server.name} size={44} image={server.icon} />
+        )}
         <div>
           <h3>{server.name}</h3>
           <p>{entry?.description ?? host(server.url)}</p>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ThumbsUp } from 'lucide-react'
+import { ThumbsUp, TriangleAlert } from 'lucide-react'
 import { adminPeriods, api, providerIds, toolMeters, type AdminOverview as Overview, type AdminPeriod } from '../lib/api'
 import { useI18n } from '../lib/i18n'
 import { providerMeta } from '../lib/providers'
@@ -40,6 +40,7 @@ export default function AdminOverview({ onError }: { onError: (message: string) 
 
   const dayLabel = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'UTC' })
   const monthLabel = (period: string) => new Date(`${period}T00:00:00Z`).toLocaleDateString(locale, { month: 'short', timeZone: 'UTC' })
+  const euro = (value: number) => new Intl.NumberFormat(locale === 'fr' ? 'fr-FR' : 'en-US', { style: 'currency', currency: 'EUR' }).format(value)
   const monthTokens = (byProvider: Overview['tokens'][number]['byProvider']) => sum(Object.values(byProvider).map(Number))
 
   return (
@@ -134,6 +135,25 @@ export default function AdminOverview({ onError }: { onError: (message: string) 
               ))}
             </div>
           </section>
+
+          {data.costs && (
+            <section className="settings-card" aria-label={t('admin.costs')}>
+              <h3>{t('admin.costs')}</h3>
+              <Meter label={t('costs.month')} used={data.costs.at(-1)?.euros ?? 0} limit={data.monthlyBudget ?? null} format={euro} />
+              {(data.costs.at(-1)?.unpriced.length ?? 0) > 0 && (
+                <p className="costs-warning" role="status">
+                  <TriangleAlert size={12} />
+                  {t(data.costs.at(-1)!.unpriced.length === 1 ? 'costs.unpriced.one' : 'costs.unpriced.many', { count: data.costs.at(-1)!.unpriced.length })}
+                </p>
+              )}
+              <Bars label={t('admin.costsMonths')} values={data.costs.map((month) => month.euros)} titles={data.costs.map((month) => `${monthLabel(month.period)} : ${euro(month.euros)}`)} />
+              <div className="admin-axis">
+                {data.costs.map((month) => (
+                  <span key={month.period}>{monthLabel(month.period)}</span>
+                ))}
+              </div>
+            </section>
+          )}
 
           {toolMeters.some(({ id }) => data.tools[id]) && (
             <section className="settings-card" aria-label={t('admin.tools')}>

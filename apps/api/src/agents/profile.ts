@@ -50,6 +50,12 @@ export const avatarSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 
+/**
+ * Photo choisie comme icône (base de connaissances, connecteur) : recadrée en
+ * 128 px et réencodée par le navigateur, donc légère ; mêmes contrôles qu'un avatar.
+ */
+export const iconSchema = z.string().max(60_000).refine(isSafeImageDataUrl, "Image invalide");
+
 export const agentProfileSchema = z.object({
   name: z.string().trim().min(1).max(40),
   avatar: avatarSchema,

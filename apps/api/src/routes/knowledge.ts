@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Agent, AgentStore } from "../agents/store.js";
 import { sanitizeFileName } from "../attachments/detect.js";
+import { iconSchema } from "../agents/profile.js";
 import type { AuthenticatedUser } from "../auth/auth.js";
 import { KNOWLEDGE_FILE_MAX_BYTES } from "../db/schema.js";
 import { detectKnowledgeFile } from "../knowledge/detect.js";
@@ -26,7 +27,7 @@ const linkSchema = z.object({ url: z.string().trim().min(8).max(2_000) }).strict
 const baseSchema = z.object({ confidential: z.boolean() }).strict();
 const nameSchema = z.string().max(200).transform((value, context) => baseName(value) ?? (context.addIssue({ code: "custom", message: "name" }), z.NEVER));
 const createBaseSchema = z.object({ name: nameSchema }).strict();
-const updateBaseSchema = z.object({ name: nameSchema.optional(), confidential: z.boolean().optional() }).strict();
+const updateBaseSchema = z.object({ name: nameSchema.optional(), confidential: z.boolean().optional(), icon: iconSchema.nullable().optional() }).strict();
 const folderSchema = z.object({ name: nameSchema, parentId: z.uuid().nullable().default(null) }).strict();
 const updateFolderSchema = z.object({ name: nameSchema.optional(), parentId: z.uuid().nullable().optional() }).strict();
 const moveSchema = z.object({ folderId: z.uuid().nullable() }).strict();
@@ -60,7 +61,7 @@ const view = (source: KnowledgeSource) => ({
 });
 
 /** Vue publique d'une base : son droit, jamais son contenu. */
-const baseView = (base: KnowledgeBase) => ({ id: base.id, name: base.name, confidential: base.confidential, access: base.access, mine: base.access === "owner" });
+const baseView = (base: KnowledgeBase) => ({ id: base.id, name: base.name, icon: base.icon, confidential: base.confidential, access: base.access, mine: base.access === "owner" });
 const folderView = (folder: KnowledgeFolder) => ({ id: folder.id, parentId: folder.parentId, name: folder.name, createdAt: folder.createdAt });
 
 /** Refus de la base de données (droit, clé étrangère, contrôle). */
@@ -374,13 +375,21 @@ export function registerKnowledgeRoutes(api: FastifyInstance, kit: RouteKit, dep
     if (!body.success) return reply.code(400).send({ error: "Invalid request" });
     let saved: KnowledgeBase | null = base;
     if (body.data.name !== undefined) saved = await store.renameBase(user, base.id, body.data.name);
+    if (saved && body.data.icon !== undefined) saved = await store.setIcon(user, base.id, body.data.icon);
     if (saved && body.data.confidential !== undefined && body.data.confidential !== base.confidential) {
       saved = await store.setConfidential(user, base.id, body.data.confidential);
       knowledge.forget(base.id);
       await kit.record(request, user, { eventType: "knowledge.confidential_update", targetType: "knowledge_base", targetId: base.id, details: { confidential: body.data.confidential } });
     }
     if (!saved) return reply.code(404).send({ error: "Not found" });
-    if (body.data.name !== undefined) await kit.record(request, user, { eventType: "knowledge.base_update", targetType: "knowledge_base", targetId: base.id });
+    if (body.data.name !== undefined || body.data.icon !== undefined) {
+      await kit.record(request, user, {
+        eventType: "knowledge.base_update",
+        targetType: "knowledge_base",
+        targetId: base.id,
+        ...(body.data.icon !== undefined ? { details: { icon: body.data.icon === null ? "removed" : "set" } } : {}),
+      });
+    }
     return { base: baseView(saved) };
   });
 
